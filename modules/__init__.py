@@ -4,7 +4,7 @@ from .norm import RMSNorm
 from .attention import RotaryPositionalEmbedding, MultiHeadAttention
 from .ffn import GatedLinearUnit
 from .transformer import TransformerBlock, RecurrentModule
-from .hrm import HRM, LowLevelModule, HighLevelModule
+from .hrm import HRM, HRMLayer, HRMLayerConfig, create_hrm, count_parameters
 
 __all__ = [
     'RMSNorm',
@@ -14,6 +14,8 @@ __all__ = [
     'TransformerBlock',
     'RecurrentModule',
     'HRM',
-    'LowLevelModule',
-    'HighLevelModule',
+    'HRMLayer',
+    'HRMLayerConfig',
+    'create_hrm',
+    'count_parameters',
 ]

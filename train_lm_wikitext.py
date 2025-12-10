@@ -188,10 +188,10 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, optimizer: optim.Optim
 
     for x, y in dataloader:
         x, y = x.to(device), y.to(device)
-        z_H, z_L = None, None
+        states = None
 
         for _ in range(num_segments):
-            z_H, z_L, y_hat, _ = model.forward_pass(x, z_H, z_L)
+            states, y_hat, _ = model.forward_pass(x, states)
 
             loss = nn.functional.cross_entropy(
                 y_hat.view(-1, model.vocab_size),
@@ -203,8 +203,7 @@ def train_epoch(model: nn.Module, dataloader: DataLoader, optimizer: optim.Optim
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             optimizer.step()
 
-            z_H = z_H.detach()
-            z_L = z_L.detach()
+            states = [s.detach() for s in states]
 
             total_loss += loss.item()
             num_batches += 1
