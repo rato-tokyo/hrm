@@ -5,6 +5,7 @@ from .attention import RotaryPositionalEmbedding, MultiHeadAttention
 from .ffn import GatedLinearUnit
 from .transformer import TransformerBlock, RecurrentModule
 from .hrm import HRM, HRMLayer, HRMLayerConfig, create_hrm, count_parameters
+from .infini_hrm import InfiniHRM, InfiniAttentionLayer
 
 __all__ = [
     'RMSNorm',
@@ -18,4 +19,6 @@ __all__ = [
     'HRMLayerConfig',
     'create_hrm',
     'count_parameters',
+    'InfiniHRM',
+    'InfiniAttentionLayer',
 ]
