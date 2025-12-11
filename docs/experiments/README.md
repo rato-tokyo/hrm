@@ -23,11 +23,16 @@ This directory contains experimental results for HRM (Hierarchical Reasoning Mod
 
 | Rank | Model | PPL | Compute% | vs Standard 3L |
 |------|-------|-----|----------|----------------|
-| 🥇 | **Asymmetric (α=0.7)** | **22.95** | 65.0% | **34.2% 改善** |
-| 🥈 | Standard Routing (α=0.5) | 23.98 | 65.2% | 31.2% 改善 |
-| 🥉 | LPT Routing | 28.13 | 46.6% | 19.3% 改善 |
-| 4 | LPT (3L) | 30.54 | 100% | 12.4% 改善 |
-| 5 | Standard (3L) | 34.86 | 100% | (baseline) |
+| 🥇 | **Layer-wise LR (Decreasing)** | **18.52** | 65.2% | **46.9% 改善** |
+| 🥈 | Layer-wise LR (Increasing) | 21.14 | 72.1% | 39.3% 改善 |
+| 🥉 | Asymmetric (α=0.8) | 22.40 | 65.2% | 35.7% 改善 |
+| 4 | Asymmetric (α=0.7) | 22.95 | 65.0% | 34.2% 改善 |
+| 5 | Standard Routing (α=0.5) | 23.98 | 65.2% | 31.2% 改善 |
+| 6 | LPT Routing | 28.13 | 46.6% | 19.3% 改善 |
+| 7 | LPT (3L) | 30.54 | 100% | 12.4% 改善 |
+| 8 | Standard (3L) | 34.86 | 100% | (baseline) |
+
+**New in v2.0**: Layer-wise Learning Rate と Dynamic Alpha を追加
 
 ## Experimental Setup
 

@@ -128,6 +128,52 @@ routing_threshold > 0:
 
 ---
 
+## New Features (v2.0)
+
+### Dynamic Alpha (動的α)
+
+学習中にαを変化させるCurriculum Learning的な手法:
+
+```python
+from experiments.universal_trainer import AlphaSchedule
+
+# Linear decay: 0.9 -> 0.5
+schedule = AlphaSchedule('linear', start=0.9, end=0.5)
+
+# Cosine annealing
+schedule = AlphaSchedule('cosine', start=0.9, end=0.5)
+
+config = UniversalConfig(
+    layer_weights={1: 0.9, 2: 0, 3: 0.1},
+    routing_threshold=0.95,
+    alpha_schedule=schedule
+)
+```
+
+### Layer-wise Learning Rate
+
+層ごとに異なる学習率を設定:
+
+```python
+config = UniversalConfig(
+    layer_weights={1: 0.7, 2: 0, 3: 0.3},
+    routing_threshold=0.95,
+    layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1}  # L1 fast, L3 slow
+)
+
+trainer = UniversalTrainer(config, vocab_size=vocab_size)
+optimizer = trainer.create_optimizer(model, base_lr=1e-3)
+```
+
+**実験結果** (Layer-wise LR):
+| Config | PPL | vs Baseline |
+|--------|-----|-------------|
+| Decreasing LR (1.0, 0.5, 0.1) | **18.52** | **19.3% 改善** |
+| Increasing LR (0.1, 0.5, 1.0) | 21.14 | 7.9% 改善 |
+| Standard (no Layer-wise LR) | 22.95 | baseline |
+
+---
+
 ## Limitations
 
 Universal Framework で**再現できる**もの:
@@ -136,13 +182,14 @@ Universal Framework で**再現できる**もの:
 - Standard Routing
 - Asymmetric Training
 - 任意の層重み付け
+- **動的α** ✅ (v2.0で追加)
+- **Layer-wise Learning Rate** ✅ (v2.0で追加)
 
 Universal Framework で**再現できない**もの:
 1. **学習可能なConfidence Head**: 現在はmax(softmax)固定
-2. **動的α**: 学習中にαを変化させる手法
-3. **Multi-exit**: 複数のexit pointを持つアーキテクチャ
-4. **Mixture of Experts**: トークンごとに異なるパスを選択
-5. **知識蒸留**: Teacher-Student learning
+2. **Multi-exit**: 複数のexit pointを持つアーキテクチャ
+3. **Mixture of Experts**: トークンごとに異なるパスを選択
+4. **知識蒸留**: Teacher-Student learning
 
 詳細は [07_limitations.md](07_limitations.md) を参照。
 
