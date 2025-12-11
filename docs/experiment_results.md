@@ -153,9 +153,127 @@ WikiText-2 full dataset benchmarks:
 3. **Keep memory simple**: Input-layer only, not in hidden states
 4. **Reset memory per batch** during training with shuffled data
 
+---
+
+## Experiment 3: Deep Supervision の効果分離
+
+### 目的
+
+HRM の性能向上が「階層構造」によるものか「Deep Supervision（各セグメントでロス計算）」によるものかを分離して検証する。
+
+### 比較モデル
+
+| モデル | 説明 |
+|--------|------|
+| Standard Transformer | 通常の Transformer LM（1回の forward、1回の loss）|
+| DeepSup Transformer | 通常の Transformer + Deep Supervision 訓練 |
+| HRM | 階層構造 + Deep Supervision |
+
+### モデル構成
+
+```
+Standard Transformer:
+  Input → Embedding → Transformer Layer → Output
+  Loss: 1回/バッチ
+
+DeepSup Transformer:
+  Input → Embedding → Transformer Layer → Output
+  Loss: num_segments 回/バッチ（状態を引き継ぎながら繰り返し forward）
+
+HRM:
+  Input → Embedding → [Layer L (T=1), Layer H (T=2)] → Output
+  Loss: num_segments 回/バッチ（階層間で状態を共有）
+```
+
+### 設定
+
+- Sequence length: 64
+- Dimension: 64 (Standard, DeepSup), 48 (HRM - パラメータ数を揃えるため)
+- Transformer layers: 1
+- Attention heads: 4
+- Segments: 2
+- Train: 20,000 chars, Val: 5,000 chars
+
+### 結果
+
+| モデル | パラメータ | Best PPL | Epoch | ベースライン比 |
+|--------|-----------|----------|-------|---------------|
+| Standard Transformer | 78K | 12.17 | 11 | baseline |
+| **DeepSup Transformer** | 82K | **11.52** | 6 | **+5.3% 改善** |
+| HRM | 89K | 11.68 | 14 | +4.0% 改善 |
+
+### 重要な発見
+
+1. **Deep Supervision 単体で効果がある**
+   - Standard (12.17) → DeepSup (11.52) で **5.3% PPL 改善**
+   - 複数回 forward + 各回で loss を計算する訓練方式自体が有効
+
+2. **階層構造（HRM）の追加効果は限定的**
+   - DeepSup Transformer (11.52) vs HRM (11.68)
+   - 同程度のパラメータ数では、階層構造による追加改善は確認できず
+
+3. **HRM は収束が遅い**
+   - DeepSup: 6 epoch で最良
+   - HRM: 14 epoch で最良
+   - 階層構造は学習が複雑になる可能性
+
+4. **パラメータ効率**
+   - DeepSup Transformer が最もパラメータ効率が良い（82K で 11.52 PPL）
+
+### 考察
+
+HRM の性能向上の主な要因は「Deep Supervision」であり、「階層構造」の寄与は小さい可能性がある。ただし以下の点で HRM の階層構造が有効な場面があるかもしれない：
+
+- より長いシーケンスでの長期依存関係のモデリング
+- より複雑な推論タスク
+- スケールアップ時の効率性
+
+### アーキテクチャ図
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│              Standard Transformer                            │
+├─────────────────────────────────────────────────────────────┤
+│  Input → [Embedding] → [Transformer] → [Output]              │
+│                           ↓                                  │
+│                       Loss (1回)                             │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│              DeepSup Transformer                             │
+├─────────────────────────────────────────────────────────────┤
+│  Segment 1:                                                  │
+│  Input → [Embedding] → [Transformer] → [Output] → Loss      │
+│                              ↓ state                         │
+│  Segment 2:                                                  │
+│  Input → [Embedding + state] → [Transformer] → [Output] → Loss │
+│                                                              │
+│  (状態を引き継ぎながら繰り返し、各回で Loss 計算)            │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│              HRM (Hierarchical Reasoning Model)              │
+├─────────────────────────────────────────────────────────────┤
+│  Segment 1:                                                  │
+│  Input → [Embedding] → [Layer L ←→ Layer H] → [Output] → Loss │
+│                              ↓ states                        │
+│  Segment 2:                                                  │
+│  Input → [Embedding] → [Layer L ←→ Layer H] → [Output] → Loss │
+│                                                              │
+│  (L は毎ステップ更新、H は T ステップごとに更新)            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Recommended Architecture
 
 For most use cases: **Infini-HRM** with memory reset per batch
 - Best performance (PPL 11.53)
 - Moderate parameter increase (+10%)
 - Simple integration of long-range memory
+
+For simpler use cases: **DeepSup Transformer**
+- Strong performance (PPL 11.52)
+- Minimal complexity
+- Easy to implement
