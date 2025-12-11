@@ -10,9 +10,7 @@ import torch.nn.functional as F
 import math
 from typing import List, Tuple, Dict
 
-import sys
-sys.path.append('..')
-from modules.transformer import TransformerBlock
+from .modules import TransformerBlock
 
 
 class StandardTransformer(nn.Module):
@@ -139,7 +137,7 @@ class ConfidenceRoutedTransformer(nn.Module):
             outputs.append(self.output_head(h))
         return outputs
 
-    def forward_train(self, x: torch.Tensor) -> Dict:
+    def forward_train(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
         Training forward: compute both shallow and deep outputs.
 
@@ -175,7 +173,7 @@ class ConfidenceRoutedTransformer(nn.Module):
             'shallow_ratio': (confidence >= self.routing_threshold).float().mean().item(),
         }
 
-    def forward_inference(self, x: torch.Tensor) -> Tuple[torch.Tensor, Dict]:
+    def forward_inference(self, x: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
         Inference forward: hard routing based on confidence.
 

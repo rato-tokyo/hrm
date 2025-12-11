@@ -116,20 +116,50 @@ Early-Exit Transformer の学習方法に関する研究プロジェクト。
 ```
 hrm/
 ├── CLAUDE.md                    # このファイル
+├── src/
+│   └── ease/                    # EASE フレームワーク (pip installable)
+│       ├── __init__.py          # メインエントリポイント
+│       ├── models.py            # StandardTransformer, ConfidenceRoutedTransformer
+│       ├── trainer.py           # UniversalConfig, UniversalTrainer, AlphaSchedule
+│       └── modules/             # コアモジュール
+│           ├── norm.py          # RMSNorm
+│           ├── attention.py     # MultiHeadAttention, RoPE
+│           ├── ffn.py           # GatedLinearUnit
+│           └── transformer.py   # TransformerBlock
+├── experiments/
+│   ├── __init__.py
+│   └── utils.py                 # データ準備、シード設定
 ├── docs/
 │   ├── REFERENCES.md            # 学術的参考文献
-│   └── experiments/
-│       ├── README.md            # 実験概要
-│       ├── 01_training_methods.md
-│       ├── 02_layer_analysis.md
-│       ├── 03_confidence_routing.md
-│       ├── 04_asymmetric_training.md
-│       ├── 05_summary.md
-│       ├── 06_universal_framework.md
-│       └── 07_limitations.md
-├── experiments/
-│   └── universal_trainer.py     # EASE フレームワーク実装
-└── run_experiments.py           # 実験スクリプト
+│   └── experiments/             # 実験結果ドキュメント
+└── run_experiments.py           # 実験実行スクリプト（薄いラッパー）
+```
+
+### 使用方法
+
+```python
+import sys
+sys.path.insert(0, 'src')
+
+from ease import (
+    ConfidenceRoutedTransformer,
+    UniversalConfig,
+    UniversalTrainer,
+    PRESETS,
+)
+
+# プリセット使用
+config = PRESETS['asymmetric']  # α=0.7, L2=0
+
+# カスタム設定
+config = UniversalConfig(
+    layer_weights={1: 0.7, 2: 0, 3: 0.3},
+    routing_threshold=0.95,
+)
+
+# モデル・トレーナー作成
+model = ConfidenceRoutedTransformer(vocab_size=1000, dim=64, num_layers=3)
+trainer = UniversalTrainer(config, vocab_size=1000)
 ```
 
 ---

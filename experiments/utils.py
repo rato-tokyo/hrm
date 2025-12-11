@@ -1,9 +1,10 @@
 """
-Shared utilities for experiments.
+EASE Experiments - Utilities
+
+Data preparation and experiment configuration.
 """
 
 import torch
-import torch.nn as nn
 import random
 import numpy as np
 from dataclasses import dataclass
@@ -17,13 +18,6 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-
-
-def count_params(model: nn.Module, trainable_only: bool = False) -> int:
-    """Count model parameters."""
-    if trainable_only:
-        return sum(p.numel() for p in model.parameters() if p.requires_grad)
-    return sum(p.numel() for p in model.parameters())
 
 
 @dataclass

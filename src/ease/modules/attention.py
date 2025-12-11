@@ -1,5 +1,5 @@
 """
-Attention mechanisms for HRM
+EASE Framework - Attention Mechanisms
 """
 
 import torch

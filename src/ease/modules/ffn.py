@@ -1,5 +1,5 @@
 """
-Feed-Forward Network layers for HRM
+EASE Framework - Feed-Forward Network Layers
 """
 
 import torch

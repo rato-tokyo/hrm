@@ -2,35 +2,36 @@
 """
 EASE: Efficient Asymmetric Supervision for Early-Exit Transformers
 
-Universal Training Framework for Early-Exit experiments.
-See experiments/universal_trainer.py for the framework implementation.
+Run all experiments using the EASE framework.
 
-Key training methods:
-- Standard LLM: Loss = L_final only
-- Deep Supervision: Loss = (L1 + L2 + ... + Ln) / n  (Lee et al., 2015)
-- Auxiliary Loss: Loss = α * L1 + (1-α) * Ln  (Elbayad et al., 2020)
-- Asymmetric (EASE): Loss = 0.7 * L1 + 0.3 * Ln with L2=0 (Ours)
-- Discriminative Fine-Tuning: Layer-wise LR (Howard & Ruder, 2018)
+Usage:
+    python run_experiments.py
 
+See src/ease/ for the framework implementation.
 See docs/experiments/ for detailed results and analysis.
 """
 
-import torch
+import sys
+sys.path.insert(0, 'src')
+
 import numpy as np
 from datetime import datetime
 from typing import Dict, List
-import sys
-sys.path.insert(0, '.')
 
-from experiments.utils import set_seed, prepare_wikitext_data, ExperimentConfig
-from experiments.models import ConfidenceRoutedTransformer
-from experiments.universal_trainer import UniversalConfig, UniversalTrainer, PRESETS, AlphaSchedule
+from ease import (
+    ConfidenceRoutedTransformer,
+    UniversalConfig,
+    UniversalTrainer,
+    AlphaSchedule,
+    PRESETS,
+)
+from experiments import set_seed, prepare_wikitext_data, ExperimentConfig
 
 
 def run_experiment(
     name: str,
     config: UniversalConfig,
-    model: torch.nn.Module,
+    model: ConfidenceRoutedTransformer,
     trainer: UniversalTrainer,
     train_batches: List,
     val_batches: List,
@@ -40,16 +41,14 @@ def run_experiment(
     verbose: bool = True
 ) -> Dict:
     """Run experiment with universal trainer."""
-    # Use trainer's optimizer creation (supports layer-wise LR)
     optimizer = trainer.create_optimizer(model, base_lr=lr)
 
     best_ppl = float('inf')
     best_epoch = 0
-    best_stats = {}
-    alpha_history = []
+    best_stats: Dict = {}
+    alpha_history: List[float] = []
 
     for epoch in range(max_epochs):
-        # train_epoch now returns (loss, current_weights) for dynamic alpha tracking
         train_loss, current_weights = trainer.train_epoch(
             model, train_batches, optimizer, grad_clip,
             epoch=epoch, max_epochs=max_epochs
@@ -59,9 +58,8 @@ def run_experiment(
         stats = trainer.evaluate(model, val_batches)
         val_ppl = stats['ppl']
 
-        # Track alpha for dynamic schedules
         if config.has_dynamic_alpha:
-            alpha = current_weights.get(1, 0)
+            alpha = current_weights.get(1, 0.0)
             alpha_history.append(alpha)
             alpha_info = f", α={alpha:.2f}"
         else:
@@ -80,7 +78,7 @@ def run_experiment(
                 print("  >>> Early stopping")
             break
 
-    result = {
+    result: Dict = {
         'name': name,
         'config': config.describe(),
         'best_ppl': best_ppl,
@@ -94,9 +92,9 @@ def run_experiment(
     return result
 
 
-def main():
+def main() -> None:
     print("=" * 70)
-    print("HRM EXPERIMENTS - UNIVERSAL TRAINING FRAMEWORK")
+    print("EASE EXPERIMENTS - UNIVERSAL TRAINING FRAMEWORK")
     print("=" * 70)
     print(f"\nStarted: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -127,7 +125,7 @@ def main():
     print(f"Data: {len(train_batches)} train batches, {len(val_batches)} val batches")
     print(f"Vocab size: {vocab_size}")
 
-    results = []
+    results: List[Dict] = []
 
     # =========================================================================
     # Standard Models (No Routing)
@@ -138,7 +136,7 @@ def main():
 
     for preset_name, display_name in [
         ('standard_llm', 'Standard LLM'),
-        ('lpt', 'LPT'),
+        ('deep_supervision', 'Deep Supervision'),
     ]:
         print(f"\n--- {display_name} ---")
         config = PRESETS[preset_name]
@@ -166,9 +164,9 @@ def main():
     print("=" * 70)
 
     for preset_name, display_name in [
-        ('standard_routing', 'Standard Routing (α=0.5)'),
-        ('asymmetric_best', 'Asymmetric (α=0.7)'),
-        ('lpt_routing', 'LPT + Routing'),
+        ('auxiliary_loss', 'Auxiliary Loss (α=0.5)'),
+        ('asymmetric', 'Asymmetric (α=0.7)'),
+        ('deep_supervision_routing', 'Deep Supervision + Routing'),
     ]:
         print(f"\n--- {display_name} ---")
         config = PRESETS[preset_name]
@@ -244,13 +242,12 @@ def main():
     results.append(result)
 
     # =========================================================================
-    # NEW FEATURES: Dynamic Alpha
+    # Dynamic Alpha
     # =========================================================================
     print("\n" + "=" * 70)
     print("PART 5: Dynamic Alpha (Curriculum Learning)")
     print("=" * 70)
 
-    # Linear decay: 0.9 -> 0.5
     for schedule_type, start, end in [
         ('linear', 0.9, 0.5),
         ('cosine', 0.9, 0.5),
@@ -259,7 +256,7 @@ def main():
         print(f"\n--- {display_name} ---")
 
         config = UniversalConfig(
-            layer_weights={1: start, 2: 0, 3: 1-start},  # Initial weights
+            layer_weights={1: start, 2: 0, 3: 1-start},
             routing_threshold=0.95,
             alpha_schedule=AlphaSchedule(schedule_type, start=start, end=end)
         )
@@ -280,7 +277,7 @@ def main():
         results.append(result)
 
     # =========================================================================
-    # NEW FEATURES: Layer-wise Learning Rate
+    # Layer-wise Learning Rate
     # =========================================================================
     print("\n" + "=" * 70)
     print("PART 6: Layer-wise Learning Rate")
@@ -294,7 +291,7 @@ def main():
         print(f"\n--- {display_name} ---")
 
         config = UniversalConfig(
-            layer_weights={1: 0.7, 2: 0, 3: 0.3},  # Same as asymmetric_best
+            layer_weights={1: 0.7, 2: 0, 3: 0.3},
             routing_threshold=0.95,
             layer_lr_scales=lr_scales
         )
@@ -323,12 +320,12 @@ def main():
 
     results.sort(key=lambda x: x['best_ppl'])
 
-    print(f"\n{'Rank':<5} {'Model':<30} {'PPL':>8} {'Shallow%':>10} {'Compute%':>10}")
+    print(f"\n{'Rank':<5} {'Model':<35} {'PPL':>8} {'Shallow%':>10} {'Compute%':>10}")
     print("-" * 70)
     for i, r in enumerate(results, 1):
         shallow = r.get('shallow_ratio', 0) * 100
         compute = r.get('compute_cost', 1) * 100
-        print(f"{i:<5} {r['name']:<30} {r['best_ppl']:>8.2f} {shallow:>9.1f}% {compute:>9.1f}%")
+        print(f"{i:<5} {r['name']:<35} {r['best_ppl']:>8.2f} {shallow:>9.1f}% {compute:>9.1f}%")
 
     # Best model
     best = results[0]
@@ -338,7 +335,6 @@ def main():
     print("\n" + "-" * 70)
     print("KEY INSIGHTS:")
 
-    # Find Standard LLM baseline
     std = next((r for r in results if r['name'] == 'Standard LLM'), None)
     if std:
         improvement = (std['best_ppl'] - best['best_ppl']) / std['best_ppl'] * 100
@@ -347,7 +343,6 @@ def main():
         if compute_save > 0:
             print(f"  - Compute savings: {compute_save:.1f}%")
 
-    # L2 impact
     asym = next((r for r in results if r['name'] == 'Asymmetric (α=0.7)'), None)
     asym_l2 = next((r for r in results if r['name'] == 'Asymmetric + L2'), None)
     if asym and asym_l2:

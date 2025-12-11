@@ -1,5 +1,5 @@
 """
-Normalization layers for HRM
+EASE Framework - Normalization Layers
 """
 
 import torch
