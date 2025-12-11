@@ -167,7 +167,7 @@ PRESETS: Dict[str, UniversalConfig] = {
         layer_weights={1: 1/3, 2: 1/3, 3: 1/3},
         routing_threshold=0,
     ),
-    'deep_supervision_routing': UniversalConfig(
+    'deed': UniversalConfig(
         layer_weights={1: 1/3, 2: 1/3, 3: 1/3},
         routing_threshold=0.7,
     ),

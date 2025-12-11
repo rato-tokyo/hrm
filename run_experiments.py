@@ -19,7 +19,7 @@ from datetime import datetime
 from typing import Dict, List
 
 from ease import (
-    ConfidenceRoutedTransformer,
+    DEEDTransformer,
     UniversalConfig,
     UniversalTrainer,
     AlphaSchedule,
@@ -31,7 +31,7 @@ from experiments import set_seed, prepare_wikitext_data, ExperimentConfig
 def run_experiment(
     name: str,
     config: UniversalConfig,
-    model: ConfidenceRoutedTransformer,
+    model: DEEDTransformer,
     trainer: UniversalTrainer,
     train_batches: List,
     val_batches: List,
@@ -143,7 +143,7 @@ def main() -> None:
         print(f"Config: {config.describe()}")
 
         set_seed(exp_config.seed)
-        model = ConfidenceRoutedTransformer(
+        model = DEEDTransformer(
             vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
             exit_layer=1, routing_threshold=0.8
         )
@@ -166,14 +166,14 @@ def main() -> None:
     for preset_name, display_name in [
         ('auxiliary_loss', 'Auxiliary Loss (α=0.5)'),
         ('asymmetric', 'Asymmetric (α=0.7)'),
-        ('deep_supervision_routing', 'Deep Supervision + Routing'),
+        ('deed', 'DEED'),
     ]:
         print(f"\n--- {display_name} ---")
         config = PRESETS[preset_name]
         print(f"Config: {config.describe()}")
 
         set_seed(exp_config.seed)
-        model = ConfidenceRoutedTransformer(
+        model = DEEDTransformer(
             vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
             exit_layer=1, routing_threshold=0.8
         )
@@ -203,7 +203,7 @@ def main() -> None:
         print(f"Config: {config.describe()}")
 
         set_seed(exp_config.seed)
-        model = ConfidenceRoutedTransformer(
+        model = DEEDTransformer(
             vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
             exit_layer=1, routing_threshold=0.8
         )
@@ -228,7 +228,7 @@ def main() -> None:
     print(f"Config: {config.describe()}")
 
     set_seed(exp_config.seed)
-    model = ConfidenceRoutedTransformer(
+    model = DEEDTransformer(
         vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
         exit_layer=1, routing_threshold=0.8
     )
@@ -263,7 +263,7 @@ def main() -> None:
         print(f"Config: {config.describe()}")
 
         set_seed(exp_config.seed)
-        model = ConfidenceRoutedTransformer(
+        model = DEEDTransformer(
             vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
             exit_layer=1, routing_threshold=0.8
         )
@@ -298,7 +298,7 @@ def main() -> None:
         print(f"Config: {config.describe()}")
 
         set_seed(exp_config.seed)
-        model = ConfidenceRoutedTransformer(
+        model = DEEDTransformer(
             vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
             exit_layer=1, routing_threshold=0.8
         )

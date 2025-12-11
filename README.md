@@ -14,13 +14,13 @@ A unified training framework for Early-Exit Transformers.
 import sys
 sys.path.insert(0, 'src')
 
-from ease import ConfidenceRoutedTransformer, UniversalTrainer, PRESETS
+from ease import DEEDTransformer, UniversalTrainer, PRESETS
 
 # Use preset configuration
 config = PRESETS['asymmetric']  # α=0.7, L2=0, routing_threshold=0.95
 
 # Create model and trainer
-model = ConfidenceRoutedTransformer(vocab_size=1000, dim=64, num_layers=3)
+model = DEEDTransformer(vocab_size=1000, dim=64, num_layers=3)
 trainer = UniversalTrainer(config, vocab_size=1000)
 optimizer = trainer.create_optimizer(model, base_lr=1e-3)
 
@@ -37,6 +37,7 @@ stats = trainer.evaluate(model, val_batches)
 |--------|-------------|
 | `standard_llm` | Final layer loss only |
 | `deep_supervision` | Equal loss on all layers (Lee et al., 2015) |
+| `deed` | Deep Supervision + Early Exit (Tang et al., 2023) |
 | `auxiliary_loss` | α=0.5 on L1 and L3 (Elbayad et al., 2020) |
 | `asymmetric` | α=0.7, L2=0 (Ours) |
 
@@ -57,6 +58,7 @@ python run_experiments.py
 ## References
 
 - Lee et al. (2015) - Deep Supervision
+- Tang et al. (2023) - DEED: Deep Supervision + Dynamic Early Exit
 - Elbayad et al. (2020) - Depth-Adaptive Transformer
 - Howard & Ruder (2018) - Discriminative Fine-Tuning
 - Teerapittayanon et al. (2016) - BranchyNet

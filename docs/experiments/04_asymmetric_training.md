@@ -1,34 +1,44 @@
 # Experiment 5 & 6: Asymmetric Auxiliary Loss Training
 
+**注意**: このドキュメントは特定の実験設定での結果を記録したものです。
+EASEフレームワークの設定は自由であり、ここに記載された設定が最適とは限りません。
+フレームワークの概要は [06_universal_framework.md](06_universal_framework.md) を参照してください。
+
+---
+
 ## Goal
 
-L1（Shallow）とL3（Deep）に異なる重みでロスを適用し、各パスを専門化させる。
+L1（Shallow）とL3（Deep）に異なる重みでロスを適用した場合の効果を検証する。
 
 **Base Reference**: Elbayad et al. (2020) "Depth-Adaptive Transformer"
 
-**Our Contribution**:
-1. 非対称な重み付け（α≠0.5）の効果を検証
-2. 中間層（L2）の損失を0にする重要性を発見
+## 実験設定
+
+- モデル: 3層 Transformer
+- データ: WikiText-2 (200K chars)
+- 損失: Cross Entropy
+
+---
 
 ## Architecture Comparison
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│              Asymmetric Auxiliary Loss (L2ロスなし) - 推奨               │
+│              設定A: 中間層ロスなし                                        │
 ├────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  Input x                                                                │
 │     ↓                                                                   │
 │  ┌─────────────┐                                                       │
-│  │   Layer 1   │ → Output → Loss₁ (Shallow専用, 重みα)                 │
+│  │   Layer 1   │ → Output → Loss₁ (重みα)                              │
 │  └─────────────┘                                                       │
 │     ↓                                                                   │
 │  ┌─────────────┐                                                       │
-│  │   Layer 2   │ (中間層, ロスなし → 純粋な特徴抽出)                     │
+│  │   Layer 2   │ (ロスなし)                                             │
 │  └─────────────┘                                                       │
 │     ↓                                                                   │
 │  ┌─────────────┐                                                       │
-│  │   Layer 3   │ → Output → Loss₃ (Deep専用, 重み1-α)                  │
+│  │   Layer 3   │ → Output → Loss₃ (重み1-α)                            │
 │  └─────────────┘                                                       │
 │                                                                         │
 │  Total Loss = α * Loss₁ + (1-α) * Loss₃                                │
@@ -36,13 +46,13 @@ L1（Shallow）とL3（Deep）に異なる重みでロスを適用し、各パ�
 └────────────────────────────────────────────────────────────────────────┘
 
 ┌────────────────────────────────────────────────────────────────────────┐
-│              Deep Supervision (全層ロス) - 非推奨                        │
+│              設定B: 全層ロス (Deep Supervision)                          │
 ├────────────────────────────────────────────────────────────────────────┤
 │                                                                         │
 │  Input x                                                                │
 │     ↓                                                                   │
 │  ┌─────────────┐                                                       │
-│  │   Layer 1   │ → Output → Loss₁ (Shallow専用, 重みα)                 │
+│  │   Layer 1   │ → Output → Loss₁ (重みα)                              │
 │  └─────────────┘                                                       │
 │     ↓                                                                   │
 │  ┌─────────────┐                                                       │
@@ -50,7 +60,7 @@ L1（Shallow）とL3（Deep）に異なる重みでロスを適用し、各パ�
 │  └─────────────┘                                                       │
 │     ↓                                                                   │
 │  ┌─────────────┐                                                       │
-│  │   Layer 3   │ → Output → Loss₃ (Deep専用, 重み1-α)                  │
+│  │   Layer 3   │ → Output → Loss₃ (重み1-α)                            │
 │  └─────────────┘                                                       │
 │                                                                         │
 │  Total Loss = α * Loss₁ + Loss₂ + (1-α) * Loss₃                        │
@@ -60,11 +70,9 @@ L1（Shallow）とL3（Deep）に異なる重みでロスを適用し、各パ�
 
 ---
 
-## Experiment 5: Asymmetric Auxiliary Loss (L2ロスなし)
+## Experiment 5: 設定A（中間層ロスなし）
 
 ### Training Method
-
-L1とL3の出力を `forward_all_layers()` から取得：
 
 ```python
 all_outputs = model.forward_all_layers(x)
@@ -82,9 +90,9 @@ total_loss = alpha * shallow_loss + (1 - alpha) * deep_loss
 |---|--------|--------|-----|----------|----------|
 | 0.3 | 30% | 70% | 24.88 | 72.0% | 52.0% |
 | 0.5 | 50% | 50% | 23.98 | 52.3% | 65.2% |
-| **0.7** | **70%** | **30%** | **22.95** | **52.4%** | **65.0%** |
+| 0.7 | 70% | 30% | 22.95 | 52.4% | 65.0% |
 
-### Threshold Analysis (Best: α=0.7)
+### Threshold Analysis (α=0.7)
 
 | Threshold | PPL | Shallow% | Compute% |
 |-----------|-----|----------|----------|
@@ -92,15 +100,13 @@ total_loss = alpha * shallow_loss + (1 - alpha) * deep_loss
 | 0.70 | 40.48 | 87.8% | 41.4% |
 | 0.80 | 40.57 | 84.5% | 43.6% |
 | 0.90 | 36.94 | 73.4% | 51.1% |
-| **0.95** | **31.46** | **59.7%** | **60.2%** |
+| 0.95 | 31.46 | 59.7% | 60.2% |
 
 ---
 
-## Experiment 6: Deep Supervision with Asymmetric Weights (全層ロス) - 公平比較
+## Experiment 6: 設定B（全層ロス）
 
 ### Training Method
-
-L1, L2, L3 すべてにロスを適用：
 
 ```python
 all_outputs = model.forward_all_layers(x)
@@ -114,124 +120,59 @@ deep_loss = cross_entropy(deep_out, target)
 total_loss = alpha * shallow_loss + middle_loss + (1 - alpha) * deep_loss
 ```
 
-### Results (α=0.7 での公平比較)
+### Results (α=0.7)
 
-| Model | PPL | Shallow% | Compute% |
-|-------|-----|----------|----------|
-| **Asymmetric Auxiliary Loss (L2なし)** | **22.95** | 52.4% | 65.0% |
-| Deep Supervision + Asymmetric (全層) | 32.07 | 86.3% | 42.5% |
+| 設定 | PPL | Shallow% | Compute% |
+|------|-----|----------|----------|
+| 設定A (中間層ロスなし) | 22.95 | 52.4% | 65.0% |
+| 設定B (全層ロス) | 32.07 | 86.3% | 42.5% |
 
-**L2ロス追加の影響: PPL +9.13 (+39.8%) 悪化**
+この実験設定では、設定Aの方がPPLが良い結果となった。
 
 ### Threshold Analysis Comparison
 
-| Config | Threshold | PPL | Shallow% | Compute% |
-|--------|-----------|-----|----------|----------|
-| Asymmetric Auxiliary Loss (L2なし) | 0.70 | 40.48 | 87.8% | 41.4% |
-| Deep Supervision + Asymmetric | 0.70 | 50.24 | 91.0% | 39.4% |
-| Asymmetric Auxiliary Loss (L2なし) | 0.80 | 40.57 | 84.5% | 43.6% |
-| Deep Supervision + Asymmetric | 0.80 | 51.46 | 87.5% | 41.7% |
-| Asymmetric Auxiliary Loss (L2なし) | 0.90 | 36.94 | 73.4% | 51.1% |
-| Deep Supervision + Asymmetric | 0.90 | 53.10 | 79.0% | 47.4% |
-| **Asymmetric Auxiliary Loss (L2なし)** | **0.95** | **31.46** | 59.7% | 60.2% |
-| Deep Supervision + Asymmetric | 0.95 | 54.90 | 68.9% | 54.0% |
+| 設定 | Threshold | PPL | Shallow% | Compute% |
+|------|-----------|-----|----------|----------|
+| 設定A | 0.70 | 40.48 | 87.8% | 41.4% |
+| 設定B | 0.70 | 50.24 | 91.0% | 39.4% |
+| 設定A | 0.80 | 40.57 | 84.5% | 43.6% |
+| 設定B | 0.80 | 51.46 | 87.5% | 41.7% |
+| 設定A | 0.90 | 36.94 | 73.4% | 51.1% |
+| 設定B | 0.90 | 53.10 | 79.0% | 47.4% |
+| 設定A | 0.95 | 31.46 | 59.7% | 60.2% |
+| 設定B | 0.95 | 54.90 | 68.9% | 54.0% |
 
 ---
 
-## 重要な発見: 中間層（L2）の損失を0にすべき
+## 実験結果の考察
 
-### なぜL2ロスを追加すると性能が悪化するか
+この特定の実験設定（3層、WikiText-2、200K chars）では以下の傾向が観察された：
 
-```
-L2ロスあり (Deep Supervision):
-  L2 が「最終出力を作る」ように学習
-  ↓
-  L2 の出力が L3 への良い中間表現を生成できなくなる
-  ↓
-  L1 の confidence が過度に高くなる (86.3%)
-  ↓
-  実際には難しいトークンも shallow で処理してしまう
-  ↓
-  PPL 悪化
+1. **設定Aが設定Bより良いPPLを示した**
+   - ただし、これはこの実験設定に特有の結果である可能性がある
+   - 異なるモデルサイズ、データセット、タスクでは異なる結果になりうる
 
-L2ロスなし (Asymmetric Auxiliary Loss):
-  L2 は純粋な中間層として機能
-  ↓
-  L1 → L2 → L3 の Deep path が適切に特徴抽出
-  ↓
-  L1 は適切な confidence を維持 (52.4%)
-  ↓
-  難しいトークンは Deep path で正しく処理
-  ↓
-  最良の PPL
-```
+2. **αの値による違い**
+   - この実験ではα=0.7が最良だったが、これも実験設定に依存する
 
-### 数学的同等性について
-
-L2ロスを適用しない場合、以下は数学的に同等：
-- `forward_all_layers()` を使用して L1, L3 のみにロス適用
-- `forward_train()` を使用して shallow, deep にロス適用
-
-どちらも: `Loss = α * L1_loss + (1-α) * L3_loss`
+3. **Thresholdの影響**
+   - 高いthreshold（0.95）で良いPPLを示したが、これもタスク依存
 
 ---
 
-## Key Findings
+## 注意事項
 
-1. **Asymmetric Auxiliary Loss (α=0.7, L2ロスなし) が全手法で最良** (PPL: 22.95)
-2. **Standard 3L より 34.2% 改善、計算コスト 35.0% 削減**
-3. **Standard Auxiliary Loss (23.98) より 4.3% さらに改善**
-4. **Shallow重視 (α=0.7) が最も効果的**
-5. **L2ロスを追加すると39.8%性能悪化** (22.95 → 32.07)
-6. **L2は純粋な中間層として機能させるべき**
+**重要**: この実験結果を一般化して「中間層の損失は0にすべき」「α=0.7が最適」と結論づけることはできません。
 
----
+最適な設定は以下に依存します：
+- モデルの層数と次元
+- データセットの種類とサイズ
+- タスクの性質
+- 計算リソースの制約
 
-## αの解釈
-
-| α値 | 意味 | 結果 |
-|-----|------|------|
-| 0.3 | Deep重視 | PPL 24.88 |
-| 0.5 | バランス（= Standard Auxiliary Loss） | PPL 23.98 |
-| **0.7** | **Shallow重視** | **PPL 22.95 (最良)** |
-
-### Shallow重視が最良の理由
-
-- 多くのトークンは「簡単」→ L1 で処理可能
-- L1 の精度向上が全体の PPL を大幅に改善
-- 難しいトークンは少数 → L3 の重みは低くても十分
+EASEフレームワークを使用する際は、自身のユースケースに合わせて実験を行い、最適な設定を見つけてください。
 
 ---
-
-## Why Asymmetric Auxiliary Loss Works Best
-
-```
-Standard Auxiliary Loss (α=0.5):
-  Loss = 0.5 * L1_loss + 0.5 * L3_loss
-  → L1とL3が同等の重みで学習
-
-Asymmetric Auxiliary Loss (α=0.7):
-  Loss = 0.7 * L1_loss + 0.3 * L3_loss
-  → L1 (Shallow) に重点を置く
-  → L2 は純粋な中間層として機能
-  → Shallow path がより専門化される
-  → 簡単なトークンの処理精度が向上
-```
-
----
-
-## Recommended Configuration
-
-```python
-# Best configuration
-config = {
-    'architecture': 'Early Exit (Confidence-Routed)',
-    'training': 'Asymmetric Auxiliary Loss',
-    'alpha': 0.7,  # Shallow重視
-    'exit_layer': 1,
-    'threshold': 0.95,  # Quality-focused
-}
-```
 
 ## References
 

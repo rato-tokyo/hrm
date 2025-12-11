@@ -2,22 +2,23 @@
 EASE: Efficient Asymmetric Supervision for Early-Exit Transformers
 
 A unified training framework for Early-Exit Transformers that supports:
-- Deep Supervision (Lee et al., 2015)
+- DEED (Tang et al., 2023) - Deep Supervision + Dynamic Early Exit
 - Auxiliary Loss Training (Elbayad et al., 2020)
-- Asymmetric Auxiliary Loss (Ours)
 - Discriminative Fine-Tuning (Howard & Ruder, 2018)
-- Learning Rate Curriculum (Croitoru et al., 2024)
+
+Models:
+- DEEDTransformer: α-weighted loss distribution (all tokens → both losses)
+- TokenRoutedTransformer: Mask-based routing (each token → one loss, no α needed)
+- MoDTransformer: Top-k token selection for dynamic compute
+- StandardTransformer: Baseline model
 
 Usage:
-    from ease import ConfidenceRoutedTransformer, UniversalTrainer, UniversalConfig, PRESETS
+    from ease import DEEDTransformer, UniversalTrainer, UniversalConfig
 
     # Create model
-    model = ConfidenceRoutedTransformer(vocab_size=1000, dim=64, num_layers=3)
+    model = DEEDTransformer(vocab_size=1000, dim=64, num_layers=3)
 
-    # Use preset configuration
-    config = PRESETS['asymmetric']  # α=0.7, L2=0, routing_threshold=0.95
-
-    # Or create custom configuration
+    # Configure α-weighted loss distribution
     config = UniversalConfig(
         layer_weights={1: 0.7, 2: 0, 3: 0.3},
         routing_threshold=0.95,
@@ -34,7 +35,12 @@ Usage:
     stats = trainer.evaluate(model, val_batches)
 """
 
-from .models import StandardTransformer, ConfidenceRoutedTransformer
+from .models import (
+    StandardTransformer,
+    DEEDTransformer,
+    MoDTransformer,
+    TokenRoutedTransformer,
+)
 from .trainer import UniversalConfig, UniversalTrainer, AlphaSchedule, PRESETS
 from .modules import (
     RMSNorm,
@@ -49,7 +55,9 @@ __version__ = "0.1.0"
 __all__ = [
     # Models
     'StandardTransformer',
-    'ConfidenceRoutedTransformer',
+    'DEEDTransformer',
+    'MoDTransformer',
+    'TokenRoutedTransformer',
     # Trainer
     'UniversalConfig',
     'UniversalTrainer',
