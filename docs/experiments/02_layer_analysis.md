@@ -2,9 +2,11 @@
 
 ## Goal
 
-Analyze how each layer contributes to prediction quality in an LPT-trained model.
+Analyze how each layer contributes to prediction quality in a Deep Supervision-trained model.
 
-## Results (3-layer LPT model)
+**Related Work**: This analysis supports the Early Exit hypothesis (Teerapittayanon et al., 2016).
+
+## Results (3-layer Deep Supervision model)
 
 | Layer | PPL | Accuracy |
 |-------|-----|----------|
@@ -25,9 +27,15 @@ After 1 epoch of training:
 - L2 and L3 are starting to overfit
 - The model should stop training early (which our methodology does)
 
-## Implications for Routing
+## Implications for Early Exit
+
+**Reference**: Teerapittayanon et al. (2016) "BranchyNet: Fast Inference via Early Exiting"
 
 This result suggests:
 - **L1 can handle "easy" tokens** effectively
 - **Deeper layers may not always improve predictions**
-- **Routing based on L1 confidence** is a valid strategy
+- **Early Exit based on L1 confidence** is a valid strategy
+
+## References
+
+- Teerapittayanon, S., McDanel, B., & Kung, H. T. (2016). **BranchyNet: Fast Inference via Early Exiting from Deep Neural Networks**. ICPR 2016. https://arxiv.org/abs/1709.01686

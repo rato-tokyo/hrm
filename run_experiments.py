@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-HRM Experiments - Universal Training Framework
+EASE: Efficient Asymmetric Supervision for Early-Exit Transformers
 
-All training methods are unified under the Universal Training Framework.
+Universal Training Framework for Early-Exit experiments.
 See experiments/universal_trainer.py for the framework implementation.
 
-Historical training methods (for reference, see docs/experiments/):
-- Standard: Loss = L_final only
-- LPT: Loss = (L1 + L2 + ... + Ln) / n
-- Asymmetric: Loss = α * L1 + (1-α) * Ln
-- See docs for detailed algorithms
+Key training methods:
+- Standard LLM: Loss = L_final only
+- Deep Supervision: Loss = (L1 + L2 + ... + Ln) / n  (Lee et al., 2015)
+- Auxiliary Loss: Loss = α * L1 + (1-α) * Ln  (Elbayad et al., 2020)
+- Asymmetric (EASE): Loss = 0.7 * L1 + 0.3 * Ln with L2=0 (Ours)
+- Discriminative Fine-Tuning: Layer-wise LR (Howard & Ruder, 2018)
+
+See docs/experiments/ for detailed results and analysis.
 """
 
 import torch
@@ -19,7 +22,7 @@ from typing import Dict, List
 import sys
 sys.path.insert(0, '.')
 
-from experiments.utils import set_seed, count_params, prepare_wikitext_data, ExperimentConfig
+from experiments.utils import set_seed, prepare_wikitext_data, ExperimentConfig
 from experiments.models import ConfidenceRoutedTransformer
 from experiments.universal_trainer import UniversalConfig, UniversalTrainer, PRESETS, AlphaSchedule
 
@@ -74,7 +77,7 @@ def run_experiment(
             best_stats = stats.copy()
         else:
             if verbose:
-                print(f"  >>> Early stopping")
+                print("  >>> Early stopping")
             break
 
     result = {
@@ -114,7 +117,7 @@ def main():
     )
 
     print(f"\nConfig: {exp_config.train_chars:,} train chars, dim={exp_config.dim}, layers={exp_config.num_layers}")
-    print(f"Early stopping: Stop immediately when val PPL worsens\n")
+    print("Early stopping: Stop immediately when val PPL worsens\n")
 
     # Prepare data
     train_batches, val_batches, vocab_size, _ = prepare_wikitext_data(

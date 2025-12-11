@@ -5,6 +5,13 @@
 すべての学習方法を統一的に表現できるフレームワーク。
 各層への重み付けと推論時のRouting設定を分離して管理。
 
+**References**: 本フレームワークは以下の既存研究を統合したものです：
+- **Deep Supervision** (Lee et al., 2015)
+- **Discriminative Fine-Tuning** (Howard & Ruder, 2018)
+- **Early Exit** (Teerapittayanon et al., 2016)
+
+詳細は [REFERENCES.md](../REFERENCES.md) を参照。
+
 ## Core Concept
 
 ```
@@ -29,14 +36,15 @@ class UniversalConfig:
 
 ## Preset Configurations
 
-| Preset | Weights | Routing | Equivalent |
-|--------|---------|---------|------------|
+| Preset | Weights | Routing | Academic Equivalent |
+|--------|---------|---------|---------------------|
 | `standard_llm` | L1:0, L2:0, L3:1 | disabled | Standard Transformer |
-| `lpt` | L1:1/3, L2:1/3, L3:1/3 | disabled | Layer-wise Progressive Training |
-| `standard_routing` | L1:0.5, L2:0, L3:0.5 | threshold=0.95 | Auxiliary Loss Training |
-| `asymmetric_best` | L1:0.7, L2:0, L3:0.3 | threshold=0.95 | Best performing model |
-| `lpt_routing` | L1:1/3, L2:1/3, L3:1/3 | threshold=0.7 | LPT + Early Exit |
-| `asymmetric_with_l2` | L1:0.7, L2:1, L3:0.3 | threshold=0.95 | All-layer loss (not recommended) |
+| `deep_supervision` | L1:1/3, L2:1/3, L3:1/3 | disabled | **Deep Supervision** (Lee et al., 2015) |
+| `auxiliary_loss` | L1:0.5, L2:0, L3:0.5 | threshold=0.95 | **Auxiliary Loss Training** (Elbayad et al., 2020) |
+| `asymmetric_best` | L1:0.7, L2:0, L3:0.3 | threshold=0.95 | Asymmetric Auxiliary Loss (Ours) |
+| `deep_supervision_routing` | L1:1/3, L2:1/3, L3:1/3 | threshold=0.7 | Deep Supervision + Early Exit |
+
+**Note**: 以前は `lpt` と呼んでいた手法は、学術的には **Deep Supervision** として知られています。
 
 ---
 
@@ -79,7 +87,9 @@ routing_threshold = 0  # ルーティングなし
 Loss = L3_loss
 ```
 
-### LPT (Layer-wise Progressive Training)
+### Deep Supervision (旧: LPT)
+
+**Reference**: Lee et al. (2015) "Deeply-Supervised Nets"
 
 ```python
 # 全層に均等重み
@@ -90,7 +100,9 @@ routing_threshold = 0  # ルーティングなし
 Loss = (L1_loss + L2_loss + L3_loss) / 3
 ```
 
-### Standard Routing (Auxiliary Loss)
+### Auxiliary Loss Training (旧: Standard Routing)
+
+**Reference**: Elbayad et al. (2020) "Depth-Adaptive Transformer"
 
 ```python
 # L1とL3に同等の重み
@@ -101,7 +113,7 @@ routing_threshold = 0.95
 Loss = 0.5 * L1_loss + 0.5 * L3_loss
 ```
 
-### Asymmetric (Best)
+### Asymmetric Auxiliary Loss (Best)
 
 ```python
 # Shallow重視
@@ -114,7 +126,9 @@ Loss = 0.7 * L1_loss + 0.3 * L3_loss
 
 ---
 
-## Routing Behavior
+## Routing Behavior (Early Exit)
+
+**Reference**: Teerapittayanon et al. (2016) "BranchyNet"
 
 ```
 routing_threshold = 0:
@@ -130,7 +144,33 @@ routing_threshold > 0:
 
 ## New Features (v2.0)
 
-### Dynamic Alpha (動的α)
+### Discriminative Fine-Tuning (旧: Layer-wise Learning Rate)
+
+**Reference**: Howard & Ruder (2018) "Universal Language Model Fine-tuning for Text Classification"
+
+層ごとに異なる学習率を設定。ULMFiTで提案された手法で、下層ほど小さな学習率を使用。
+
+```python
+config = UniversalConfig(
+    layer_weights={1: 0.7, 2: 0, 3: 0.3},
+    routing_threshold=0.95,
+    layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1}  # L1 fast, L3 slow
+)
+
+trainer = UniversalTrainer(config, vocab_size=vocab_size)
+optimizer = trainer.create_optimizer(model, base_lr=1e-3)
+```
+
+**実験結果** (Discriminative Fine-Tuning):
+| Config | PPL | vs Baseline |
+|--------|-----|-------------|
+| Decreasing LR (1.0, 0.5, 0.1) | **18.52** | **19.3% 改善** |
+| Increasing LR (0.1, 0.5, 1.0) | 21.14 | 7.9% 改善 |
+| Standard (no layer-wise LR) | 22.95 | baseline |
+
+### Learning Rate Curriculum (旧: Dynamic Alpha)
+
+**Reference**: Croitoru et al. (2024) "Learning Rate Curriculum (LeRaC)"
 
 学習中にαを変化させるCurriculum Learning的な手法:
 
@@ -150,40 +190,18 @@ config = UniversalConfig(
 )
 ```
 
-### Layer-wise Learning Rate
-
-層ごとに異なる学習率を設定:
-
-```python
-config = UniversalConfig(
-    layer_weights={1: 0.7, 2: 0, 3: 0.3},
-    routing_threshold=0.95,
-    layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1}  # L1 fast, L3 slow
-)
-
-trainer = UniversalTrainer(config, vocab_size=vocab_size)
-optimizer = trainer.create_optimizer(model, base_lr=1e-3)
-```
-
-**実験結果** (Layer-wise LR):
-| Config | PPL | vs Baseline |
-|--------|-----|-------------|
-| Decreasing LR (1.0, 0.5, 0.1) | **18.52** | **19.3% 改善** |
-| Increasing LR (0.1, 0.5, 1.0) | 21.14 | 7.9% 改善 |
-| Standard (no Layer-wise LR) | 22.95 | baseline |
-
 ---
 
 ## Limitations
 
 Universal Framework で**再現できる**もの:
 - Standard LLM
-- LPT
-- Standard Routing
-- Asymmetric Training
+- Deep Supervision (旧: LPT)
+- Auxiliary Loss Training (旧: Standard Routing)
+- Asymmetric Auxiliary Loss
 - 任意の層重み付け
-- **動的α** ✅ (v2.0で追加)
-- **Layer-wise Learning Rate** ✅ (v2.0で追加)
+- **Discriminative Fine-Tuning** ✅ (v2.0で追加)
+- **Learning Rate Curriculum** ✅ (v2.0で追加)
 
 Universal Framework で**再現できない**もの:
 1. **学習可能なConfidence Head**: 現在はmax(softmax)固定
@@ -202,7 +220,7 @@ Universal Framework で以前の結果を再現:
 | Model | Previous | Universal | Match |
 |-------|----------|-----------|-------|
 | Standard LLM | 34.86 | 34.86 | ✓ |
-| LPT | 30.54 | 30.54 | ✓ |
-| Standard Routing | 23.98 | 23.98 | ✓ |
+| Deep Supervision | 30.54 | 30.54 | ✓ |
+| Auxiliary Loss | 23.98 | 23.98 | ✓ |
 | Asymmetric (α=0.7) | 22.95 | 22.95 | ✓ |
-| LPT + Routing | 28.13 | 28.13 | ✓ |
+| Deep Supervision + Routing | 28.13 | 28.13 | ✓ |

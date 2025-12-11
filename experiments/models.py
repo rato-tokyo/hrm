@@ -1,5 +1,7 @@
 """
-Shared model components for experiments.
+EASE Framework - Model Components
+
+Efficient Asymmetric Supervision for Early-Exit Transformers.
 """
 
 import torch
@@ -20,7 +22,7 @@ class StandardTransformer(nn.Module):
     Supports:
     - Variable number of layers
     - forward(): Standard forward (final layer output)
-    - forward_all_layers(): Output from each layer (for LPT)
+    - forward_all_layers(): Output from each layer (for Deep Supervision)
     """
 
     def __init__(
@@ -58,7 +60,7 @@ class StandardTransformer(nn.Module):
         return self.output_head(h)
 
     def forward_all_layers(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """Forward returning output from each layer (for LPT training)."""
+        """Forward returning output from each layer (for Deep Supervision)."""
         h = self.embedding(x)
         outputs = []
         for layer in self.layers:
@@ -66,31 +68,21 @@ class StandardTransformer(nn.Module):
             outputs.append(self.output_head(h))
         return outputs
 
-    def forward_with_hidden(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
-        """Forward returning final output and all hidden states."""
-        h = self.embedding(x)
-        hidden_states = []
-        for layer in self.layers:
-            h = layer(h)
-            hidden_states.append(h)
-        return self.output_head(h), hidden_states
-
-
-# Alias for clarity
-LPTTransformer = StandardTransformer
-
 
 class ConfidenceRoutedTransformer(nn.Module):
     """
-    Confidence-Routed Transformer.
+    Confidence-Routed Transformer (Early-Exit Architecture).
 
     Routes tokens to different depth paths based on confidence at exit point.
-    - Shallow path: L1 → Output (1 layer)
-    - Deep path: L1 → L2 → L3 → Output (all layers)
+    - Shallow path: L1 → Output (exit_layer layers)
+    - Deep path: L1 → L2 → ... → Ln → Output (all layers)
 
-    Architecture:
-    - exit_layer: Layer after which to compute confidence (default: 1)
-    - num_layers: Total number of layers (default: 3)
+    This is the main model for EASE experiments.
+
+    References:
+    - BranchyNet (Teerapittayanon et al., 2016)
+    - Depth-Adaptive Transformer (Elbayad et al., 2020)
+    - CALM (Schuster et al., 2022)
     """
 
     def __init__(
@@ -139,7 +131,7 @@ class ConfidenceRoutedTransformer(nn.Module):
         return self.output_head(h)
 
     def forward_all_layers(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """Forward returning output from each layer."""
+        """Forward returning output from each layer (for EASE training)."""
         h = self.embedding(x)
         outputs = []
         for layer in self.layers:
@@ -228,5 +220,3 @@ class ConfidenceRoutedTransformer(nn.Module):
         }
 
         return output, stats
-
-

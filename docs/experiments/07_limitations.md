@@ -5,7 +5,7 @@
 Universal Training Framework は多くのモデルを統一的に表現できますが、
 いくつかの構造的な制約があります。
 
-**Note**: v2.0 で動的α と Layer-wise Learning Rate を実装しました。
+**Note**: v2.0 で Discriminative Fine-Tuning と Learning Rate Curriculum を実装しました。
 
 ---
 
@@ -19,15 +19,17 @@ Loss = Σ weights[i] * L_i_loss
 
 以下はすべて `layer_weights` で表現可能:
 
-| 手法 | 表現方法 |
-|------|----------|
-| Standard LLM | `{1: 0, 2: 0, 3: 1}` |
-| LPT | `{1: 1/3, 2: 1/3, 3: 1/3}` |
-| Asymmetric | `{1: α, 2: 0, 3: 1-α}` |
-| Deep Focus | `{1: 0.3, 2: 0, 3: 0.7}` |
-| L2含む | `{1: 0.7, 2: β, 3: 0.3}` |
+| 手法 | 表現方法 | Reference |
+|------|----------|-----------|
+| Standard LLM | `{1: 0, 2: 0, 3: 1}` | - |
+| Deep Supervision | `{1: 1/3, 2: 1/3, 3: 1/3}` | Lee et al., 2015 |
+| Auxiliary Loss | `{1: α, 2: 0, 3: 1-α}` | Elbayad et al., 2020 |
+| Deep Focus | `{1: 0.3, 2: 0, 3: 0.7}` | - |
+| L2含む | `{1: 0.7, 2: β, 3: 0.3}` | - |
 
-### 2. 推論時のRouting
+### 2. 推論時のRouting (Early Exit)
+
+**Reference**: Teerapittayanon et al. (2016) "BranchyNet"
 
 ```
 routing_threshold = 0    → 全トークンがDeep path
@@ -35,28 +37,9 @@ routing_threshold = 0.95 → Confidence-based routing
 routing_threshold = 1.0  → 全トークンがShallow path
 ```
 
-### 3. 動的α (NEW in v2.0) ✅
+### 3. Discriminative Fine-Tuning (NEW in v2.0) ✅
 
-```python
-from experiments.universal_trainer import AlphaSchedule
-
-# Linear decay: 0.9 -> 0.5
-schedule = AlphaSchedule('linear', start=0.9, end=0.5)
-
-# Cosine annealing
-schedule = AlphaSchedule('cosine', start=0.9, end=0.5)
-
-# Step decay
-schedule = AlphaSchedule('step', start=0.9, end=0.5, steps=[10, 20])
-
-config = UniversalConfig(
-    layer_weights={1: 0.9, 2: 0, 3: 0.1},
-    routing_threshold=0.95,
-    alpha_schedule=schedule
-)
-```
-
-### 4. Layer-wise Learning Rate (NEW in v2.0) ✅
+**Reference**: Howard & Ruder (2018) "Universal Language Model Fine-tuning for Text Classification"
 
 ```python
 config = UniversalConfig(
@@ -76,7 +59,30 @@ optimizer = trainer.create_optimizer(model, base_lr=1e-3)
 |--------|-----|----------------------|
 | Decreasing LR (1.0, 0.5, 0.1) | **18.52** | **19.3% 改善** |
 | Increasing LR (0.1, 0.5, 1.0) | 21.14 | 7.9% 改善 |
-| No Layer-wise LR | 22.95 | baseline |
+| No layer-wise LR | 22.95 | baseline |
+
+### 4. Learning Rate Curriculum (NEW in v2.0) ✅
+
+**Reference**: Croitoru et al. (2024) "Learning Rate Curriculum (LeRaC)"
+
+```python
+from experiments.universal_trainer import AlphaSchedule
+
+# Linear decay: 0.9 -> 0.5
+schedule = AlphaSchedule('linear', start=0.9, end=0.5)
+
+# Cosine annealing
+schedule = AlphaSchedule('cosine', start=0.9, end=0.5)
+
+# Step decay
+schedule = AlphaSchedule('step', start=0.9, end=0.5, steps=[10, 20])
+
+config = UniversalConfig(
+    layer_weights={1: 0.9, 2: 0, 3: 0.1},
+    routing_threshold=0.95,
+    alpha_schedule=schedule
+)
+```
 
 ---
 
@@ -103,14 +109,6 @@ confidence = confidence_head(L1_hidden)  # 別のネットワーク
 class UniversalConfig:
     confidence_method: str = 'max_softmax'  # or 'learned', 'entropy'
 ```
-
----
-
-### ~~2. 動的α (学習中にαを変化)~~ → ✅ 実装済み (v2.0)
-
----
-
-### ~~3. Layer-wise Learning Rate~~ → ✅ 実装済み (v2.0)
 
 ---
 
@@ -190,11 +188,11 @@ class UniversalConfig:
 | 優先度 | 機能 | 実装難易度 | 状態 |
 |--------|------|-----------|------|
 | 高 | Multi-exit | 中 | 未実装 |
-| ~~高~~ | ~~動的α~~ | ~~低~~ | ✅ **実装済み v2.0** |
 | 中 | 学習可能Confidence | 中 | 未実装 |
-| ~~中~~ | ~~Layer-wise LR~~ | ~~低~~ | ✅ **実装済み v2.0** |
 | 低 | MoE | 高 | 未実装 |
 | 低 | 知識蒸留 | 中 | 未実装 |
+| - | ~~Discriminative Fine-Tuning~~ | ~~低~~ | ✅ **実装済み v2.0** |
+| - | ~~Learning Rate Curriculum~~ | ~~低~~ | ✅ **実装済み v2.0** |
 
 ---
 
@@ -207,3 +205,11 @@ Universal Framework の目標:
 
 現状の制限は意図的な設計選択であり、
 必要に応じて拡張することで対応可能です。
+
+## References
+
+- Lee, C.-Y., et al. (2015). **Deeply-Supervised Nets**. AISTATS 2015. https://arxiv.org/abs/1409.5185
+- Howard, J., & Ruder, S. (2018). **Universal Language Model Fine-tuning for Text Classification**. ACL 2018. https://arxiv.org/abs/1801.06146
+- Croitoru, F.-A., et al. (2024). **Learning Rate Curriculum**. IJCV 2024. https://arxiv.org/abs/2205.09180
+- Teerapittayanon, S., et al. (2016). **BranchyNet: Fast Inference via Early Exiting**. ICPR 2016. https://arxiv.org/abs/1709.01686
+- Elbayad, M., et al. (2020). **Depth-Adaptive Transformer**. ICLR 2020. https://arxiv.org/abs/1910.10073
