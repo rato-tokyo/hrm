@@ -1,5 +1,5 @@
 """
-Transformer blocks for HRM
+EASE Framework - Transformer Block
 """
 
 import torch
@@ -27,22 +27,4 @@ class TransformerBlock(nn.Module):
         # Post-Norm architecture
         x = self.norm1(x + self.attn(x))
         x = self.norm2(x + self.ffn(x))
-        return x
-
-
-class RecurrentModule(nn.Module):
-    """
-    Recurrent Module (used for both H and L modules)
-    Implemented as a stack of Transformer blocks
-    """
-
-    def __init__(self, dim: int, num_layers: int = 2, num_heads: int = 8):
-        super().__init__()
-        self.layers = nn.ModuleList([
-            TransformerBlock(dim, num_heads) for _ in range(num_layers)
-        ])
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for layer in self.layers:
-            x = layer(x)
         return x

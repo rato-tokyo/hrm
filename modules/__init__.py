@@ -7,7 +7,7 @@ Essential modules for Early-Exit Transformers.
 from .norm import RMSNorm
 from .attention import RotaryPositionalEmbedding, MultiHeadAttention
 from .ffn import GatedLinearUnit
-from .transformer import TransformerBlock, RecurrentModule
+from .transformer import TransformerBlock
 
 __all__ = [
     'RMSNorm',
@@ -15,5 +15,4 @@ __all__ = [
     'MultiHeadAttention',
     'GatedLinearUnit',
     'TransformerBlock',
-    'RecurrentModule',
 ]
