@@ -4,72 +4,26 @@
 
 **EASE: Efficient Asymmetric Supervision for Early-Exit Transformers**
 
-Early-Exit Transformer の学習方法を統一的に扱う汎用フレームワーク。
+シンプルな学習フレームワーク。2つの基本モデルと3つのオプションで構成。
 
 ---
 
 ## フレームワーク概要
 
-### EASE とは
+### 基本モデル（2種類）
 
-EASE は Early-Exit Transformer の学習設定を自由に構成できる汎用フレームワークです。
+| モデル | 説明 |
+|--------|------|
+| **StandardTransformer** | 最終層のみで損失計算 |
+| **DeepSupervisionTransformer** | 全層で損失計算 + Early Exit対応 |
 
-**設定可能なパラメータ**:
-- `layer_weights`: 各層への損失重み（任意の配分）
-- `routing_threshold`: Early Exit の confidence 閾値
-- `exit_layer`: Early Exit を判定する層
-- `layer_lr_scales`: 層ごとの学習率スケール
-- `alpha_schedule`: 動的な重みスケジュール
+### オプション（3つ）
 
-**重要**: EASE は特定の設定を推奨しません。最適な設定はタスク、モデル、データセットに依存します。
-
-### 再現可能な既存手法
-
-| 手法 | Reference |
-|------|-----------|
-| DEED (Deep Supervision + Early Exit) | Tang et al., 2023 |
-| Auxiliary Loss Training | Elbayad et al., 2020 |
-| Early Exit | Teerapittayanon et al., 2016 |
-| Discriminative Fine-Tuning | Howard & Ruder, 2018 |
-
----
-
-## 用語対応表
-
-| プロジェクト内 (旧) | 学術用語 | Reference |
-|-------------------|---------|-----------|
-| DeepSupervision | **DEED** | Tang et al., 2023 |
-| Standard Routing | **Auxiliary Loss Training** | Elbayad et al., 2020 |
-| Confidence-based Routing | **Early Exit** | Teerapittayanon et al., 2016 |
-| Layer-wise Learning Rate | **Discriminative Fine-Tuning** | Howard & Ruder, 2018 |
-| Dynamic Alpha | **Learning Rate Curriculum** | Croitoru et al., 2024 |
-
----
-
-## 実験記録
-
-以下は特定の実験設定（3層、WikiText-2、200K chars）での結果です。
-**これらは参考値であり、推奨設定ではありません。**
-
-| Model | PPL | 備考 |
-|-------|-----|------|
-| Discriminative FT | 18.52 | layer_lr_scales={1:1.0, 2:0.5, 3:0.1} |
-| Asymmetric (α=0.7) | 22.95 | layer_weights={1:0.7, 2:0, 3:0.3} |
-| Auxiliary Loss (α=0.5) | 23.98 | layer_weights={1:0.5, 2:0, 3:0.5} |
-| Standard (3L) | 34.86 | baseline |
-
-詳細は `docs/experiments/` を参照。
-
----
-
-## モデル一覧
-
-| モデル | 訓練方式 | パラメータ | 用途 |
-|--------|---------|-----------|------|
-| **DEEDTransformer** | 全トークン→両層で損失 | `layer_weights` (α) | 表現学習強化 |
-| **TokenRoutedTransformer** | トークンごとに分離損失 | `routing_threshold` | 効率的推論 |
-| **MoDTransformer** | top-k選択で層スキップ | `capacity` | 動的計算量 |
-| **StandardTransformer** | 最終層のみ損失 | - | ベースライン |
+| オプション | 説明 | Reference |
+|-----------|------|-----------|
+| `layer_weights` | 層ごとの損失重み | - |
+| `layer_lr_scales` | 層ごとの学習率 | Howard & Ruder, 2018 |
+| `routing_threshold` | 推論時Early Exit | Teerapittayanon et al., 2016 |
 
 ---
 
@@ -81,8 +35,8 @@ hrm/
 ├── src/
 │   └── ease/                    # EASE フレームワーク
 │       ├── __init__.py          # メインエントリポイント
-│       ├── models.py            # DEED, TokenRouted, MoD, Standard Transformer
-│       ├── trainer.py           # UniversalConfig, UniversalTrainer, AlphaSchedule
+│       ├── models.py            # Standard, DeepSupervision Transformer
+│       ├── trainer.py           # TrainingConfig, Trainer
 │       └── modules/             # コアモジュール
 │           ├── norm.py          # RMSNorm
 │           ├── attention.py     # MultiHeadAttention, RoPE
@@ -92,51 +46,62 @@ hrm/
 │   ├── __init__.py
 │   └── utils.py                 # データ準備、シード設定
 ├── docs/
-│   ├── REFERENCES.md            # 学術的参考文献
 │   └── experiments/             # 実験結果ドキュメント
-└── run_*.py                     # 実験実行スクリプト
+└── run_experiments.py           # 実験実行スクリプト
 ```
 
 ---
 
 ## 使用方法
 
-### DEEDTransformer（α重み付け損失）
+### 基本的な使用例
 
 ```python
 import sys
 sys.path.insert(0, 'src')
 
-from ease import DEEDTransformer, UniversalConfig, UniversalTrainer
+from ease import DeepSupervisionTransformer, Trainer, TrainingConfig
 
-# α重み付け設定
-config = UniversalConfig(
-    layer_weights={1: 0.7, 2: 0, 3: 0.3},  # α=0.7
-    routing_threshold=0.9,
-    exit_layer=1,
+# モデル作成
+model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
+
+# 設定
+config = TrainingConfig(
+    layer_weights={1: 0.7, 2: 0, 3: 0.3},  # 層ごとの損失重み
+    layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1},  # 層ごとの学習率
+    routing_threshold=0.95,  # Early Exit閾値
 )
 
-model = DEEDTransformer(vocab_size=1000, dim=64, num_layers=3)
-trainer = UniversalTrainer(config, vocab_size=1000)
+# 訓練
+trainer = Trainer(config, vocab_size=1000)
 optimizer = trainer.create_optimizer(model, base_lr=1e-3)
+loss = trainer.train_epoch(model, train_batches, optimizer)
 
-loss, weights = trainer.train_epoch(model, train_batches, optimizer)
+# 評価
 stats = trainer.evaluate(model, val_batches)
 ```
 
-### TokenRoutedTransformer（トークン単位ルーティング）
+### ヘルパー関数
 
 ```python
-from ease import TokenRoutedTransformer
+from ease import create_standard_config, create_deep_supervision_config
 
-# αは不要、thresholdで損失を分離
-model = TokenRoutedTransformer(
-    vocab_size=1000, dim=64, num_layers=3,
-    exit_layer=1, routing_threshold=0.7
-)
+# Standard LLM設定
+config = create_standard_config(num_layers=3)
+# → layer_weights={1: 0, 2: 0, 3: 1}
 
-# 専用の訓練ループを使用（run_token_routing_experiment.py参照）
+# Deep Supervision設定
+config = create_deep_supervision_config(num_layers=3)
+# → layer_weights={1: 0.33, 2: 0.33, 3: 0.33}
 ```
+
+---
+
+## References
+
+- Lee et al. (2015) - Deep Supervision
+- Howard & Ruder (2018) - Discriminative Fine-Tuning
+- Teerapittayanon et al. (2016) - Early Exit
 
 ---
 
@@ -144,4 +109,3 @@ model = TokenRoutedTransformer(
 
 - [ ] より大規模なモデルでの検証実験
 - [ ] 実際の LLM (Llama 等) での検証
-- [ ] MoD (Mixture-of-Depths) との比較実験

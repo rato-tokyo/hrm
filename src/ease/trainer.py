@@ -1,21 +1,21 @@
 """
-EASE Framework - Universal Training Framework
+EASE Framework - Training Configuration
 
-Efficient Asymmetric Supervision for Early-Exit Transformers.
+Simple training framework with two base models and three options:
 
-All training methods can be expressed through this unified framework:
-- Standard LLM: weights = {1: 0, 2: 0, 3: 1}, routing_threshold = 0
-- Deep Supervision: weights = {1: 1/3, 2: 1/3, 3: 1/3}
-- Auxiliary Loss: weights = {1: 0.5, 2: 0, 3: 0.5}, routing_threshold = 0.95
-- Asymmetric (EASE): weights = {1: 0.7, 2: 0, 3: 0.3}, routing_threshold = 0.95
-- Dynamic Alpha: alpha_schedule = AlphaSchedule('linear', start=0.9, end=0.5)
-- Layer-wise LR: layer_lr_scales = {1: 1.0, 2: 0.5, 3: 0.1}
+Base Models:
+- Standard: Final layer loss only
+- Deep Supervision: Loss at all layers
+
+Options:
+- layer_weights: Layer-wise loss weights
+- layer_lr_scales: Layer-wise learning rates (Discriminative Fine-Tuning)
+- routing_threshold: Early Exit at inference
 
 References:
 - Deep Supervision: Lee et al., 2015
-- Auxiliary Loss: Elbayad et al., 2020
 - Discriminative Fine-Tuning: Howard & Ruder, 2018
-- Learning Rate Curriculum: Croitoru et al., 2024
+- Early Exit: Teerapittayanon et al., 2016
 """
 
 import torch
@@ -23,132 +23,44 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from typing import Dict, List, Tuple, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 @dataclass
-class AlphaSchedule:
+class TrainingConfig:
     """
-    Dynamic alpha schedule for curriculum learning.
+    Training configuration.
 
-    Schedules:
-        - 'constant': Fixed alpha throughout training
-        - 'linear': Linear interpolation from start to end
-        - 'cosine': Cosine annealing from start to end
-        - 'step': Step decay at specified epochs
-
-    Examples:
-        # Constant (default behavior)
-        schedule = AlphaSchedule('constant', start=0.7)
-
-        # Linear decay: 0.9 -> 0.5 over training
-        schedule = AlphaSchedule('linear', start=0.9, end=0.5)
-
-        # Cosine annealing
-        schedule = AlphaSchedule('cosine', start=0.9, end=0.5)
-
-        # Step decay
-        schedule = AlphaSchedule('step', start=0.9, end=0.5, steps=[10, 20, 30])
+    Args:
+        layer_weights: Loss weight for each layer (1-indexed).
+                      e.g., {1: 0.7, 2: 0, 3: 0.3} for asymmetric loss
+        layer_lr_scales: Learning rate scale for each layer (optional).
+                        e.g., {1: 1.0, 2: 0.5, 3: 0.1} for decreasing LR
+        routing_threshold: Confidence threshold for early exit (0 = disabled).
+        exit_layer: Which layer to use for early exit (1-indexed).
     """
-    schedule_type: str = 'constant'
-    start: float = 0.7
-    end: float = 0.5
-    steps: List[int] = field(default_factory=list)
-
-    def get_alpha(self, epoch: int, max_epochs: int) -> float:
-        """Get alpha value for given epoch."""
-        if self.schedule_type == 'constant':
-            return self.start
-
-        progress = min(1.0, epoch / max(1, max_epochs - 1))
-
-        if self.schedule_type == 'linear':
-            return self.start + (self.end - self.start) * progress
-
-        elif self.schedule_type == 'cosine':
-            return self.end + (self.start - self.end) * (1 + np.cos(np.pi * progress)) / 2
-
-        elif self.schedule_type == 'step':
-            alpha = self.start
-            step_size = (self.start - self.end) / max(1, len(self.steps))
-            for step_epoch in self.steps:
-                if epoch >= step_epoch:
-                    alpha -= step_size
-            return max(self.end, alpha)
-
-        else:
-            raise ValueError(f"Unknown schedule type: {self.schedule_type}")
-
-    def describe(self) -> str:
-        if self.schedule_type == 'constant':
-            return f"α={self.start} (constant)"
-        elif self.schedule_type == 'step':
-            return f"α: {self.start}→{self.end} (step at {self.steps})"
-        else:
-            return f"α: {self.start}→{self.end} ({self.schedule_type})"
-
-
-@dataclass
-class UniversalConfig:
-    """Universal training configuration."""
-    layer_weights: Dict[int, float]  # {layer_idx: weight} (1-indexed)
-    exit_layer: int = 1              # Early exit layer for routing
-    routing_threshold: float = 0.95  # Confidence threshold (0 = no routing)
-    normalize_weights: bool = False  # Normalize weights to sum to 1
-
-    # Dynamic alpha schedule (optional)
-    alpha_schedule: Optional[AlphaSchedule] = None
-
-    # Layer-wise learning rate scales (optional)
+    layer_weights: Dict[int, float]
     layer_lr_scales: Optional[Dict[int, float]] = None
-
-    def __post_init__(self) -> None:
-        if self.normalize_weights:
-            total = sum(self.layer_weights.values())
-            if total > 0:
-                self.layer_weights = {k: v/total for k, v in self.layer_weights.items()}
+    routing_threshold: float = 0.0
+    exit_layer: int = 1
 
     @property
     def has_routing(self) -> bool:
-        """Returns True if routing is enabled (threshold > 0)."""
+        """Returns True if early exit is enabled."""
         return self.routing_threshold > 0
-
-    @property
-    def has_dynamic_alpha(self) -> bool:
-        """Returns True if dynamic alpha is enabled."""
-        return self.alpha_schedule is not None and self.alpha_schedule.schedule_type != 'constant'
 
     @property
     def has_layer_lr(self) -> bool:
         """Returns True if layer-wise LR is configured."""
         return self.layer_lr_scales is not None
 
-    def get_layer_weights(self, epoch: int = 0, max_epochs: int = 1) -> Dict[int, float]:
-        """Get layer weights for given epoch (supports dynamic alpha)."""
-        if self.alpha_schedule is None:
-            return self.layer_weights
-
-        alpha = self.alpha_schedule.get_alpha(epoch, max_epochs)
-
-        # Apply dynamic alpha to asymmetric weights
-        new_weights = {}
-        for layer_idx, weight in self.layer_weights.items():
-            if layer_idx == 1:
-                new_weights[layer_idx] = alpha
-            elif layer_idx == max(self.layer_weights.keys()):
-                new_weights[layer_idx] = 1 - alpha
-            else:
-                new_weights[layer_idx] = weight
-        return new_weights
-
     def describe(self) -> str:
         """Human-readable description."""
         weights_str = ", ".join([f"L{k}:{v:.2f}" for k, v in sorted(self.layer_weights.items())])
-        routing_str = f"threshold={self.routing_threshold}" if self.has_routing else "disabled"
-        desc = f"Weights: [{weights_str}], Routing: {routing_str}"
+        desc = f"Weights: [{weights_str}]"
 
-        if self.has_dynamic_alpha and self.alpha_schedule is not None:
-            desc += f", {self.alpha_schedule.describe()}"
+        if self.has_routing:
+            desc += f", Early Exit: threshold={self.routing_threshold}"
 
         if self.has_layer_lr and self.layer_lr_scales is not None:
             lr_str = ", ".join([f"L{k}:{v:.2f}x" for k, v in sorted(self.layer_lr_scales.items())])
@@ -157,71 +69,44 @@ class UniversalConfig:
         return desc
 
 
-# Preset configurations
-PRESETS: Dict[str, UniversalConfig] = {
-    'standard_llm': UniversalConfig(
-        layer_weights={1: 0, 2: 0, 3: 1},
-        routing_threshold=0,
-    ),
-    'deep_supervision': UniversalConfig(
-        layer_weights={1: 1/3, 2: 1/3, 3: 1/3},
-        routing_threshold=0,
-    ),
-    'deed': UniversalConfig(
-        layer_weights={1: 1/3, 2: 1/3, 3: 1/3},
-        routing_threshold=0.7,
-    ),
-    'auxiliary_loss': UniversalConfig(
-        layer_weights={1: 0.5, 2: 0, 3: 0.5},
-        routing_threshold=0.95,
-    ),
-    'asymmetric': UniversalConfig(
-        layer_weights={1: 0.7, 2: 0, 3: 0.3},
-        routing_threshold=0.95,
-    ),
-    'asymmetric_with_l2': UniversalConfig(
-        layer_weights={1: 0.7, 2: 1.0, 3: 0.3},
-        routing_threshold=0.95,
-    ),
-}
+def create_standard_config(num_layers: int = 3) -> TrainingConfig:
+    """Create Standard LLM config (final layer loss only)."""
+    weights = {i: 0.0 for i in range(1, num_layers + 1)}
+    weights[num_layers] = 1.0
+    return TrainingConfig(layer_weights=weights)
 
 
-class UniversalTrainer:
+def create_deep_supervision_config(num_layers: int = 3) -> TrainingConfig:
+    """Create Deep Supervision config (equal loss on all layers)."""
+    weight = 1.0 / num_layers
+    weights = {i: weight for i in range(1, num_layers + 1)}
+    return TrainingConfig(layer_weights=weights)
+
+
+class Trainer:
     """
-    Universal trainer that can reproduce any training method.
+    Trainer for EASE models.
 
-    Training: Loss = Σ weights[i] * L_i_loss
-    Inference: Route based on L1 confidence if threshold > 0
+    Supports:
+    - Layer-wise loss weighting
+    - Layer-wise learning rates
+    - Early exit evaluation
     """
 
-    def __init__(self, config: UniversalConfig, vocab_size: int, device: str = 'cpu'):
+    def __init__(self, config: TrainingConfig, vocab_size: int, device: str = 'cpu'):
         self.config = config
         self.vocab_size = vocab_size
         self.device = device
-        self.current_epoch = 0
-        self.max_epochs = 1
 
-    def set_training_state(self, epoch: int, max_epochs: int) -> None:
-        """Set current training state for dynamic alpha."""
-        self.current_epoch = epoch
-        self.max_epochs = max_epochs
-
-    def get_current_weights(self) -> Dict[int, float]:
-        """Get layer weights for current epoch (supports dynamic alpha)."""
-        return self.config.get_layer_weights(self.current_epoch, self.max_epochs)
-
-    def compute_loss(self, model: nn.Module, x: torch.Tensor, y: torch.Tensor,
-                     weights: Optional[Dict[int, float]] = None) -> torch.Tensor:
+    def compute_loss(self, model: nn.Module, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         """Compute weighted loss across layers."""
         all_outputs = model.forward_all_layers(x)
         num_layers = len(all_outputs)
 
-        layer_weights = weights if weights is not None else self.get_current_weights()
-
         total_loss: torch.Tensor = torch.tensor(0.0, device=x.device)
         active_weights = 0.0
 
-        for layer_idx, weight in layer_weights.items():
+        for layer_idx, weight in self.config.layer_weights.items():
             if weight > 0 and layer_idx <= num_layers:
                 output = all_outputs[layer_idx - 1]
                 layer_loss = F.cross_entropy(
@@ -231,6 +116,7 @@ class UniversalTrainer:
                 total_loss = total_loss + weight * layer_loss
                 active_weights += weight
 
+        # Fallback to final layer if no weights
         if active_weights == 0:
             output = all_outputs[-1]
             total_loss = F.cross_entropy(output.view(-1, self.vocab_size), y.view(-1))
@@ -245,6 +131,7 @@ class UniversalTrainer:
         param_groups = []
         layer_lr_scales = self.config.layer_lr_scales or {}
 
+        # Get layers from model
         if hasattr(model, 'layers'):
             layers = model.layers
         elif hasattr(model, 'transformer_layers'):
@@ -265,6 +152,7 @@ class UniversalTrainer:
                 'name': f'layer_{layer_idx}'
             })
 
+        # Other parameters (embedding, output head)
         other_params = [p for p in model.parameters() if id(p) not in assigned_params]
         if other_params:
             param_groups.append({
@@ -277,7 +165,7 @@ class UniversalTrainer:
 
     @torch.no_grad()
     def evaluate(self, model: nn.Module, val_batches: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, float]:
-        """Evaluate model with optional routing."""
+        """Evaluate model with optional early exit."""
         model.eval()
 
         if not self.config.has_routing:
@@ -310,11 +198,11 @@ class UniversalTrainer:
         }
 
     def _evaluate_routing(self, model: nn.Module, val_batches: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, float]:
-        """Routing evaluation based on confidence."""
+        """Evaluation with early exit routing."""
         total_loss = 0.0
-        total_correct: int = 0
+        total_correct = 0
         total_tokens = 0
-        total_shallow: float = 0.0
+        total_shallow = 0.0
         total_compute = 0.0
 
         threshold = self.config.routing_threshold
@@ -359,20 +247,16 @@ class UniversalTrainer:
         }
 
     def train_epoch(self, model: nn.Module, train_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-                    optimizer: torch.optim.Optimizer, grad_clip: float = 1.0,
-                    epoch: int = 0, max_epochs: int = 1) -> Tuple[float, Dict[int, float]]:
+                    optimizer: torch.optim.Optimizer, grad_clip: float = 1.0) -> float:
         """Train for one epoch."""
         model.train()
         total_loss = 0.0
-
-        self.set_training_state(epoch, max_epochs)
-        current_weights = self.get_current_weights()
 
         for x, y in train_batches:
             x, y = x.to(self.device), y.to(self.device)
             optimizer.zero_grad()
 
-            loss = self.compute_loss(model, x, y, weights=current_weights)
+            loss = self.compute_loss(model, x, y)
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
@@ -380,4 +264,4 @@ class UniversalTrainer:
 
             total_loss += loss.item()
 
-        return total_loss / len(train_batches), current_weights
+        return total_loss / len(train_batches)

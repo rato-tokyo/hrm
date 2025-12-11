@@ -2,7 +2,7 @@
 """
 EASE: Efficient Asymmetric Supervision for Early-Exit Transformers
 
-Run all experiments using the EASE framework.
+Run experiments with different training configurations.
 
 Usage:
     python run_experiments.py
@@ -19,20 +19,21 @@ from datetime import datetime
 from typing import Dict, List
 
 from ease import (
-    DEEDTransformer,
-    UniversalConfig,
-    UniversalTrainer,
-    AlphaSchedule,
-    PRESETS,
+    StandardTransformer,
+    DeepSupervisionTransformer,
+    TrainingConfig,
+    Trainer,
+    create_standard_config,
+    create_deep_supervision_config,
 )
 from experiments import set_seed, prepare_wikitext_data, ExperimentConfig
 
 
 def run_experiment(
     name: str,
-    config: UniversalConfig,
-    model: DEEDTransformer,
-    trainer: UniversalTrainer,
+    config: TrainingConfig,
+    model: DeepSupervisionTransformer,
+    trainer: Trainer,
     train_batches: List,
     val_batches: List,
     lr: float = 1e-3,
@@ -40,34 +41,23 @@ def run_experiment(
     grad_clip: float = 1.0,
     verbose: bool = True
 ) -> Dict:
-    """Run experiment with universal trainer."""
+    """Run experiment with trainer."""
     optimizer = trainer.create_optimizer(model, base_lr=lr)
 
     best_ppl = float('inf')
     best_epoch = 0
     best_stats: Dict = {}
-    alpha_history: List[float] = []
 
     for epoch in range(max_epochs):
-        train_loss, current_weights = trainer.train_epoch(
-            model, train_batches, optimizer, grad_clip,
-            epoch=epoch, max_epochs=max_epochs
-        )
+        train_loss = trainer.train_epoch(model, train_batches, optimizer, grad_clip)
         train_ppl = np.exp(train_loss)
 
         stats = trainer.evaluate(model, val_batches)
         val_ppl = stats['ppl']
 
-        if config.has_dynamic_alpha:
-            alpha = current_weights.get(1, 0.0)
-            alpha_history.append(alpha)
-            alpha_info = f", α={alpha:.2f}"
-        else:
-            alpha_info = ""
-
         if verbose:
             routing_info = f", Shallow={stats['shallow_ratio']*100:.1f}%, Compute={stats['compute_cost']*100:.1f}%" if config.has_routing else ""
-            print(f"  Epoch {epoch+1}: Train={train_ppl:.2f}, Val={val_ppl:.2f}{routing_info}{alpha_info}")
+            print(f"  Epoch {epoch+1}: Train={train_ppl:.2f}, Val={val_ppl:.2f}{routing_info}")
 
         if val_ppl < best_ppl:
             best_ppl = val_ppl
@@ -86,15 +76,12 @@ def run_experiment(
         **best_stats
     }
 
-    if alpha_history:
-        result['alpha_history'] = alpha_history
-
     return result
 
 
 def main() -> None:
     print("=" * 70)
-    print("EASE EXPERIMENTS - UNIVERSAL TRAINING FRAMEWORK")
+    print("EASE EXPERIMENTS - SIMPLIFIED FRAMEWORK")
     print("=" * 70)
     print(f"\nStarted: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
@@ -128,184 +115,107 @@ def main() -> None:
     results: List[Dict] = []
 
     # =========================================================================
-    # Standard Models (No Routing)
+    # Part 1: Base Models (No Options)
     # =========================================================================
     print("\n" + "=" * 70)
-    print("PART 1: Standard Models (No Routing)")
+    print("PART 1: Base Models")
     print("=" * 70)
 
-    for preset_name, display_name in [
-        ('standard_llm', 'Standard LLM'),
-        ('deep_supervision', 'Deep Supervision'),
-    ]:
-        print(f"\n--- {display_name} ---")
-        config = PRESETS[preset_name]
-        print(f"Config: {config.describe()}")
-
-        set_seed(exp_config.seed)
-        model = DEEDTransformer(
-            vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
-            exit_layer=1, routing_threshold=0.8
-        )
-        trainer = UniversalTrainer(config, vocab_size=vocab_size, device=exp_config.device)
-
-        result = run_experiment(
-            name=display_name, config=config, model=model, trainer=trainer,
-            train_batches=train_batches, val_batches=val_batches,
-            lr=exp_config.lr, max_epochs=exp_config.max_epochs, grad_clip=exp_config.grad_clip
-        )
-        results.append(result)
-
-    # =========================================================================
-    # Routing Models
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("PART 2: Routing Models")
-    print("=" * 70)
-
-    for preset_name, display_name in [
-        ('auxiliary_loss', 'Auxiliary Loss (α=0.5)'),
-        ('asymmetric', 'Asymmetric (α=0.7)'),
-        ('deed', 'DEED'),
-    ]:
-        print(f"\n--- {display_name} ---")
-        config = PRESETS[preset_name]
-        print(f"Config: {config.describe()}")
-
-        set_seed(exp_config.seed)
-        model = DEEDTransformer(
-            vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
-            exit_layer=1, routing_threshold=0.8
-        )
-        trainer = UniversalTrainer(config, vocab_size=vocab_size, device=exp_config.device)
-
-        result = run_experiment(
-            name=display_name, config=config, model=model, trainer=trainer,
-            train_batches=train_batches, val_batches=val_batches,
-            lr=exp_config.lr, max_epochs=exp_config.max_epochs, grad_clip=exp_config.grad_clip
-        )
-        results.append(result)
-
-    # =========================================================================
-    # Alpha Search
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("PART 3: Alpha Optimization")
-    print("=" * 70)
-
-    for alpha in [0.6, 0.8, 0.9]:
-        display_name = f"Asymmetric (α={alpha})"
-        print(f"\n--- {display_name} ---")
-        config = UniversalConfig(
-            layer_weights={1: alpha, 2: 0, 3: 1-alpha},
-            routing_threshold=0.95
-        )
-        print(f"Config: {config.describe()}")
-
-        set_seed(exp_config.seed)
-        model = DEEDTransformer(
-            vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
-            exit_layer=1, routing_threshold=0.8
-        )
-        trainer = UniversalTrainer(config, vocab_size=vocab_size, device=exp_config.device)
-
-        result = run_experiment(
-            name=display_name, config=config, model=model, trainer=trainer,
-            train_batches=train_batches, val_batches=val_batches,
-            lr=exp_config.lr, max_epochs=exp_config.max_epochs, grad_clip=exp_config.grad_clip
-        )
-        results.append(result)
-
-    # =========================================================================
-    # L2 Loss Impact
-    # =========================================================================
-    print("\n" + "=" * 70)
-    print("PART 4: L2 Loss Impact")
-    print("=" * 70)
-
-    print("\n--- Asymmetric + L2 ---")
-    config = PRESETS['asymmetric_with_l2']
+    # Standard LLM
+    print("\n--- Standard LLM ---")
+    config = create_standard_config(num_layers=3)
     print(f"Config: {config.describe()}")
 
     set_seed(exp_config.seed)
-    model = DEEDTransformer(
+    model = DeepSupervisionTransformer(
         vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
         exit_layer=1, routing_threshold=0.8
     )
-    trainer = UniversalTrainer(config, vocab_size=vocab_size, device=exp_config.device)
+    trainer = Trainer(config, vocab_size=vocab_size, device=exp_config.device)
 
     result = run_experiment(
-        name="Asymmetric + L2", config=config, model=model, trainer=trainer,
+        name="Standard LLM", config=config, model=model, trainer=trainer,
+        train_batches=train_batches, val_batches=val_batches,
+        lr=exp_config.lr, max_epochs=exp_config.max_epochs, grad_clip=exp_config.grad_clip
+    )
+    results.append(result)
+
+    # Deep Supervision
+    print("\n--- Deep Supervision ---")
+    config = create_deep_supervision_config(num_layers=3)
+    print(f"Config: {config.describe()}")
+
+    set_seed(exp_config.seed)
+    model = DeepSupervisionTransformer(
+        vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
+        exit_layer=1, routing_threshold=0.8
+    )
+    trainer = Trainer(config, vocab_size=vocab_size, device=exp_config.device)
+
+    result = run_experiment(
+        name="Deep Supervision", config=config, model=model, trainer=trainer,
         train_batches=train_batches, val_batches=val_batches,
         lr=exp_config.lr, max_epochs=exp_config.max_epochs, grad_clip=exp_config.grad_clip
     )
     results.append(result)
 
     # =========================================================================
-    # Dynamic Alpha
+    # Part 2: With Early Exit
     # =========================================================================
     print("\n" + "=" * 70)
-    print("PART 5: Dynamic Alpha (Curriculum Learning)")
+    print("PART 2: With Early Exit")
     print("=" * 70)
 
-    for schedule_type, start, end in [
-        ('linear', 0.9, 0.5),
-        ('cosine', 0.9, 0.5),
-    ]:
-        display_name = f"Dynamic α ({schedule_type}: {start}→{end})"
-        print(f"\n--- {display_name} ---")
-
-        config = UniversalConfig(
-            layer_weights={1: start, 2: 0, 3: 1-start},
-            routing_threshold=0.95,
-            alpha_schedule=AlphaSchedule(schedule_type, start=start, end=end)
+    for alpha, name in [(0.5, "α=0.5"), (0.7, "α=0.7"), (0.8, "α=0.8")]:
+        print(f"\n--- Asymmetric ({name}) + Early Exit ---")
+        config = TrainingConfig(
+            layer_weights={1: alpha, 2: 0, 3: 1-alpha},
+            routing_threshold=0.95
         )
         print(f"Config: {config.describe()}")
 
         set_seed(exp_config.seed)
-        model = DEEDTransformer(
+        model = DeepSupervisionTransformer(
             vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
             exit_layer=1, routing_threshold=0.8
         )
-        trainer = UniversalTrainer(config, vocab_size=vocab_size, device=exp_config.device)
+        trainer = Trainer(config, vocab_size=vocab_size, device=exp_config.device)
 
         result = run_experiment(
-            name=display_name, config=config, model=model, trainer=trainer,
+            name=f"Asymmetric ({name})", config=config, model=model, trainer=trainer,
             train_batches=train_batches, val_batches=val_batches,
             lr=exp_config.lr, max_epochs=exp_config.max_epochs, grad_clip=exp_config.grad_clip
         )
         results.append(result)
 
     # =========================================================================
-    # Layer-wise Learning Rate
+    # Part 3: With Layer-wise Learning Rate
     # =========================================================================
     print("\n" + "=" * 70)
-    print("PART 6: Layer-wise Learning Rate")
+    print("PART 3: With Layer-wise Learning Rate (Discriminative Fine-Tuning)")
     print("=" * 70)
 
-    for lr_config_name, lr_scales in [
-        ("Decreasing LR (1.0, 0.5, 0.1)", {1: 1.0, 2: 0.5, 3: 0.1}),
-        ("Increasing LR (0.1, 0.5, 1.0)", {1: 0.1, 2: 0.5, 3: 1.0}),
+    for lr_name, lr_scales in [
+        ("Decreasing LR", {1: 1.0, 2: 0.5, 3: 0.1}),
+        ("Increasing LR", {1: 0.1, 2: 0.5, 3: 1.0}),
     ]:
-        display_name = f"Layer-wise LR: {lr_config_name}"
-        print(f"\n--- {display_name} ---")
-
-        config = UniversalConfig(
+        print(f"\n--- {lr_name} ---")
+        config = TrainingConfig(
             layer_weights={1: 0.7, 2: 0, 3: 0.3},
-            routing_threshold=0.95,
-            layer_lr_scales=lr_scales
+            layer_lr_scales=lr_scales,
+            routing_threshold=0.95
         )
         print(f"Config: {config.describe()}")
 
         set_seed(exp_config.seed)
-        model = DEEDTransformer(
+        model = DeepSupervisionTransformer(
             vocab_size, exp_config.dim, num_layers=3, num_heads=exp_config.num_heads,
             exit_layer=1, routing_threshold=0.8
         )
-        trainer = UniversalTrainer(config, vocab_size=vocab_size, device=exp_config.device)
+        trainer = Trainer(config, vocab_size=vocab_size, device=exp_config.device)
 
         result = run_experiment(
-            name=display_name, config=config, model=model, trainer=trainer,
+            name=f"Layer-wise LR: {lr_name}", config=config, model=model, trainer=trainer,
             train_batches=train_batches, val_batches=val_batches,
             lr=exp_config.lr, max_epochs=exp_config.max_epochs, grad_clip=exp_config.grad_clip
         )
@@ -342,12 +252,6 @@ def main() -> None:
         print(f"  - Best model: {improvement:.1f}% better than Standard LLM")
         if compute_save > 0:
             print(f"  - Compute savings: {compute_save:.1f}%")
-
-    asym = next((r for r in results if r['name'] == 'Asymmetric (α=0.7)'), None)
-    asym_l2 = next((r for r in results if r['name'] == 'Asymmetric + L2'), None)
-    if asym and asym_l2:
-        l2_impact = (asym_l2['best_ppl'] - asym['best_ppl']) / asym['best_ppl'] * 100
-        print(f"  - L2 loss impact: {l2_impact:+.1f}% (adding L2 loss hurts performance)")
 
     print(f"\nCompleted: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 

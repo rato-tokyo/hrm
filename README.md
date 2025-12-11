@@ -1,12 +1,17 @@
 # EASE: Efficient Asymmetric Supervision for Early-Exit Transformers
 
-A unified training framework for Early-Exit Transformers.
+A simple training framework with two base models and three options.
 
-## Key Findings
+## Base Models
 
-- **L2 Loss = 0**: Intermediate layers should NOT have prediction loss (+63% degradation with L2)
-- **Asymmetric Loss (α=0.7)**: Better than standard α=0.5 auxiliary loss
-- **Discriminative Fine-Tuning**: Layer-wise LR achieves best results (46.9% improvement)
+- **StandardTransformer**: Final layer loss only
+- **DeepSupervisionTransformer**: Loss at all layers with early exit support
+
+## Options
+
+- **layer_weights**: Layer-wise loss weights
+- **layer_lr_scales**: Layer-wise learning rates (Discriminative Fine-Tuning)
+- **routing_threshold**: Early exit at inference
 
 ## Quick Start
 
@@ -14,40 +19,40 @@ A unified training framework for Early-Exit Transformers.
 import sys
 sys.path.insert(0, 'src')
 
-from ease import DEEDTransformer, UniversalTrainer, PRESETS
+from ease import DeepSupervisionTransformer, Trainer, TrainingConfig
 
-# Use preset configuration
-config = PRESETS['asymmetric']  # α=0.7, L2=0, routing_threshold=0.95
+# Create model
+model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
 
-# Create model and trainer
-model = DEEDTransformer(vocab_size=1000, dim=64, num_layers=3)
-trainer = UniversalTrainer(config, vocab_size=1000)
+# Configure training
+config = TrainingConfig(
+    layer_weights={1: 0.7, 2: 0, 3: 0.3},  # Asymmetric loss
+    layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1},  # Discriminative Fine-Tuning
+    routing_threshold=0.95,  # Early exit
+)
+
+# Create trainer
+trainer = Trainer(config, vocab_size=1000)
 optimizer = trainer.create_optimizer(model, base_lr=1e-3)
 
 # Train
-loss, weights = trainer.train_epoch(model, train_batches, optimizer)
+loss = trainer.train_epoch(model, train_batches, optimizer)
 
 # Evaluate
 stats = trainer.evaluate(model, val_batches)
 ```
 
-## Available Presets
+## Helper Functions
 
-| Preset | Description |
-|--------|-------------|
-| `standard_llm` | Final layer loss only |
-| `deep_supervision` | Equal loss on all layers (Lee et al., 2015) |
-| `deed` | Deep Supervision + Early Exit (Tang et al., 2023) |
-| `auxiliary_loss` | α=0.5 on L1 and L3 (Elbayad et al., 2020) |
-| `asymmetric` | α=0.7, L2=0 (Ours) |
+```python
+from ease import create_standard_config, create_deep_supervision_config
 
-## Results
+# Standard LLM: final layer loss only
+config = create_standard_config(num_layers=3)
 
-| Model | PPL | vs Standard |
-|-------|-----|-------------|
-| Layer-wise LR (Decreasing) | 18.52 | **46.9% better** |
-| Asymmetric (α=0.7) | 22.95 | 34.2% better |
-| Standard LLM | 34.86 | baseline |
+# Deep Supervision: equal loss on all layers
+config = create_deep_supervision_config(num_layers=3)
+```
 
 ## Run Experiments
 
@@ -58,10 +63,8 @@ python run_experiments.py
 ## References
 
 - Lee et al. (2015) - Deep Supervision
-- Tang et al. (2023) - DEED: Deep Supervision + Dynamic Early Exit
-- Elbayad et al. (2020) - Depth-Adaptive Transformer
 - Howard & Ruder (2018) - Discriminative Fine-Tuning
-- Teerapittayanon et al. (2016) - BranchyNet
+- Teerapittayanon et al. (2016) - Early Exit
 
 ## License
 
