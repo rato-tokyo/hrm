@@ -17,7 +17,7 @@ without adding extra parameters for auxiliary heads.
 import torch
 import torch.nn as nn
 import math
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 
 from .transformer import TransformerBlock
 
@@ -114,7 +114,7 @@ def compute_lpt_loss(
     target: torch.Tensor,
     vocab_size: int,
     mode: str = 'sum',
-    layer_weights: List[float] = None
+    layer_weights: Optional[List[float]] = None
 ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
     """
     Compute Layer-wise Progressive Training loss.
@@ -139,15 +139,16 @@ def compute_lpt_loss(
         )
         layer_losses.append(loss)
 
+    total_loss: torch.Tensor
     if mode == 'sum':
         # Equal weight for all layers
-        total_loss = sum(layer_losses)
+        total_loss = torch.stack(layer_losses).sum()
     elif mode == 'weighted':
         # Weighted sum (default: deeper layers have higher weight)
         if layer_weights is None:
             # Linear weighting: [1, 2, 3, 4] for 4 layers
             layer_weights = [i + 1 for i in range(num_layers)]
-        total_loss = sum(w * l for w, l in zip(layer_weights, layer_losses))
+        total_loss = torch.stack([w * loss for w, loss in zip(layer_weights, layer_losses)]).sum()
     elif mode == 'final_only':
         # Only use final layer (for comparison)
         total_loss = layer_losses[-1]

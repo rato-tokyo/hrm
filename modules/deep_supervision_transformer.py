@@ -115,7 +115,7 @@ class DeepSupervisionTransformer(nn.Module):
         self,
         x: torch.Tensor,
         num_segments: int = 1
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         """
         Forward with deep supervision (multiple segments).
 
@@ -127,7 +127,7 @@ class DeepSupervisionTransformer(nn.Module):
             y_hat: Final output predictions
             state: Final hidden state
         """
-        state = None
+        state: Optional[torch.Tensor] = None
 
         for _ in range(num_segments):
             state, y_hat = self.forward_pass(x, state)
