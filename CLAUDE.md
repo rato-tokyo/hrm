@@ -109,3 +109,5 @@ config = create_deep_supervision_config(num_layers=3)
 
 - [ ] より大規模なモデルでの検証実験
 - [ ] 実際の LLM (Llama 等) での検証
+- [ ] フレームワーク名を **L3T** (Layer-wise Loss, LR, and Threshold) に変更
+  - 3つのオプション（layer_weights, layer_lr_scales, routing_threshold）を明示的に表現

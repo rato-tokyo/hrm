@@ -66,6 +66,11 @@ python run_experiments.py
 - Howard & Ruder (2018) - Discriminative Fine-Tuning
 - Teerapittayanon et al. (2016) - Early Exit
 
+## Future Plans
+
+- 将来的にフレームワーク名を **L3T** (Layer-wise Loss, LR, and Threshold) に変更予定
+  - 3つのオプションを明示的に表現する名前
+
 ## License
 
 MIT
