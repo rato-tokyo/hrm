@@ -243,15 +243,15 @@ def main():
     BASE_LR = 1e-3
 
     # ===========================================================================
-    # Phase 1: 中規模データで動作確認
+    # Phase 1: 小規模データで動作確認
     # ===========================================================================
 
     print("\n" + "="*60)
-    print("Phase 1: Medium-scale Data (10K samples)")
+    print("Phase 1: Small-scale Data (1K samples)")
     print("="*60)
 
-    NUM_SAMPLES_SMALL = 10000
-    BATCH_SIZE_SMALL = 64
+    NUM_SAMPLES_SMALL = 1000
+    BATCH_SIZE_SMALL = 32
     NUM_EPOCHS_SMALL = 50  # Early Stoppingで自動終了
     PATIENCE_SMALL = 1
 
@@ -313,16 +313,16 @@ def main():
     plot_comparison([result_standard_small, result_deep_supervision_small], "Phase 1")
 
     # ===========================================================================
-    # Phase 2: 大規模データで精度比較
+    # Phase 2: 中規模データで精度比較
     # ===========================================================================
 
     print("\n" + "="*60)
-    print("Phase 2: Large-scale Data (100K samples)")
+    print("Phase 2: Medium-scale Data (10K samples)")
     print("="*60)
 
-    NUM_SAMPLES_MEDIUM = 100000
-    BATCH_SIZE_MEDIUM = 128
-    NUM_EPOCHS_MEDIUM = 100  # Early Stoppingで自動終了
+    NUM_SAMPLES_MEDIUM = 10000
+    BATCH_SIZE_MEDIUM = 64
+    NUM_EPOCHS_MEDIUM = 50  # Early Stoppingで自動終了
     PATIENCE_MEDIUM = 1
 
     train_loader_medium, val_loader_medium = prepare_dataloaders(
@@ -390,11 +390,11 @@ def main():
     print(f"{'Phase':<20} {'Model':<30} {'Best Val Acc':<15} {'Training Time':<15}")
     print("-"*90)
 
-    print(f"{'Phase 1 (10K)':<20} {'Standard':<30} {result_standard_small['best_val_acc']:>12.2f}% {result_standard_small['training_time']:>12.2f}s")
-    print(f"{'Phase 1 (10K)':<20} {'Deep Supervision':<30} {result_deep_supervision_small['best_val_acc']:>12.2f}% {result_deep_supervision_small['training_time']:>12.2f}s")
+    print(f"{'Phase 1 (1K)':<20} {'Standard':<30} {result_standard_small['best_val_acc']:>12.2f}% {result_standard_small['training_time']:>12.2f}s")
+    print(f"{'Phase 1 (1K)':<20} {'Deep Supervision':<30} {result_deep_supervision_small['best_val_acc']:>12.2f}% {result_deep_supervision_small['training_time']:>12.2f}s")
     print("-"*90)
-    print(f"{'Phase 2 (100K)':<20} {'Standard':<30} {result_standard_medium['best_val_acc']:>12.2f}% {result_standard_medium['training_time']:>12.2f}s")
-    print(f"{'Phase 2 (100K)':<20} {'Deep Supervision':<30} {result_deep_supervision_medium['best_val_acc']:>12.2f}% {result_deep_supervision_medium['training_time']:>12.2f}s")
+    print(f"{'Phase 2 (10K)':<20} {'Standard':<30} {result_standard_medium['best_val_acc']:>12.2f}% {result_standard_medium['training_time']:>12.2f}s")
+    print(f"{'Phase 2 (10K)':<20} {'Deep Supervision':<30} {result_deep_supervision_medium['best_val_acc']:>12.2f}% {result_deep_supervision_medium['training_time']:>12.2f}s")
     print("="*90)
 
     # 勝者判定
