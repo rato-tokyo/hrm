@@ -20,33 +20,9 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-@dataclass
-class ExperimentConfig:
-    """Configuration for experiments."""
-    # Data
-    train_chars: int = 100000
-    val_chars: int = 10000
-    seq_len: int = 64
-    batch_size: int = 32
-
-    # Model
-    dim: int = 64
-    num_heads: int = 4
-    num_layers: int = 3
-
-    # Training
-    lr: float = 1e-3
-    max_epochs: int = 50
-    grad_clip: float = 1.0
-
-    # Early stopping
-    patience: int = 0  # 0 = stop immediately when val worsens
-
-    # Device
-    device: str = 'cpu'
-
-    # Random seed
-    seed: int = 42
+def get_device() -> str:
+    """Get available compute device (CUDA if available, otherwise CPU)."""
+    return 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 def prepare_wikitext_data(

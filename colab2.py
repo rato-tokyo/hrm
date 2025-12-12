@@ -44,7 +44,7 @@ from ease import (
 )
 
 sys.path.insert(0, 'experiments')
-from utils import set_seed, create_wikitext_dataloaders
+from utils import set_seed, get_device, create_wikitext_dataloaders
 
 
 # ==============================================================================
@@ -81,21 +81,20 @@ CONFIG = ExperimentConfig()
 # ==============================================================================
 # Utility Functions
 # ==============================================================================
-# Note: All ASHEM utility functions are now imported from src/ease/trainer.py:
+# Note: All utility functions are now imported from framework modules:
+#
+# ASHEM functions (from src/ease/trainer.py):
 # - compute_confidence_threshold()
 # - collect_hard_examples()
 # - create_hard_example_loader()
 # - train_upper_layers()
 # - evaluate_on_hard_examples()
 #
-# Data utilities imported from experiments/utils.py:
+# Data/Device utilities (from experiments/utils.py):
 # - set_seed()
+# - get_device()
 # - create_wikitext_dataloaders()
 # ==============================================================================
-
-def get_device() -> str:
-    """Get available compute device (CUDA if available, otherwise CPU)."""
-    return 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
 # ==============================================================================
