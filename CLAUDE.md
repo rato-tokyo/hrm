@@ -12,12 +12,11 @@
 
 ### コアコンセプト: 層の柔軟な組み合わせ
 
-**LASH**の3つのコアオプションで全てを制御：
+**LASH**の2つのコアオプションで全てを制御：
 
 | オプション | 説明 | Reference |
 |-----------|------|-----------|
 | **layer_weights** | 層ごとの損失重み（どの層で学習するか） | - |
-| **layer_lr_scales** | 層ごとの学習率スケール | Howard & Ruder, 2018 |
 | **routing_threshold** | 推論時Early Exit閾値 | Teerapittayanon et al., 2016 |
 
 **重要**: StandardとDeep Supervisionは単なる設定パターンの違い。同じフレームワークで実現可能。
@@ -55,19 +54,10 @@ config = TrainingConfig(
 )
 ```
 
-#### パターン4: Discriminative Fine-Tuning（層ごとの学習率）
+#### パターン4: 完全カスタム（非対称 + Early Exit）
 ```python
 config = TrainingConfig(
-    layer_weights={1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 1},  # 最終層のみ
-    layer_lr_scales={1: 1.0, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2, 6: 0.1}  # 深い層ほど低学習率
-)
-```
-
-#### パターン5: 完全カスタム（全オプション活用）
-```python
-config = TrainingConfig(
-    layer_weights={1: 0.7, 2: 0, 3: 0.3, 4: 0, 5: 0, 6: 0},  # Layer 1重視
-    layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1, 4: 0.05, 5: 0.02, 6: 0.01},
+    layer_weights={1: 0.7, 2: 0, 3: 0.3, 4: 0, 5: 0, 6: 0},  # Layer 1と3のみ
     routing_threshold=0.9,  # Layer 1で90%信頼度あれば終了
     exit_layer=1
 )
@@ -125,11 +115,10 @@ from ease import DeepSupervisionTransformer, Trainer, TrainingConfig
 # モデル作成
 model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
 
-# 設定: LASHの3つのオプションで全てを制御
+# 設定: LASHの2つのコアオプションで全てを制御
 config = TrainingConfig(
-    layer_weights={1: 0.7, 2: 0, 3: 0.3},        # 層ごとの損失重み
-    layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1},    # 層ごとの学習率
-    routing_threshold=0.95,                       # Early Exit閾値
+    layer_weights={1: 0.7, 2: 0, 3: 0.3},  # 層ごとの損失重み
+    routing_threshold=0.95,                 # Early Exit閾値
 )
 
 # 訓練
@@ -196,7 +185,7 @@ result = trainer.train_with_early_stopping(
 
 ## 訓練戦略
 
-LASHフレームワークは4つの訓練戦略をサポート：
+LASHフレームワークは3つの訓練戦略をサポート：
 
 ### 1. Standard
 最終層のみで学習（従来のLLM訓練）
@@ -210,16 +199,7 @@ config = TrainingConfig(layer_weights={1: 0, 2: 0, 3: 1})
 config = TrainingConfig(layer_weights={1: 0.33, 2: 0.33, 3: 0.33})
 ```
 
-### 3. Discriminative Fine-Tuning
-層ごとの学習率設定（Howard & Ruder, 2018）
-```python
-config = TrainingConfig(
-    layer_weights={1: 0, 2: 0, 3: 1},
-    layer_lr_scales={1: 1.0, 2: 0.8, 3: 0.6}
-)
-```
-
-### 4. ASHEM (Adaptive Supervision via Hard Example Mining)
+### 3. ASHEM (Adaptive Supervision via Hard Example Mining)
 Hard examplesに特化した段階的訓練戦略
 
 **新規性**: 両サーベイ論文（2024-2025）にEarly ExitとHard Example Miningの組み合わせに関する記述なし
@@ -388,7 +368,7 @@ if torch.cuda.is_available():
 
 **メイン**: LASH: Layered Adaptive Supervision Hierarchy for Efficient Transformer Training
 
-**サブタイトル**: A Unified Framework Supporting Multiple Training Strategies
+**サブタイトル**: A Unified Framework with 2 Core Options
 
 ### 新規性（Novelty）の主張
 
@@ -399,13 +379,13 @@ if torch.cuda.is_available():
 #### 1. 統一フレームワークとしての新規性
 
 **既存研究の問題点**:
-- Deep Supervision、Discriminative Fine-Tuning、Early Exitは個別に提案された
+- Deep Supervision、Early Exitは個別に提案された
 - これらを組み合わせるには別々の実装が必要
 - 柔軟な戦略カスタマイズが困難
 
 **LASHの貢献**:
-- 3つのコアオプション（`layer_weights`, `layer_lr_scales`, `routing_threshold`）で全ての戦略を統一的に実現
-- 単一フレームワークで4つ以上の訓練戦略をサポート
+- 2つのコアオプション（`layer_weights`, `routing_threshold`）で全ての戦略を統一的に実現
+- 単一フレームワークで3つ以上の訓練戦略をサポート
 - 無限の戦略カスタマイズが可能
 
 **各オプションの新規性分析**:
@@ -416,21 +396,15 @@ if torch.cuda.is_available():
    - ✅ **LASHの独自性**: 任意の非対称パターンが可能（例: `{1: 0.7, 2: 0, 3: 0.3}`）
    - ✅ ゼロ重みによる層のスキップが可能
 
-2. **`layer_lr_scales` (層ごとの学習率)**:
-   - ✅ **Strong Novelty**: 両サーベイ論文で**一切言及されていない**
-   - Howard & Ruder (2018)のDiscriminative Fine-Tuningを引用しているが、Early Exitとの統合は本研究が初
-   - ACM Surveyの6種類の訓練戦略にも含まれていない
-
-3. **`routing_threshold` (Early Exit閾値)**:
+2. **`routing_threshold` (Early Exit閾値)**:
    - ⚠️ Early Exit自体は既存技術（Teerapittayanon et al., 2016 - BranchyNet以降）
-   - ✅ **LASHの独自性**: 他の2つのパラメータとの統合
+   - ✅ **LASHの独自性**: layer_weightsとの統合による柔軟な制御
 
 **修正されたClaim**:
 "While existing work uses layer-wise loss weights with simple patterns (typically wi=i) [Survey'24], LASH is the first framework to simultaneously integrate:
 1) Arbitrary asymmetric layer-wise supervision patterns
-2) Discriminative learning rates (not discussed in early exit literature)
-3) Early exit mechanisms
-through three independent, composable configuration parameters."
+2) Early exit mechanisms with flexible control
+through two independent, composable configuration parameters."
 
 #### 2. ASHEM訓練戦略の新規性
 
@@ -460,17 +434,15 @@ This is the first method to combine hard example mining with selective layer exp
 ### 新規性評価の総括
 
 **✅ 確認された強い新規性**:
-1. **Discriminative Learning Rates (`layer_lr_scales`)**
-   - 両サーベイ論文(ACM Survey Nov 2024, NLP Survey Jan 2025)で一切言及なし
-   - Early Exitの文脈での統合は本研究が初めて
-
-2. **Hard Example Mining + Early Exit**
+1. **Hard Example Mining + Selective Layer Expansion + Early Exit**
    - 両サーベイ論文で組み合わせに関する記述なし
    - 言語モデリングへの適用は本研究が初めて
+   - Two-Phase Training（浅層→深層への段階的展開）
 
-3. **3パラメータ統合フレームワーク**
-   - 独立かつ組み合わせ可能な3つのパラメータによる統一的制御
+2. **2パラメータ統合フレームワーク**
+   - 独立かつ組み合わせ可能な2つのパラメータによる統一的制御
    - 既存手法は個別実装が必要
+   - 任意の非対称層重みパターンの実現
 
 **⚠️ 既存技術を含む要素**:
 1. **Layer-wise Loss Weights**: 既存研究で使用済み（ただし任意パターンは新規）

@@ -10,7 +10,7 @@
 **LASH: Layered Adaptive Supervision Hierarchy for Efficient Transformer Training**
 
 ### サブタイトル（英語）
-**A Unified Framework Supporting Multiple Training Strategies including ASHEM**
+**A Unified Framework with 2 Core Options**
 
 ### 日本語タイトル
 **LASH: 効率的Transformer訓練のための階層的適応学習フレームワーク**
@@ -24,14 +24,13 @@
 #### 新規性
 **完全に統一された柔軟な訓練フレームワーク**
 
-従来の研究では、各訓練手法（Deep Supervision、Discriminative Fine-Tuning、Early Exit等）は個別に提案され、別々の実装を必要としていた。LASHは、これらすべてを**3つのコアオプション**で統一的に実現する初のフレームワーク。
+従来の研究では、各訓練手法（Deep Supervision、Early Exit等）は個別に提案され、別々の実装を必要としていた。LASHは、これらすべてを**2つのコアオプション**で統一的に実現する初のフレームワーク。
 
-#### 3つのコアオプション
+#### 2つのコアオプション
 
 | オプション | 説明 | 対応する既存研究 |
 |-----------|------|----------------|
 | **layer_weights** | 層ごとの損失重み | Deep Supervision (Lee et al., 2015) |
-| **layer_lr_scales** | 層ごとの学習率 | Discriminative Fine-Tuning (Howard & Ruder, 2018) |
 | **routing_threshold** | Early Exit閾値 | Early Exit (Teerapittayanon et al., 2016) |
 
 #### 技術的貢献
@@ -45,9 +44,8 @@
 | 既存研究 | 実現方法 | LASHでの実現 |
 |---------|---------|------------|
 | Deep Supervision | 専用モデル実装 | `layer_weights={1: 0.33, 2: 0.33, 3: 0.33}` |
-| Discriminative FT | 個別optimizer実装 | `layer_lr_scales={1: 1.0, 2: 0.8, 3: 0.6}` |
 | Early Exit | 特殊な推論ルーチン | `routing_threshold=0.95` |
-| ASHEM (本研究) | フレームワーク統合 | `ASHEMConfig` + 3つのオプション |
+| ASHEM (本研究) | フレームワーク統合 | `ASHEMConfig` + 2つのオプション |
 
 ### 2. ASHEM Training Strategy（副次的貢献）
 
@@ -102,9 +100,8 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 
 ### 3. LASH Framework
 - 設計思想: 柔軟性と統一性
-- 3つのコアオプション
+- 2つのコアオプション
   - layer_weights: 層ごとの損失重み
-  - layer_lr_scales: 層ごとの学習率
   - routing_threshold: Early Exit閾値
 - 実装詳細
   - TrainingConfig
@@ -112,8 +109,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 - サポートする訓練戦略
   1. Standard
   2. Deep Supervision
-  3. Discriminative Fine-Tuning
-  4. ASHEM（本研究）
+  3. ASHEM（本研究）
 
 ### 4. ASHEM Training Strategy
 - 動機: Hard Examplesの効率的学習
@@ -234,8 +230,8 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 **主張**: 「既存の訓練手法を統一的に実現する初のフレームワーク」
 
 **根拠**:
-- Deep Supervision、Discriminative FT、Early Exitを単一インターフェースで実現
-- 3つのコアオプションで全てを制御
+- Deep Supervision、Early Exitを単一インターフェースで実現
+- 2つのコアオプションで全てを制御
 - 自動最適化により8%高速化
 
 ### ASHEM訓練戦略
@@ -320,8 +316,8 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 ## 📌 まとめ
 
 **LASH**: 既存訓練手法を統一的に実現する柔軟なフレームワーク
-- 3つのコアオプション
-- 4つの訓練戦略サポート
+- 2つのコアオプション
+- 3つの訓練戦略サポート
 - 自動最適化
 
 **ASHEM**: Hard Example Miningベースの新訓練戦略

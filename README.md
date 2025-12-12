@@ -10,17 +10,16 @@
 
 ## 🎯 Overview
 
-LASH is a flexible Transformer training framework that unifies multiple training strategies through **3 core options**:
+LASH is a flexible Transformer training framework that unifies multiple training strategies through **2 core options**:
 
 | Option | Description | Reference |
 |--------|-------------|-----------|
 | **layer_weights** | Layer-wise loss weights | - |
-| **layer_lr_scales** | Layer-wise learning rates | Howard & Ruder, 2018 |
 | **routing_threshold** | Early exit at inference | Teerapittayanon et al., 2016 |
 
 ### Key Features
 
-- 🚀 **Unified Interface**: Single framework supporting 4+ training strategies
+- 🚀 **Unified Interface**: Single framework supporting 3+ training strategies
 - ⚡ **Efficient**: 8.4% speedup with automatic optimization
 - 🎨 **Flexible**: Combine options freely for custom strategies
 - 📊 **Production Ready**: Validated on WikiText-2 with ASHEM strategy
@@ -69,11 +68,10 @@ from ease import DeepSupervisionTransformer, Trainer, TrainingConfig
 # Create model
 model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
 
-# Configure training (LASH's 3 core options)
+# Configure training (LASH's 2 core options)
 config = TrainingConfig(
-    layer_weights={1: 0.7, 2: 0, 3: 0.3},        # Layer-wise loss weights
-    layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1},    # Layer-wise learning rates
-    routing_threshold=0.95,                       # Early exit threshold
+    layer_weights={1: 0.7, 2: 0, 3: 0.3},  # Layer-wise loss weights
+    routing_threshold=0.95,                 # Early exit threshold
 )
 
 # Train
@@ -105,15 +103,7 @@ config = TrainingConfig(layer_weights={1: 0, 2: 0, 3: 1})
 config = TrainingConfig(layer_weights={1: 0.33, 2: 0.33, 3: 0.33})
 ```
 
-### 3. Discriminative Fine-Tuning
-```python
-config = TrainingConfig(
-    layer_weights={1: 0, 2: 0, 3: 1},
-    layer_lr_scales={1: 1.0, 2: 0.8, 3: 0.6}
-)
-```
-
-### 4. ASHEM (Novel Strategy)
+### 3. ASHEM (Novel Strategy)
 ```python
 from ease import ASHEMConfig
 

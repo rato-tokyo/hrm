@@ -1,29 +1,27 @@
 """
 ASHEM (Adaptive Supervision via Hard Example Mining) Experiment
 
-**Experiment Version**: ASHEM with Soft Freezing (layer_lr_scales)
+**Experiment Version**: ASHEM with Hard Freezing
 **Date**: 2025-12-12
-**Modification**: Phase 2 uses discriminative learning rates instead of hard freezing
+**Dataset**: WikiText-2 (10K samples)
 
 This experiment demonstrates the ASHEM training strategy integrated with LASH framework:
 1. Phase 1: Train a shallow model (2 layers) on all data
 2. Identify hard examples using confidence-based threshold (auto-adjusted)
 3. Phase 2: Train additional layers (2 more) on hard examples only
-   - **NEW**: Soft Freezing with layer-wise learning rates
-   - Layer 1-2: Low LR (1%, 5%) instead of frozen
-   - Layer 3-4: Moderate to high LR (50%, 100%)
+   - Hard Freezing: Layer 1-2 completely frozen (requires_grad=False)
+   - Layer 3-4: Trainable
 4. Inference: Two-stage routing using LASH's Early Exit mechanism
 
 Key Benefits:
 - Focuses computational resources on hard examples during training
-- **Target**: Improve upon baseline 78% (PPL: 2600 → 571) on hard examples
+- Hard PPL: 78% improvement (2763 → 668)
 - Reduces compute cost by 36% using adaptive routing
-- Fully integrated with LASH framework for clean implementation
+- Fully integrated with LASH framework's 2 core options
 
-Baseline Results (Hard Freezing):
-- Val PPL: 823.89
-- Hard PPL: 571.10
-- Compute: 63.98% of full model
+LASH Framework (2 Core Options):
+1. layer_weights: Which layers to train (loss weights)
+2. routing_threshold: When to exit early (inference efficiency)
 
 References:
 - LASH: Layered Adaptive Supervision Hierarchy (本フレームワーク)
@@ -262,46 +260,43 @@ def run_experiment(
     print("✓ Copied weights from 2-layer model")
     print("✓ Layers 3-4 randomly initialized")
 
-    # Soft Freezing with layer-wise learning rates
-    # Instead of hard freezing (requires_grad=False), we use discriminative learning rates
-    print("\n📊 Soft Freezing Configuration:")
-    print("  Layer 1: 1% LR (almost frozen)")
-    print("  Layer 2: 5% LR (light updates)")
-    print("  Layer 3: 50% LR (moderate updates)")
-    print("  Layer 4: 100% LR (full updates)")
+    # Hard Freezing: Freeze lower layers
+    print("\n📊 Hard Freezing Configuration:")
+    print("  Layer 1-2: Frozen (requires_grad=False)")
+    print("  Layer 3-4: Trainable")
 
-    # Configure training with layer-wise learning rates
+    for param in model_extended.embedding.parameters():
+        param.requires_grad = False
+    for i in range(CONFIG.ashem.phase1_layers):
+        for param in model_extended.layers[i].parameters():
+            param.requires_grad = False
+
+    # Configure training (final layer only for loss)
     phase2_config = TrainingConfig(
-        layer_weights={1: 0, 2: 0, 3: 0, 4: 1},  # Final layer only for loss
-        layer_lr_scales={
-            1: 0.01,  # Layer 1: 1% learning rate
-            2: 0.05,  # Layer 2: 5% learning rate
-            3: 0.5,   # Layer 3: 50% learning rate
-            4: 1.0    # Layer 4: 100% learning rate
-        }
+        layer_weights={1: 0, 2: 0, 3: 0, 4: 1}  # Final layer only for loss
     )
 
     trainer_phase2 = Trainer(phase2_config, vocab_size=CONFIG.vocab_size)
 
     trainable = sum(p.numel() for p in model_extended.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model_extended.parameters())
-    print("\n✓ All layers trainable with discriminative LRs")
+    print(f"\n✓ Frozen lower layers")
     print(f"  Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.1f}%)")
 
     # Create hard example loader
     hard_batches = create_hard_example_loader(hard_examples, CONFIG.phase2_batch)
     print(f"  Hard example batches: {len(hard_batches)}")
 
-    # Train upper layers with layer-wise learning rates
+    # Train upper layers only
     optimizer_upper = trainer_phase2.create_optimizer(
         model_extended,
         base_lr=CONFIG.ashem.phase2_lr
     )
-    print(f"  Base learning rate: {CONFIG.ashem.phase2_lr:.1e}")
-    print(f"  Layer 1 effective LR: {CONFIG.ashem.phase2_lr * 0.01:.2e}")
-    print(f"  Layer 2 effective LR: {CONFIG.ashem.phase2_lr * 0.05:.2e}")
-    print(f"  Layer 3 effective LR: {CONFIG.ashem.phase2_lr * 0.5:.2e}")
-    print(f"  Layer 4 effective LR: {CONFIG.ashem.phase2_lr * 1.0:.2e}")
+
+    print(f"\n📊 Training Configuration:")
+    print(f"  Learning rate: {CONFIG.ashem.phase2_lr:.1e}")
+    print(f"  Patience: {CONFIG.ashem.phase2_patience}")
+    print(f"  Max epochs: {CONFIG.phase2_epochs}")
 
     # Training loop with early stopping
     best_val_ppl = float('inf')

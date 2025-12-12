@@ -10,18 +10,15 @@ Base Models:
 Training Strategies:
 1. Standard: Final layer loss only
 2. Deep Supervision: Loss at all layers
-3. Discriminative Fine-Tuning: Layer-wise learning rates
-4. ASHEM: Hard example mining with progressive layer addition
+3. ASHEM: Hard example mining with selective layer expansion
 
-Core Options:
+Core Options (2つのコアオプション):
 - layer_weights: Layer-wise loss weights
-- layer_lr_scales: Layer-wise learning rates
 - routing_threshold: Early Exit at inference
 
 References:
 - LASH: Layered Adaptive Supervision Hierarchy
 - Deep Supervision: Lee et al., 2015
-- Discriminative Fine-Tuning: Howard & Ruder, 2018
 - Early Exit: Teerapittayanon et al., 2016
 - ASHEM: Adaptive Supervision via Hard Example Mining
 """
@@ -37,18 +34,19 @@ from dataclasses import dataclass
 @dataclass
 class TrainingConfig:
     """
-    Training configuration.
+    Training configuration for LASH framework.
+
+    LASH (Layered Adaptive Supervision Hierarchy) uses 2 core options:
+    1. layer_weights: Which layers to train (loss weights)
+    2. routing_threshold: When to exit early (inference efficiency)
 
     Args:
         layer_weights: Loss weight for each layer (1-indexed).
                       e.g., {1: 0.7, 2: 0, 3: 0.3} for asymmetric loss
-        layer_lr_scales: Learning rate scale for each layer (optional).
-                        e.g., {1: 1.0, 2: 0.5, 3: 0.1} for decreasing LR
         routing_threshold: Confidence threshold for early exit (0 = disabled).
         exit_layer: Which layer to use for early exit (1-indexed).
     """
     layer_weights: Dict[int, float]
-    layer_lr_scales: Optional[Dict[int, float]] = None
     routing_threshold: float = 0.0
     exit_layer: int = 1
 
@@ -57,11 +55,6 @@ class TrainingConfig:
         """Returns True if early exit is enabled."""
         return self.routing_threshold > 0
 
-    @property
-    def has_layer_lr(self) -> bool:
-        """Returns True if layer-wise LR is configured."""
-        return self.layer_lr_scales is not None
-
     def describe(self) -> str:
         """Human-readable description."""
         weights_str = ", ".join([f"L{k}:{v:.2f}" for k, v in sorted(self.layer_weights.items())])
@@ -69,10 +62,6 @@ class TrainingConfig:
 
         if self.has_routing:
             desc += f", Early Exit: threshold={self.routing_threshold}"
-
-        if self.has_layer_lr and self.layer_lr_scales is not None:
-            lr_str = ", ".join([f"L{k}:{v:.2f}x" for k, v in sorted(self.layer_lr_scales.items())])
-            desc += f", LR scales: [{lr_str}]"
 
         return desc
 
@@ -93,12 +82,11 @@ def create_deep_supervision_config(num_layers: int = 3) -> TrainingConfig:
 
 class Trainer:
     """
-    Trainer for EASE models.
+    Trainer for LASH models.
 
-    Supports:
-    - Layer-wise loss weighting
-    - Layer-wise learning rates
-    - Early exit evaluation
+    Supports LASH's 2 core options:
+    - layer_weights: Layer-wise loss weighting
+    - routing_threshold: Early exit evaluation
     """
 
     def __init__(self, config: TrainingConfig, vocab_size: int, device: str = 'cpu'):
@@ -111,9 +99,8 @@ class Trainer:
         Compute weighted loss across layers (optimized).
 
         Optimization: Use fast path (forward()) when only final layer is needed.
-        Maintains full compatibility with all three options:
+        Maintains full compatibility with both core options:
         - layer_weights: Determines which layers to compute
-        - layer_lr_scales: Independent (handled in optimizer)
         - routing_threshold: Independent (used in evaluation only)
         """
         # Determine which layers need loss computation
@@ -148,44 +135,8 @@ class Trainer:
         return total_loss
 
     def create_optimizer(self, model: nn.Module, base_lr: float) -> torch.optim.Optimizer:
-        """Create optimizer with optional layer-wise learning rates."""
-        if not self.config.has_layer_lr:
-            return torch.optim.AdamW(model.parameters(), lr=base_lr)
-
-        param_groups = []
-        layer_lr_scales = self.config.layer_lr_scales or {}
-
-        # Get layers from model
-        if hasattr(model, 'layers'):
-            layers = model.layers
-        elif hasattr(model, 'transformer_layers'):
-            layers = model.transformer_layers
-        else:
-            return torch.optim.AdamW(model.parameters(), lr=base_lr)
-
-        assigned_params = set()
-        for i, layer in enumerate(layers):
-            layer_idx = i + 1
-            lr_scale = layer_lr_scales.get(layer_idx, 1.0)
-            layer_params = list(layer.parameters())
-            for p in layer_params:
-                assigned_params.add(id(p))
-            param_groups.append({
-                'params': layer_params,
-                'lr': base_lr * lr_scale,
-                'name': f'layer_{layer_idx}'
-            })
-
-        # Other parameters (embedding, output head)
-        other_params = [p for p in model.parameters() if id(p) not in assigned_params]
-        if other_params:
-            param_groups.append({
-                'params': other_params,
-                'lr': base_lr,
-                'name': 'other'
-            })
-
-        return torch.optim.AdamW(param_groups)
+        """Create optimizer with uniform learning rate."""
+        return torch.optim.AdamW(model.parameters(), lr=base_lr)
 
     @torch.no_grad()
     def evaluate(self, model: nn.Module, val_batches: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, float]:
