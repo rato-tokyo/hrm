@@ -152,7 +152,7 @@ def create_hard_example_loader(
     batch_size: int
 ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
     """Create dataloader from hard examples."""
-    hidden_states = hard_examples['hidden_states']
+    hidden_states = hard_examples['hidden_states']  # Shape: (num_samples, dim)
     targets = hard_examples['targets']
 
     num_samples = len(targets)
@@ -161,10 +161,10 @@ def create_hard_example_loader(
     batches = []
     for i in range(0, num_samples, batch_size):
         batch_indices = indices[i:i + batch_size]
-        batches.append((
-            hidden_states[batch_indices],
-            targets[batch_indices]
-        ))
+        # Add seq_len dimension: (batch_size, dim) → (batch_size, 1, dim)
+        h_batch = hidden_states[batch_indices].unsqueeze(1)
+        t_batch = targets[batch_indices]
+        batches.append((h_batch, t_batch))
 
     return batches
 
@@ -190,7 +190,9 @@ def train_upper_layers(
             h = model.layers[i](h)
 
         # Compute loss
-        logits = model.output_head(h)
+        # h shape: (batch_size, 1, dim)
+        # Remove seq_len dimension for classification
+        logits = model.output_head(h).squeeze(1)  # (batch_size, vocab_size)
         loss = F.cross_entropy(logits, y)
 
         loss.backward()
