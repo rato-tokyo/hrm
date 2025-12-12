@@ -2,10 +2,6 @@
 Google Colab用: Standard vs Deep Supervision Model比較実験
 
 使い方:
-1. Google Colabで新しいノートブックを作成
-2. GPU有効化: Runtime → Change runtime type → T4 GPU or L4 GPU
-3. 以下のコマンドを実行:
-
 !git clone https://github.com/rato-tokyo/hrm.git
 %cd hrm
 !python colab.py
@@ -13,83 +9,85 @@ Google Colab用: Standard vs Deep Supervision Model比較実験
 
 import sys
 import time
+from dataclasses import dataclass
 from typing import Dict, List
 
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
+from torch.utils.data import DataLoader, TensorDataset
 
-# EASEフレームワークのインポート
 sys.path.insert(0, 'src')
 from ease import (
-    StandardTransformer,
     DeepSupervisionTransformer,
+    StandardTransformer,
     Trainer,
-    TrainingConfig,
+    create_deep_supervision_config,
     create_standard_config,
-    create_deep_supervision_config
 )
 
 
 # ================================================================================
-# データ準備
+# 設定
 # ================================================================================
 
-def create_synthetic_data(num_samples: int, vocab_size: int, seq_len: int, seed: int = 42):
-    """
-    学習可能なパターンを持つ次トークン予測データを作成
+@dataclass
+class Config:
+    """実験設定"""
+    # モデル設定
+    vocab_size: int = 1000
+    seq_len: int = 32
+    dim: int = 64
+    num_layers: int = 3
+    num_heads: int = 4
+    base_lr: float = 1e-3
+    pattern_length: int = 10
 
-    パターン: 繰り返しシーケンス [0, 1, 2, ..., 9, 0, 1, 2, ...]
-    これにより、モデルは「次のトークン = (現在のトークン + 1) mod 10」を学習可能
-    """
+    # Phase 1: 小規模
+    phase1_samples: int = 1000
+    phase1_batch: int = 32
+    phase1_epochs: int = 50
+    phase1_patience: int = 1
+
+    # Phase 2: 中規模
+    phase2_samples: int = 10000
+    phase2_batch: int = 64
+    phase2_epochs: int = 50
+    phase2_patience: int = 1
+
+
+CONFIG = Config()
+
+
+# ================================================================================
+# データ生成
+# ================================================================================
+
+def create_pattern_data(num_samples: int, seq_len: int, pattern_len: int = 10, seed: int = 42) -> tuple:
+    """学習可能パターンを持つ次トークン予測データを生成"""
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    # 学習可能なパターン: 0-9の繰り返し
-    pattern_length = 10
     data = []
-
     for _ in range(num_samples):
-        # ランダムな開始位置
-        start_pos = np.random.randint(0, pattern_length)
-        # パターンを生成 (seq_len + 1個)
-        seq = [(start_pos + i) % pattern_length for i in range(seq_len + 1)]
+        start = np.random.randint(0, pattern_len)
+        seq = [(start + i) % pattern_len for i in range(seq_len + 1)]
         data.append(seq)
 
     sequences = torch.tensor(data, dtype=torch.long)
-
-    # 入力: 最初のseq_len個
-    x = sequences[:, :-1]
-    # ターゲット: 1つシフトしたseq_len個
-    y = sequences[:, 1:]
-
-    return x, y
+    return sequences[:, :-1], sequences[:, 1:]
 
 
-def prepare_dataloaders(num_samples: int, vocab_size: int = 1000, seq_len: int = 32,
-                       batch_size: int = 32, seed: int = 42):
-    """DataLoaderを準備"""
-    x, y = create_synthetic_data(num_samples, vocab_size, seq_len, seed)
+def create_dataloaders(num_samples: int, batch_size: int, seq_len: int = 32, seed: int = 42) -> tuple:
+    """DataLoaderを作成"""
+    x, y = create_pattern_data(num_samples, seq_len, CONFIG.pattern_length, seed)
 
-    # Train/Val分割 (80/20)
-    split_idx = int(num_samples * 0.8)
-    x_train, x_val = x[:split_idx], x[split_idx:]
-    y_train, y_val = y[:split_idx], y[split_idx:]
+    split = int(num_samples * 0.8)
+    train_data = TensorDataset(x[:split], y[:split])
+    val_data = TensorDataset(x[split:], y[split:])
 
-    train_dataset = TensorDataset(x_train, y_train)
-    val_dataset = TensorDataset(x_val, y_val)
-
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
-
-    print("\nDataset prepared:")
-    print(f"  Train samples: {len(x_train)}")
-    print(f"  Val samples: {len(x_val)}")
-    print(f"  Vocab size: {vocab_size}")
-    print(f"  Sequence length: {seq_len}")
-    print(f"  Batch size: {batch_size}")
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
 
     return train_loader, val_loader
 
@@ -98,333 +96,192 @@ def prepare_dataloaders(num_samples: int, vocab_size: int = 1000, seq_len: int =
 # 実験実行
 # ================================================================================
 
-def run_experiment(model_name: str, model: nn.Module, config: TrainingConfig,
-                  train_loader: DataLoader, val_loader: DataLoader,
-                  num_epochs: int = 10, base_lr: float = 1e-3,
-                  device: str = 'cuda', use_early_stopping: bool = False,
-                  patience: int = 1) -> Dict:
+def run_single_experiment(
+    model_name: str,
+    model_class: type,
+    config_fn,
+    train_loader: DataLoader,
+    val_loader: DataLoader,
+    max_epochs: int,
+    patience: int,
+    device: str
+) -> Dict:
     """単一モデルの実験を実行"""
     print(f"\n{'='*60}")
-    print(f"Experiment: {model_name}")
-    if use_early_stopping:
-        print(f"Early Stopping: enabled (patience={patience})")
+    print(f"{model_name}")
+    print(f"Early Stopping: patience={patience}")
     print(f"{'='*60}")
 
-    model = model.to(device)
-    trainer = Trainer(config, vocab_size=1000, device=device)
-    optimizer = trainer.create_optimizer(model, base_lr=base_lr)
+    model = model_class(
+        vocab_size=CONFIG.vocab_size,
+        dim=CONFIG.dim,
+        num_layers=CONFIG.num_layers,
+        num_heads=CONFIG.num_heads
+    ).to(device)
 
-    start_time = time.time()
+    trainer_config = config_fn(num_layers=CONFIG.num_layers)
+    trainer = Trainer(trainer_config, vocab_size=CONFIG.vocab_size, device=device)
+    optimizer = trainer.create_optimizer(model, base_lr=CONFIG.base_lr)
 
-    if use_early_stopping:
-        # Early Stopping使用
-        result = trainer.train_with_early_stopping(
-            model=model,
-            train_batches=train_loader,
-            val_batches=val_loader,
-            optimizer=optimizer,
-            max_epochs=num_epochs,
-            patience=patience,
-            verbose=True
-        )
-        train_losses = result['train_losses']
-        val_losses = result['val_losses']
-        val_accs = [acc * 100 for acc in result['val_accs']]  # Convert to percentage
-        stopped_early = result['stopped_early']
-        best_epoch = result['best_epoch']
-    else:
-        # 通常訓練
-        train_losses = []
-        val_losses = []
-        val_accs = []
-
-        for epoch in range(num_epochs):
-            train_loss = trainer.train_epoch(model, train_loader, optimizer)
-            train_losses.append(train_loss)
-
-            val_stats = trainer.evaluate(model, val_loader)
-            val_ppl = val_stats['ppl']
-            val_acc = val_stats['acc'] * 100  # Convert to percentage
-
-            val_losses.append(val_ppl)
-            val_accs.append(val_acc)
-
-            print(f"Epoch {epoch+1}/{num_epochs} - "
-                  f"Train Loss: {train_loss:.4f} | "
-                  f"Val PPL: {val_ppl:.4f} | "
-                  f"Val Acc: {val_acc:.2f}%")
-
-        stopped_early = False
-        best_epoch = val_accs.index(max(val_accs))
-
-    training_time = time.time() - start_time
-
-    print(f"\nTraining completed in {training_time:.2f}s")
-    print(f"Best Val Acc: {max(val_accs):.2f}% (epoch {best_epoch+1})")
-    if use_early_stopping and stopped_early:
-        print("Early stopping was triggered")
+    start = time.time()
+    result = trainer.train_with_early_stopping(
+        model, train_loader, val_loader, optimizer,
+        max_epochs=max_epochs, patience=patience, verbose=True
+    )
 
     return {
         'model_name': model_name,
-        'train_losses': train_losses,
-        'val_losses': val_losses,
-        'val_accs': val_accs,
-        'training_time': training_time,
-        'best_val_acc': max(val_accs),
-        'best_epoch': best_epoch,
-        'stopped_early': stopped_early if use_early_stopping else False
+        'train_losses': result['train_losses'],
+        'val_ppls': result['val_losses'],
+        'val_accs': [acc * 100 for acc in result['val_accs']],
+        'best_acc': max(result['val_accs']) * 100,
+        'best_epoch': result['best_epoch'],
+        'time': time.time() - start,
+        'stopped_early': result['stopped_early']
     }
 
 
+def run_phase(phase_name: str, num_samples: int, batch_size: int, max_epochs: int, patience: int, device: str) -> List[Dict]:
+    """1つのフェーズ（StandardとDeep Supervisionの両方）を実行"""
+    print(f"\n{'='*60}")
+    print(f"{phase_name}")
+    print(f"{'='*60}")
+    print(f"Samples: {num_samples}, Batch: {batch_size}")
+
+    train_loader, val_loader = create_dataloaders(num_samples, batch_size, CONFIG.seq_len)
+
+    results = []
+    for model_name, model_class, config_fn in [
+        ("Standard", StandardTransformer, create_standard_config),
+        ("Deep Supervision", DeepSupervisionTransformer, create_deep_supervision_config)
+    ]:
+        result = run_single_experiment(
+            model_name, model_class, config_fn,
+            train_loader, val_loader, max_epochs, patience, device
+        )
+        results.append(result)
+
+    return results
+
+
 # ================================================================================
-# 結果可視化
+# 可視化
 # ================================================================================
 
-def plot_comparison(results_list: List[Dict], phase_name: str):
-    """複数モデルの結果を比較プロット"""
+def plot_results(results: List[Dict], phase_name: str):
+    """結果をプロット"""
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
     # Train Loss
-    ax = axes[0]
-    for result in results_list:
-        ax.plot(result['train_losses'], label=result['model_name'], marker='o')
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Train Loss')
-    ax.set_title(f'{phase_name} - Training Loss Comparison')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    for r in results:
+        axes[0].plot(r['train_losses'], label=r['model_name'], marker='o')
+    axes[0].set_xlabel('Epoch')
+    axes[0].set_ylabel('Train Loss')
+    axes[0].set_title(f'{phase_name} - Training Loss')
+    axes[0].legend()
+    axes[0].grid(True, alpha=0.3)
 
-    # Val Perplexity
-    ax = axes[1]
-    for result in results_list:
-        ax.plot(result['val_losses'], label=result['model_name'], marker='o')
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Val Perplexity')
-    ax.set_title(f'{phase_name} - Validation Perplexity Comparison')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    # Val PPL
+    for r in results:
+        axes[1].plot(r['val_ppls'], label=r['model_name'], marker='o')
+    axes[1].set_xlabel('Epoch')
+    axes[1].set_ylabel('Val Perplexity')
+    axes[1].set_title(f'{phase_name} - Validation PPL')
+    axes[1].legend()
+    axes[1].grid(True, alpha=0.3)
 
-    # Val Accuracy
-    ax = axes[2]
-    for result in results_list:
-        ax.plot(result['val_accs'], label=result['model_name'], marker='o')
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Val Accuracy (%)')
-    ax.set_title(f'{phase_name} - Validation Accuracy Comparison')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
+    # Val Acc
+    for r in results:
+        axes[2].plot(r['val_accs'], label=r['model_name'], marker='o')
+    axes[2].set_xlabel('Epoch')
+    axes[2].set_ylabel('Val Accuracy (%)')
+    axes[2].set_title(f'{phase_name} - Validation Accuracy')
+    axes[2].legend()
+    axes[2].grid(True, alpha=0.3)
 
     plt.tight_layout()
     plt.show()
 
-    # Summary Table
+    # Summary
     print(f"\n{'='*70}")
     print(f"{phase_name} - SUMMARY")
     print(f"{'='*70}")
-    print(f"{'Model':<30} {'Best Val Acc':<15} {'Training Time':<15}")
+    print(f"{'Model':<25} {'Best Acc':<12} {'Time':<10}")
     print("-"*70)
-    for result in results_list:
-        print(f"{result['model_name']:<30} {result['best_val_acc']:>12.2f}% {result['training_time']:>12.2f}s")
+    for r in results:
+        print(f"{r['model_name']:<25} {r['best_acc']:>10.2f}% {r['time']:>8.2f}s")
     print("="*70)
 
 
+def print_final_comparison(phase1_results: List[Dict], phase2_results: List[Dict]):
+    """最終比較を表示"""
+    print("\n" + "="*90)
+    print("FINAL COMPARISON")
+    print("="*90)
+    print(f"{'Phase':<20} {'Model':<25} {'Best Acc':<12} {'Time':<10}")
+    print("-"*90)
+
+    for r in phase1_results:
+        print(f"{'Phase 1 (1K)':<20} {r['model_name']:<25} {r['best_acc']:>10.2f}% {r['time']:>8.2f}s")
+    print("-"*90)
+    for r in phase2_results:
+        print(f"{'Phase 2 (10K)':<20} {r['model_name']:<25} {r['best_acc']:>10.2f}% {r['time']:>8.2f}s")
+    print("="*90)
+
+    # Winner
+    p2_std = phase2_results[0]['best_acc']
+    p2_deep = phase2_results[1]['best_acc']
+
+    if p2_deep > p2_std:
+        print(f"\nWINNER: Deep Supervision (+{p2_deep - p2_std:.2f}%)")
+    elif p2_std > p2_deep:
+        print(f"\nWINNER: Standard (+{p2_std - p2_deep:.2f}%)")
+    else:
+        print("\nWINNER: Tie")
+
+
 # ================================================================================
-# メイン実行
+# メイン
 # ================================================================================
 
 def main():
-    """メイン実験実行関数"""
-
-    # GPU確認
+    """メイン実行関数"""
     print("="*60)
-    print("EASE Framework: Standard vs Deep Supervision Comparison")
+    print("EASE Framework: Standard vs Deep Supervision")
     print("="*60)
 
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"\nDevice: {device}")
+    print(f"Device: {device}")
     if torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
 
-    # ハイパーパラメータ
-    VOCAB_SIZE = 1000
-    SEQ_LEN = 32
-    DIM = 64
-    NUM_LAYERS = 3
-    NUM_HEADS = 4
-    BASE_LR = 1e-3
+    # Phase 1
+    phase1_results = run_phase(
+        "Phase 1: Small-scale (1K)",
+        CONFIG.phase1_samples,
+        CONFIG.phase1_batch,
+        CONFIG.phase1_epochs,
+        CONFIG.phase1_patience,
+        device
+    )
+    plot_results(phase1_results, "Phase 1")
 
-    # ===========================================================================
-    # Phase 1: 小規模データで動作確認
-    # ===========================================================================
+    # Phase 2
+    phase2_results = run_phase(
+        "Phase 2: Medium-scale (10K)",
+        CONFIG.phase2_samples,
+        CONFIG.phase2_batch,
+        CONFIG.phase2_epochs,
+        CONFIG.phase2_patience,
+        device
+    )
+    plot_results(phase2_results, "Phase 2")
+
+    # Final comparison
+    print_final_comparison(phase1_results, phase2_results)
 
     print("\n" + "="*60)
-    print("Phase 1: Small-scale Data (1K samples)")
-    print("="*60)
-
-    NUM_SAMPLES_SMALL = 1000
-    BATCH_SIZE_SMALL = 32
-    NUM_EPOCHS_SMALL = 50  # Early Stoppingで自動終了
-    PATIENCE_SMALL = 1
-
-    train_loader_small, val_loader_small = prepare_dataloaders(
-        num_samples=NUM_SAMPLES_SMALL,
-        vocab_size=VOCAB_SIZE,
-        seq_len=SEQ_LEN,
-        batch_size=BATCH_SIZE_SMALL,
-        seed=42
-    )
-
-    # Standard Model
-    standard_model = StandardTransformer(
-        vocab_size=VOCAB_SIZE,
-        dim=DIM,
-        num_layers=NUM_LAYERS,
-        num_heads=NUM_HEADS
-    )
-    standard_config = create_standard_config(num_layers=NUM_LAYERS)
-
-    result_standard_small = run_experiment(
-        model_name="Standard Model",
-        model=standard_model,
-        config=standard_config,
-        train_loader=train_loader_small,
-        val_loader=val_loader_small,
-        num_epochs=NUM_EPOCHS_SMALL,
-        base_lr=BASE_LR,
-        device=device,
-        use_early_stopping=True,
-        patience=PATIENCE_SMALL
-    )
-
-    # Deep Supervision Model
-    deep_supervision_model = DeepSupervisionTransformer(
-        vocab_size=VOCAB_SIZE,
-        dim=DIM,
-        num_layers=NUM_LAYERS,
-        num_heads=NUM_HEADS,
-        exit_layer=1,
-        routing_threshold=0.0
-    )
-    deep_supervision_config = create_deep_supervision_config(num_layers=NUM_LAYERS)
-
-    result_deep_supervision_small = run_experiment(
-        model_name="Deep Supervision Model",
-        model=deep_supervision_model,
-        config=deep_supervision_config,
-        train_loader=train_loader_small,
-        val_loader=val_loader_small,
-        num_epochs=NUM_EPOCHS_SMALL,
-        base_lr=BASE_LR,
-        device=device,
-        use_early_stopping=True,
-        patience=PATIENCE_SMALL
-    )
-
-    # Phase 1結果可視化
-    plot_comparison([result_standard_small, result_deep_supervision_small], "Phase 1")
-
-    # ===========================================================================
-    # Phase 2: 中規模データで精度比較
-    # ===========================================================================
-
-    print("\n" + "="*60)
-    print("Phase 2: Medium-scale Data (10K samples)")
-    print("="*60)
-
-    NUM_SAMPLES_MEDIUM = 10000
-    BATCH_SIZE_MEDIUM = 64
-    NUM_EPOCHS_MEDIUM = 50  # Early Stoppingで自動終了
-    PATIENCE_MEDIUM = 1
-
-    train_loader_medium, val_loader_medium = prepare_dataloaders(
-        num_samples=NUM_SAMPLES_MEDIUM,
-        vocab_size=VOCAB_SIZE,
-        seq_len=SEQ_LEN,
-        batch_size=BATCH_SIZE_MEDIUM,
-        seed=42
-    )
-
-    # Standard Model
-    standard_model_medium = StandardTransformer(
-        vocab_size=VOCAB_SIZE,
-        dim=DIM,
-        num_layers=NUM_LAYERS,
-        num_heads=NUM_HEADS
-    )
-
-    result_standard_medium = run_experiment(
-        model_name="Standard Model",
-        model=standard_model_medium,
-        config=standard_config,
-        train_loader=train_loader_medium,
-        val_loader=val_loader_medium,
-        num_epochs=NUM_EPOCHS_MEDIUM,
-        base_lr=BASE_LR,
-        device=device,
-        use_early_stopping=True,
-        patience=PATIENCE_MEDIUM
-    )
-
-    # Deep Supervision Model
-    deep_supervision_model_medium = DeepSupervisionTransformer(
-        vocab_size=VOCAB_SIZE,
-        dim=DIM,
-        num_layers=NUM_LAYERS,
-        num_heads=NUM_HEADS,
-        exit_layer=1,
-        routing_threshold=0.0
-    )
-
-    result_deep_supervision_medium = run_experiment(
-        model_name="Deep Supervision Model",
-        model=deep_supervision_model_medium,
-        config=deep_supervision_config,
-        train_loader=train_loader_medium,
-        val_loader=val_loader_medium,
-        num_epochs=NUM_EPOCHS_MEDIUM,
-        base_lr=BASE_LR,
-        device=device,
-        use_early_stopping=True,
-        patience=PATIENCE_MEDIUM
-    )
-
-    # Phase 2結果可視化
-    plot_comparison([result_standard_medium, result_deep_supervision_medium], "Phase 2")
-
-    # ===========================================================================
-    # 最終比較
-    # ===========================================================================
-
-    print("\n" + "="*90)
-    print("FINAL COMPARISON: Standard vs Deep Supervision")
-    print("="*90)
-    print(f"{'Phase':<20} {'Model':<30} {'Best Val Acc':<15} {'Training Time':<15}")
-    print("-"*90)
-
-    print(f"{'Phase 1 (1K)':<20} {'Standard':<30} {result_standard_small['best_val_acc']:>12.2f}% {result_standard_small['training_time']:>12.2f}s")
-    print(f"{'Phase 1 (1K)':<20} {'Deep Supervision':<30} {result_deep_supervision_small['best_val_acc']:>12.2f}% {result_deep_supervision_small['training_time']:>12.2f}s")
-    print("-"*90)
-    print(f"{'Phase 2 (10K)':<20} {'Standard':<30} {result_standard_medium['best_val_acc']:>12.2f}% {result_standard_medium['training_time']:>12.2f}s")
-    print(f"{'Phase 2 (10K)':<20} {'Deep Supervision':<30} {result_deep_supervision_medium['best_val_acc']:>12.2f}% {result_deep_supervision_medium['training_time']:>12.2f}s")
-    print("="*90)
-
-    # 勝者判定
-    if result_deep_supervision_medium['best_val_acc'] > result_standard_medium['best_val_acc']:
-        winner = "Deep Supervision Model"
-        improvement = result_deep_supervision_medium['best_val_acc'] - result_standard_medium['best_val_acc']
-    elif result_standard_medium['best_val_acc'] > result_deep_supervision_medium['best_val_acc']:
-        winner = "Standard Model"
-        improvement = result_standard_medium['best_val_acc'] - result_deep_supervision_medium['best_val_acc']
-    else:
-        winner = "Tie"
-        improvement = 0.0
-
-    print(f"\nWINNER: {winner}")
-    if winner != "Tie":
-        print(f"Improvement: +{improvement:.2f}% accuracy")
-
-    print("\n" + "="*60)
-    print("Experiment completed successfully!")
+    print("Experiment completed!")
     print("="*60)
 
 
