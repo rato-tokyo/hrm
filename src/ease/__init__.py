@@ -62,6 +62,9 @@ from .trainer import (
     compute_confidence,
     compute_confidence_threshold,
     collect_hard_examples,
+    create_hard_example_loader,
+    train_upper_layers,
+    evaluate_on_hard_examples,
 )
 from .modules import (
     RMSNorm,
@@ -87,6 +90,9 @@ __all__ = [
     'compute_confidence',
     'compute_confidence_threshold',
     'collect_hard_examples',
+    'create_hard_example_loader',
+    'train_upper_layers',
+    'evaluate_on_hard_examples',
     # Modules
     'RMSNorm',
     'RotaryPositionalEmbedding',
