@@ -102,13 +102,16 @@ def run_experiment(model_name: str, model: nn.Module, config: TrainingConfig,
         train_losses.append(train_loss)
 
         val_stats = trainer.evaluate(model, val_loader)
-        val_losses.append(val_stats['loss'])
-        val_accs.append(val_stats['accuracy'])
+        val_ppl = val_stats['ppl']
+        val_acc = val_stats['acc'] * 100  # Convert to percentage
+
+        val_losses.append(val_ppl)
+        val_accs.append(val_acc)
 
         print(f"Epoch {epoch+1}/{num_epochs} - "
               f"Train Loss: {train_loss:.4f} | "
-              f"Val Loss: {val_stats['loss']:.4f} | "
-              f"Val Acc: {val_stats['accuracy']:.2f}%")
+              f"Val PPL: {val_ppl:.4f} | "
+              f"Val Acc: {val_acc:.2f}%")
 
     training_time = time.time() - start_time
 
@@ -143,13 +146,13 @@ def plot_comparison(results_list: List[Dict], phase_name: str):
     ax.legend()
     ax.grid(True, alpha=0.3)
 
-    # Val Loss
+    # Val Perplexity
     ax = axes[1]
     for result in results_list:
         ax.plot(result['val_losses'], label=result['model_name'], marker='o')
     ax.set_xlabel('Epoch')
-    ax.set_ylabel('Val Loss')
-    ax.set_title(f'{phase_name} - Validation Loss Comparison')
+    ax.set_ylabel('Val Perplexity')
+    ax.set_title(f'{phase_name} - Validation Perplexity Comparison')
     ax.legend()
     ax.grid(True, alpha=0.3)
 
