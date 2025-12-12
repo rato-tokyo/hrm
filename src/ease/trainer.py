@@ -3,23 +3,12 @@ LEGO Framework - Training Configuration
 
 Layered Ensemble with Gradual Optimization: レゴブロックのようにStageを組み合わせる柔軟な訓練アーキテクチャ
 
-Base Models:
-- Standard: Final layer loss only
-- Deep Supervision: Loss at all layers
-
-Training Strategies:
-1. Standard LEGO: Final layer loss only (1 stage block)
-2. Deep Supervision LEGO: Loss at all layers (all stage blocks)
-3. ASHEM LEGO: Hard example mining with 2-stage blocks
-
 Core Options (2つのコアオプション):
-- stages: Which stage blocks to train (stage-based configuration)
-- routing_threshold: Early Exit at inference
+1. stages: Which stage blocks to train (stage-based configuration)
+2. routing_threshold: Early Exit at inference
 
 References:
 - LEGO: Layered Ensemble with Gradual Optimization
-- Deep Supervision: Lee et al., 2015
-- Early Exit: Teerapittayanon et al., 2016
 - ASHEM: Adaptive Supervision via Hard Example Mining
 """
 
@@ -92,19 +81,6 @@ def create_standard_config(num_layers: int = 3) -> TrainingConfig:
     """
     return TrainingConfig(stages=[
         StageConfig(layers=(num_layers, num_layers), loss_weight=1.0)
-    ])
-
-
-def create_deep_supervision_config(num_layers: int = 3) -> TrainingConfig:
-    """
-    Create Deep Supervision config (equal loss on all layers).
-
-    Deep Supervision = num_layers stages, each containing one layer.
-    """
-    weight = 1.0 / num_layers
-    return TrainingConfig(stages=[
-        StageConfig(layers=(i, i), loss_weight=weight)
-        for i in range(1, num_layers + 1)
     ])
 
 
