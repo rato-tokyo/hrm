@@ -13,7 +13,6 @@ from dataclasses import dataclass
 from typing import Dict, List
 
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -63,31 +62,82 @@ CONFIG = Config()
 # データ生成
 # ================================================================================
 
-def create_pattern_data(num_samples: int, seq_len: int, pattern_len: int = 10, seed: int = 42) -> tuple:
-    """学習可能パターンを持つ次トークン予測データを生成"""
+def load_wikitext_data(seq_len: int = 32, seed: int = 42):
+    """WikiText-2データをロード"""
+    try:
+        from torchtext.datasets import WikiText2
+        from torchtext.data.utils import get_tokenizer
+        from torchtext.vocab import build_vocab_from_iterator
+    except ImportError:
+        print("torchtext not found. Installing...")
+        import subprocess
+        subprocess.check_call(['pip', 'install', 'torchtext', 'portalocker'])
+        from torchtext.datasets import WikiText2
+        from torchtext.data.utils import get_tokenizer
+        from torchtext.vocab import build_vocab_from_iterator
+
     torch.manual_seed(seed)
-    np.random.seed(seed)
 
-    data = []
-    for _ in range(num_samples):
-        start = np.random.randint(0, pattern_len)
-        seq = [(start + i) % pattern_len for i in range(seq_len + 1)]
-        data.append(seq)
+    # Tokenizerとデータセット
+    tokenizer = get_tokenizer('basic_english')
+    train_iter = WikiText2(split='train')
 
-    sequences = torch.tensor(data, dtype=torch.long)
-    return sequences[:, :-1], sequences[:, 1:]
+    # Vocabulary構築
+    def yield_tokens(data_iter):
+        for text in data_iter:
+            yield tokenizer(text)
+
+    vocab = build_vocab_from_iterator(yield_tokens(train_iter), specials=['<unk>'])
+    vocab.set_default_index(vocab['<unk>'])
+
+    # データをトークン化
+    def data_process(raw_text_iter):
+        data = [torch.tensor(vocab(tokenizer(item)), dtype=torch.long) for item in raw_text_iter]
+        return torch.cat(tuple(filter(lambda t: t.numel() > 0, data)))
+
+    train_iter, val_iter = WikiText2(split=('train', 'valid'))
+    train_data = data_process(train_iter)
+    val_data = data_process(val_iter)
+
+    return train_data, val_data, len(vocab)
+
+
+def batchify(data: torch.Tensor, batch_size: int, seq_len: int):
+    """データをバッチ化"""
+    # シーケンス数を計算
+    num_seqs = data.size(0) // (seq_len + 1)
+    data = data[:num_seqs * (seq_len + 1)]
+
+    # (num_seqs, seq_len + 1)に整形
+    data = data.view(num_seqs, seq_len + 1)
+
+    # 入力とターゲットに分割
+    x = data[:, :-1]
+    y = data[:, 1:]
+
+    # DataLoaderを作成
+    dataset = TensorDataset(x, y)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 
 def create_dataloaders(num_samples: int, batch_size: int, seq_len: int = 32, seed: int = 42) -> tuple:
-    """DataLoaderを作成"""
-    x, y = create_pattern_data(num_samples, seq_len, CONFIG.pattern_length, seed)
+    """WikiText-2 DataLoaderを作成"""
+    train_data, val_data, vocab_size = load_wikitext_data(seq_len, seed)
 
-    split = int(num_samples * 0.8)
-    train_data = TensorDataset(x[:split], y[:split])
-    val_data = TensorDataset(x[split:], y[split:])
+    # vocab_sizeをCONFIGに保存
+    CONFIG.vocab_size = vocab_size
 
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
+    # サンプル数を制限（指定された数まで）
+    max_tokens_train = num_samples * (seq_len + 1)
+    max_tokens_val = int(num_samples * 0.2) * (seq_len + 1)
+
+    train_data = train_data[:max_tokens_train]
+    val_data = val_data[:max_tokens_val]
+
+    train_loader = batchify(train_data, batch_size, seq_len)
+    val_loader = batchify(val_data, batch_size, seq_len)
+
+    print(f"Vocab size: {vocab_size}")
 
     return train_loader, val_loader
 
