@@ -2,17 +2,17 @@
 
 ## Project Overview
 
-**EASE: Efficient Asymmetric Supervision for Early-Exit Transformers**
+**LASH: Layered Adaptive Supervision Hierarchy**
 
-完全に柔軟な設定可能フレームワーク。3つのオプションを自由に組み合わせて、あらゆる訓練戦略を実現。
+層を組み合わせる柔軟なフレームワーク。3つのコアオプションで全てを制御。
 
 ---
 
 ## フレームワーク概要
 
-### コアコンセプト: 完全な柔軟性
+### コアコンセプト: 層の柔軟な組み合わせ
 
-**L3T (Layer-wise Loss, LR, and Threshold)** の3つのオプションで全てを制御：
+**LASH**の3つのコアオプションで全てを制御：
 
 | オプション | 説明 | Reference |
 |-----------|------|-----------|
@@ -81,10 +81,10 @@ config = TrainingConfig(
 hrm/
 ├── CLAUDE.md                    # このファイル
 ├── src/
-│   └── ease/                    # EASE フレームワーク
+│   └── ease/                    # LASH フレームワーク（ディレクトリ名は互換性のためease）
 │       ├── __init__.py          # メインエントリポイント
 │       ├── models.py            # Standard, DeepSupervision Transformer
-│       ├── trainer.py           # TrainingConfig, Trainer
+│       ├── trainer.py           # TrainingConfig, Trainer, ASHEMConfig
 │       └── modules/             # コアモジュール
 │           ├── norm.py          # RMSNorm
 │           ├── attention.py     # MultiHeadAttention, RoPE
@@ -95,6 +95,10 @@ hrm/
 │   └── utils.py                 # データ準備、シード設定
 ├── docs/
 │   └── experiments/             # 実験結果ドキュメント
+│       ├── hard_example_mining.md
+│       └── progressive_layer_training.md
+├── colab1.py                    # Progressive Layer Training実験
+├── colab2.py                    # ASHEM実験
 └── run_experiments.py           # 実験実行スクリプト
 ```
 
@@ -113,11 +117,11 @@ from ease import DeepSupervisionTransformer, Trainer, TrainingConfig
 # モデル作成
 model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
 
-# 設定
+# 設定: LASHの3つのオプションで全てを制御
 config = TrainingConfig(
-    layer_weights={1: 0.7, 2: 0, 3: 0.3},  # 層ごとの損失重み
-    layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1},  # 層ごとの学習率
-    routing_threshold=0.95,  # Early Exit閾値
+    layer_weights={1: 0.7, 2: 0, 3: 0.3},        # 層ごとの損失重み
+    layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1},    # 層ごとの学習率
+    routing_threshold=0.95,                       # Early Exit閾値
 )
 
 # 訓練
@@ -182,11 +186,57 @@ result = trainer.train_with_early_stopping(
 
 ---
 
+## 訓練戦略
+
+LASHフレームワークは4つの訓練戦略をサポート：
+
+### 1. Standard
+最終層のみで学習（従来のLLM訓練）
+```python
+config = TrainingConfig(layer_weights={1: 0, 2: 0, 3: 1})
+```
+
+### 2. Deep Supervision
+全層で均等に学習
+```python
+config = TrainingConfig(layer_weights={1: 0.33, 2: 0.33, 3: 0.33})
+```
+
+### 3. Discriminative Fine-Tuning
+層ごとの学習率設定（Howard & Ruder, 2018）
+```python
+config = TrainingConfig(
+    layer_weights={1: 0, 2: 0, 3: 1},
+    layer_lr_scales={1: 1.0, 2: 0.8, 3: 0.6}
+)
+```
+
+### 4. ASHEM (Adaptive Supervision via Hard Example Mining)
+Hard examplesに特化した段階的訓練
+- **Phase 1**: 浅層モデル（2層）で全データ訓練
+- **Phase 2**: 深層モデル（4層）でHard examplesのみ訓練
+- **推論**: Two-stage routing（Early Exit）
+- **実験結果**: Hard PPL 78%改善、計算コスト36%削減
+
+```python
+from ease import ASHEMConfig
+
+ashem_config = ASHEMConfig(
+    phase1_layers=2,
+    hard_example_ratio=0.5,
+    phase2_layers=4,
+)
+```
+
+詳細: [docs/experiments/hard_example_mining.md](docs/experiments/hard_example_mining.md)
+
+---
+
 ## パフォーマンス最適化
 
 ### compute_loss() の自動最適化
 
-**3つのオプションを完全に維持したまま、訓練速度を最適化**:
+**LASHの3つのオプションを完全に維持したまま、訓練速度を最適化**:
 
 ```python
 # 最終層のみ（高速パス使用）
@@ -220,15 +270,22 @@ config = TrainingConfig(layer_weights={1: 0.7, 2: 0, 3: 0.3})
 
 ## References
 
+### LASH Framework
+- **LASH**: Layered Adaptive Supervision Hierarchy（本フレームワーク）
 - Lee et al. (2015) - Deep Supervision
 - Howard & Ruder (2018) - Discriminative Fine-Tuning
 - Teerapittayanon et al. (2016) - Early Exit
+
+### ASHEM Training Strategy
+- **ASHEM**: Adaptive Supervision via Hard Example Mining（本研究）
+- Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
+- Progressive Layer Addition: Related to PLD (NeurIPS 2020)
 
 ---
 
 ## 今後のタスク
 
-- [ ] より大規模なモデルでの検証実験
+- [ ] より大規模なモデルでの検証実験（dim=128, layers=6）
 - [ ] 実際の LLM (Llama 等) での検証
-- [ ] フレームワーク名を **L3T** (Layer-wise Loss, LR, and Threshold) に変更
-  - 3つのオプション（layer_weights, layer_lr_scales, routing_threshold）を明示的に表現
+- [ ] ASHEM以外の新しい訓練戦略の開発
+- [ ] 他のデータセット（C4, The Pile等）での検証

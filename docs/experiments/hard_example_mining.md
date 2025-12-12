@@ -1,8 +1,9 @@
-# Hard Example Mining + Two-Stage Inference Experiment
+# ASHEM: Adaptive Supervision via Hard Example Mining
 
 **実験日**: 2025-12-12
 **実験コード**: colab2.py
 **デバイス**: NVIDIA L4 GPU (Google Colab)
+**フレームワーク**: LASH (Layered Adaptive Supervision Hierarchy)
 
 ---
 
@@ -10,7 +11,7 @@
 
 ### 目的
 
-Hard Example Mining（難しいサンプルに特化した訓練）とTwo-Stage Inference（適応的推論）の有効性を検証する。
+ASHEM訓練戦略（Hard Example Mining + Two-Stage Inference）の有効性を検証する。
 
 ### 仮説
 

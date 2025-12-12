@@ -1,7 +1,7 @@
 """
-EASE Framework - Training Configuration
+LASH Framework - Training Configuration
 
-Simple training framework with two base models and four training strategies:
+Layered Adaptive Supervision Hierarchy: 層を組み合わせる柔軟なフレームワーク
 
 Base Models:
 - Standard: Final layer loss only
@@ -13,12 +13,13 @@ Training Strategies:
 3. Discriminative Fine-Tuning: Layer-wise learning rates
 4. ASHEM: Hard example mining with progressive layer addition
 
-Options:
+Core Options:
 - layer_weights: Layer-wise loss weights
-- layer_lr_scales: Layer-wise learning rates (Discriminative Fine-Tuning)
+- layer_lr_scales: Layer-wise learning rates
 - routing_threshold: Early Exit at inference
 
 References:
+- LASH: Layered Adaptive Supervision Hierarchy
 - Deep Supervision: Lee et al., 2015
 - Discriminative Fine-Tuning: Howard & Ruder, 2018
 - Early Exit: Teerapittayanon et al., 2016
@@ -467,7 +468,7 @@ def compute_confidence_threshold(
         Confidence threshold value
     """
     model.eval()
-    all_confidences = []
+    all_confidences: List[torch.Tensor] = []
 
     with torch.no_grad():
         for x, y in val_batches:
@@ -483,8 +484,8 @@ def compute_confidence_threshold(
             all_confidences.append(confidence.view(-1))
 
     # Concatenate all confidences and compute threshold
-    all_confidences = torch.cat(all_confidences)
-    threshold = torch.quantile(all_confidences, target_ratio).item()
+    all_confidences_tensor = torch.cat(all_confidences)
+    threshold = torch.quantile(all_confidences_tensor, target_ratio).item()
 
     return threshold
 

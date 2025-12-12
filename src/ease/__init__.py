@@ -1,16 +1,22 @@
 """
-EASE: Efficient Asymmetric Supervision for Early-Exit Transformers
+LASH: Layered Adaptive Supervision Hierarchy
 
-A simple training framework with two base models and three options:
+層を組み合わせる柔軟なフレームワーク。3つのコアオプションで全てを制御。
 
 Base Models:
 - StandardTransformer: Final layer loss only
 - DeepSupervisionTransformer: Loss at all layers with early exit support
 
-Options (via TrainingConfig):
+Core Options (via TrainingConfig):
 - layer_weights: Layer-wise loss weights
-- layer_lr_scales: Layer-wise learning rates (Discriminative Fine-Tuning)
+- layer_lr_scales: Layer-wise learning rates
 - routing_threshold: Early exit at inference
+
+Training Strategies:
+1. Standard: Final layer only
+2. Deep Supervision: All layers equally
+3. Discriminative Fine-Tuning: Layer-wise learning rates
+4. ASHEM: Hard example mining with progressive layer addition
 
 Usage:
     from ease import DeepSupervisionTransformer, Trainer, TrainingConfig
@@ -18,9 +24,10 @@ Usage:
     # Create model
     model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
 
-    # Configure training
+    # Configure training (LASH's 3 core options)
     config = TrainingConfig(
         layer_weights={1: 0.7, 2: 0, 3: 0.3},
+        layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1},
         routing_threshold=0.95,
     )
 
@@ -35,9 +42,11 @@ Usage:
     stats = trainer.evaluate(model, val_batches)
 
 References:
+- LASH: Layered Adaptive Supervision Hierarchy
 - Deep Supervision: Lee et al., 2015
 - Discriminative Fine-Tuning: Howard & Ruder, 2018
 - Early Exit: Teerapittayanon et al., 2016
+- ASHEM: Adaptive Supervision via Hard Example Mining
 """
 
 from .models import (

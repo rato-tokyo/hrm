@@ -1,19 +1,20 @@
 """
 ASHEM (Adaptive Supervision via Hard Example Mining) Experiment
 
-This experiment demonstrates the ASHEM training strategy integrated with EASE framework:
+This experiment demonstrates the ASHEM training strategy integrated with LASH framework:
 1. Phase 1: Train a shallow model (2 layers) on all data
 2. Identify hard examples using confidence-based threshold (auto-adjusted)
 3. Phase 2: Train additional layers (2 more) on hard examples only
-4. Inference: Two-stage routing using EASE's Early Exit mechanism
+4. Inference: Two-stage routing using LASH's Early Exit mechanism
 
 Key Benefits:
 - Focuses computational resources on hard examples during training
 - Achieves 78% improvement on hard examples (PPL: 2600 → 571)
 - Reduces compute cost by 36% using adaptive routing
-- Fully integrated with EASE framework for clean implementation
+- Fully integrated with LASH framework for clean implementation
 
 References:
+- LASH: Layered Adaptive Supervision Hierarchy (本フレームワーク)
 - ASHEM: Adaptive Supervision via Hard Example Mining (本研究)
 - Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
 - Early Exit: BranchyNet (2016), Teerapittayanon et al. (2016)
@@ -37,7 +38,6 @@ from ease import (
     TrainingConfig,
     create_standard_config,
     ASHEMConfig,
-    compute_confidence,
     compute_confidence_threshold,
     collect_hard_examples,
 )
@@ -100,7 +100,7 @@ def get_device() -> str:
 # ASHEM-Specific Functions
 # ==============================================================================
 # Note: Core ASHEM functions (compute_confidence, compute_confidence_threshold,
-# collect_hard_examples) are now imported from the EASE framework.
+# collect_hard_examples) are now imported from the LASH framework.
 
 def create_hard_example_loader(
     hard_examples: Dict[str, torch.Tensor],
@@ -255,7 +255,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str) -> Dict:
     1. Phase 1: Train shallow model (2 layers) on all data
     2. Compute confidence threshold and collect hard examples
     3. Phase 2: Extend to 4 layers, train upper layers on hard examples only
-    4. Evaluate using two-stage inference (EASE Early Exit)
+    4. Evaluate using two-stage inference (LASH Early Exit)
 
     Args:
         model_name: Name of model architecture for logging
@@ -425,7 +425,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str) -> Dict:
             CONFIG.vocab_size, device, CONFIG.ashem.phase1_layers
         )
 
-        # Evaluate with EASE's Early Exit
+        # Evaluate with LASH's Early Exit
         eval_config = TrainingConfig(
             layer_weights={i: 0 for i in range(1, CONFIG.ashem.phase2_layers + 1)},
             routing_threshold=confidence_threshold,
@@ -488,13 +488,13 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str) -> Dict:
     print(f"  Time: {phase2_time:.2f}s")
 
     # ==========================================================================
-    # Final Evaluation: Two-Stage Inference with EASE
+    # Final Evaluation: Two-Stage Inference with LASH
     # ==========================================================================
     print(f"\n{'='*60}")
     print("Final Evaluation (Two-Stage Inference)")
     print(f"{'='*60}\n")
 
-    # Use EASE's built-in Early Exit evaluation
+    # Use LASH's built-in Early Exit evaluation
     final_config = TrainingConfig(
         layer_weights={i: 0 for i in range(1, CONFIG.ashem.phase2_layers + 1)},
         routing_threshold=confidence_threshold,
@@ -568,7 +568,7 @@ def main():
     print(f"  Phase 1: Train {CONFIG.ashem.phase1_layers}-layer model")
     print(f"  Compute: Auto-adjust threshold to collect {CONFIG.ashem.hard_example_ratio*100:.0f}% hard examples")
     print(f"  Phase 2: Add {CONFIG.ashem.phase2_layers - CONFIG.ashem.phase1_layers} layers → Train on hard examples")
-    print("  Eval: Two-stage inference (Layer 2 or Layer 4) using EASE's Early Exit")
+    print("  Eval: Two-stage inference (Layer 2 or Layer 4) using LASH's Early Exit")
     print()
 
     device = get_device()

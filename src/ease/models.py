@@ -1,11 +1,13 @@
 """
-EASE Framework - Model Components
+LASH Framework - Model Components
+
+Layered Adaptive Supervision Hierarchy: 層を組み合わせる柔軟なフレームワーク
 
 Two base models:
 - StandardTransformer: Final layer loss only
 - DeepSupervisionTransformer: Loss at all layers with early exit support
 
-Both support:
+Both support LASH's 3 core options:
 - layer_weights: Layer-wise loss weights
 - layer_lr_scales: Layer-wise learning rates
 - routing_threshold: Early exit at inference
