@@ -64,7 +64,7 @@ class Config:
     phase2_samples: int = 10000
     phase2_batch: int = 64
     phase2_epochs: int = 50
-    phase2_patience: int = 1
+    phase2_patience: int = 3  # More patience for fine-tuning new layer
 
 CONFIG = Config()
 
@@ -205,8 +205,12 @@ def run_progressive_experiment(model_name: str, ModelClass, config_fn, device: s
     config_extended = config_fn(num_layers=CONFIG.initial_layers + CONFIG.added_layers)
     trainer_extended = Trainer(config_extended, vocab_size=CONFIG.vocab_size, device=device)
 
-    # Only train new layer + output_head
-    optimizer_extended = trainer_extended.create_optimizer(model_extended, base_lr=CONFIG.base_lr)
+    # Only train new layer + output_head with reduced learning rate
+    # Lower LR for new layer to avoid overshooting
+    reduced_lr = CONFIG.base_lr * 0.1  # 1e-3 → 1e-4
+    optimizer_extended = trainer_extended.create_optimizer(model_extended, base_lr=reduced_lr)
+
+    print(f"  Using reduced learning rate: {reduced_lr:.1e} (base_lr × 0.1)")
 
     # Train
     train_loader2, val_loader2 = create_dataloaders(
