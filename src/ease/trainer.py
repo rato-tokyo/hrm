@@ -1,23 +1,23 @@
 """
-LASH Framework - Training Configuration
+LEGO Framework - Training Configuration
 
-Layered Adaptive Supervision Hierarchy: 層を組み合わせる柔軟なフレームワーク
+Layered Ensemble with Gradual Optimization: レゴブロックのようにStageを組み合わせる柔軟な訓練アーキテクチャ
 
 Base Models:
 - Standard: Final layer loss only
 - Deep Supervision: Loss at all layers
 
 Training Strategies:
-1. Standard: Final layer loss only (1 stage)
-2. Deep Supervision: Loss at all layers (all stages)
-3. ASHEM: Hard example mining with 2-stage training
+1. Standard LEGO: Final layer loss only (1 stage block)
+2. Deep Supervision LEGO: Loss at all layers (all stage blocks)
+3. ASHEM LEGO: Hard example mining with 2-stage blocks
 
 Core Options (2つのコアオプション):
-- stages: Which stages to train (stage-based configuration)
+- stages: Which stage blocks to train (stage-based configuration)
 - routing_threshold: Early Exit at inference
 
 References:
-- LASH: Layered Adaptive Supervision Hierarchy
+- LEGO: Layered Ensemble with Gradual Optimization
 - Deep Supervision: Lee et al., 2015
 - Early Exit: Teerapittayanon et al., 2016
 - ASHEM: Adaptive Supervision via Hard Example Mining
@@ -50,10 +50,10 @@ class StageConfig:
 @dataclass
 class TrainingConfig:
     """
-    Stage-based training configuration for LASH framework.
+    Stage-based training configuration for LEGO framework.
 
-    LASH (Layered Adaptive Supervision Hierarchy) uses 2 core options:
-    1. stages: Which stages to train (stage-based configuration)
+    LEGO (Layered Ensemble with Gradual Optimization) uses 2 core options:
+    1. stages: Which stage blocks to train (stage-based configuration)
     2. routing_threshold: When to exit early (inference efficiency)
 
     Args:
@@ -110,10 +110,10 @@ def create_deep_supervision_config(num_layers: int = 3) -> TrainingConfig:
 
 class Trainer:
     """
-    Trainer for LASH models.
+    Trainer for LEGO models.
 
-    Supports LASH's 2 core options:
-    - stages: Stage-based training configuration
+    Supports LEGO's 2 core options:
+    - stages: Stage-based training configuration (LEGO blocks)
     - routing_threshold: Early exit evaluation
     """
 

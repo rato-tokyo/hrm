@@ -1,20 +1,20 @@
 """
-LASH: Layered Adaptive Supervision Hierarchy
+LEGO: Layered Ensemble with Gradual Optimization
 
-層を組み合わせる柔軟なフレームワーク。2つのコアオプションで全てを制御。
+レゴブロックのようにStage（層グループ）を組み合わせる柔軟な訓練アーキテクチャ。
 
 Base Models:
 - StandardTransformer: Final layer loss only
 - DeepSupervisionTransformer: Loss at all layers with early exit support
 
 Core Options (via TrainingConfig):
-- stages: Stage-based training configuration
+- stages: Stage-based training configuration (LEGO blocks)
 - routing_threshold: Early exit at inference
 
 Training Strategies:
-1. Standard: Final layer only (1 stage)
-2. Deep Supervision: All layers equally (all stages)
-3. ASHEM: Hard example mining with 2-stage training
+1. Standard LEGO: Final layer only (1 stage block)
+2. Deep Supervision LEGO: All layers equally (all stage blocks)
+3. ASHEM LEGO: Hard example mining with 2-stage blocks
 
 Usage:
     from ease import DeepSupervisionTransformer, Trainer, TrainingConfig, StageConfig
@@ -22,11 +22,11 @@ Usage:
     # Create model
     model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
 
-    # Configure training (LASH's 2 core options)
+    # Configure training (LEGO's 2 core options)
     config = TrainingConfig(
         stages=[
-            StageConfig(layers=(1, 2), loss_weight=0.7),
-            StageConfig(layers=(3, 3), loss_weight=0.3),
+            StageConfig(layers=(1, 2), loss_weight=0.7),  # Stage Block 1
+            StageConfig(layers=(3, 3), loss_weight=0.3),  # Stage Block 2
         ],
         routing_threshold=0.95,
     )
@@ -42,7 +42,7 @@ Usage:
     stats = trainer.evaluate(model, val_batches)
 
 References:
-- LASH: Layered Adaptive Supervision Hierarchy
+- LEGO: Layered Ensemble with Gradual Optimization
 - Deep Supervision: Lee et al., 2015
 - Early Exit: Teerapittayanon et al., 2016
 - ASHEM: Adaptive Supervision via Hard Example Mining
@@ -64,9 +64,8 @@ from .ashem import (
     compute_confidence,
     compute_confidence_threshold,
     collect_hard_examples,
-    create_hard_example_loader,
-    train_upper_layers,
-    evaluate_on_hard_examples,
+    freeze_lower_layers,
+    get_trainable_params_info,
 )
 from .modules import (
     RMSNorm,
@@ -93,9 +92,8 @@ __all__ = [
     'compute_confidence',
     'compute_confidence_threshold',
     'collect_hard_examples',
-    'create_hard_example_loader',
-    'train_upper_layers',
-    'evaluate_on_hard_examples',
+    'freeze_lower_layers',
+    'get_trainable_params_info',
     # Modules
     'RMSNorm',
     'RotaryPositionalEmbedding',

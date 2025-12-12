@@ -1,8 +1,8 @@
-# LASH: Layered Adaptive Supervision Hierarchy
+# LEGO: Layered Adaptive Supervision Hierarchy
 
 ## Overview
 
-**LASH** (Layered Adaptive Supervision Hierarchy) は、統一的な学習フレームワークです。
+**LEGO** (Layered Adaptive Supervision Hierarchy) は、統一的な学習フレームワークです。
 
 2つの基本モデルと2つのコアオプションで構成されています。
 

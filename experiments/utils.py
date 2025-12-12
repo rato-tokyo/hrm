@@ -1,7 +1,7 @@
 """
-LASH Experiments - Utilities
+LEGO Experiments - Utilities
 
-Data preparation and experiment configuration for LASH framework experiments.
+Data preparation and experiment configuration for LEGO framework experiments.
 """
 
 import torch

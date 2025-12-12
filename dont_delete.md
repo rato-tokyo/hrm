@@ -8,7 +8,7 @@ Experiment Design:
   Phase 1: Train 2-layer model
   Compute: Auto-adjust threshold to collect 50% hard examples
   Phase 2: Add 2 layers → Train on hard examples
-  Eval: Two-stage inference (Layer 2 or Layer 4) using LASH's Early Exit
+  Eval: Two-stage inference (Layer 2 or Layer 4) using LEGO's Early Exit
 
 
 ============================================================

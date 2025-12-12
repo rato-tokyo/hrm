@@ -1,4 +1,4 @@
-# 論文の方向性 - LASH & ASHEM
+# 論文の方向性 - LEGO & ASHEM
 
 **最終更新**: 2025-12-12
 
@@ -7,45 +7,45 @@
 ## 📝 論文タイトル案
 
 ### メインタイトル（英語）
-**LASH: Layered Adaptive Supervision Hierarchy for Efficient Transformer Training**
+**LEGO: Layered Ensemble with Gradual Optimization for Efficient Transformer Training**
 
 ### サブタイトル（英語）
-**A Unified Framework with 2 Core Options**
+**A Modular Framework with 2 Core Options**
 
 ### 日本語タイトル
-**LASH: 効率的Transformer訓練のための階層的適応学習フレームワーク**
+**LEGO: 効率的Transformer訓練のためのモジュラー訓練フレームワーク**
 
 ---
 
 ## 🎯 研究の新規性
 
-### 1. LASH Framework（主要貢献）
+### 1. LEGO Framework（主要貢献）
 
 #### 新規性
-**完全に統一された柔軟な訓練フレームワーク**
+**レゴブロックのようにStageを組み合わせる柔軟なモジュラー訓練フレームワーク**
 
-従来の研究では、各訓練手法（Deep Supervision、Early Exit等）は個別に提案され、別々の実装を必要としていた。LASHは、これらすべてを**2つのコアオプション**で統一的に実現する初のフレームワーク。
+従来の研究では、各訓練手法（Deep Supervision、Early Exit等）は個別に提案され、別々の実装を必要としていた。LEGOは、これらすべてを**2つのコアオプション**で統一的に実現する初のフレームワーク。
 
 #### 2つのコアオプション
 
 | オプション | 説明 | 対応する既存研究 |
 |-----------|------|----------------|
-| **layer_weights** | 層ごとの損失重み | Deep Supervision (Lee et al., 2015) |
+| **stages** | Stage-based訓練設定（LEGOブロック） | Deep Supervision (Lee et al., 2015) |
 | **routing_threshold** | Early Exit閾値 | Early Exit (Teerapittayanon et al., 2016) |
 
 #### 技術的貢献
 
-1. **統一インターフェース**: `TrainingConfig`クラスで全訓練戦略を設定可能
+1. **モジュラーインターフェース**: `TrainingConfig`クラスでStageブロックを柔軟に組み合わせ
 2. **自動最適化**: 設定に応じて最適な計算パスを自動選択（8%高速化）
 3. **拡張性**: 新しい訓練戦略を既存コードへの変更なしで追加可能
 
 #### 既存研究との違い
 
-| 既存研究 | 実現方法 | LASHでの実現 |
+| 既存研究 | 実現方法 | LEGOでの実現 |
 |---------|---------|------------|
-| Deep Supervision | 専用モデル実装 | `layer_weights={1: 0.33, 2: 0.33, 3: 0.33}` |
+| Deep Supervision | 専用モデル実装 | `stages=[StageConfig(layers=(1,1), 0.33), ...]` |
 | Early Exit | 特殊な推論ルーチン | `routing_threshold=0.95` |
-| ASHEM (本研究) | フレームワーク統合 | `ASHEMConfig` + 2つのオプション |
+| ASHEM LEGO (本研究) | フレームワーク統合 | `ASHEMConfig` + 2つのオプション |
 
 ### 2. ASHEM Training Strategy（副次的貢献）
 
@@ -80,15 +80,15 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 ## 📊 論文の構成案
 
 ### Abstract
-- LASHフレームワークの提案
+- LEGOフレームワークの提案
 - 2つのコアオプションによる統一的な訓練戦略実現
-- ASHEMを含む3つの訓練戦略のサポート
+- ASHEM LEGOを含む3つの訓練戦略のサポート
 - WikiText-2での実験結果
 
 ### 1. Introduction
 - Transformerの訓練効率化の重要性
 - 既存訓練手法の個別実装問題
-- LASHの提案: 統一フレームワーク
+- LEGOの提案: モジュラー訓練フレームワーク
 - 主要貢献の明確化
 
 ### 2. Related Work
@@ -98,18 +98,18 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 - Hard Example Mining (HAM, HSM)
 - Progressive Layer Addition (PLD)
 
-### 3. LASH Framework
-- 設計思想: 柔軟性と統一性
+### 3. LEGO Framework
+- 設計思想: モジュラリティと統一性
 - 2つのコアオプション
-  - layer_weights: 層ごとの損失重み
+  - stages: Stage-based訓練設定（LEGOブロック）
   - routing_threshold: Early Exit閾値
 - 実装詳細
   - TrainingConfig
   - 自動最適化メカニズム
 - サポートする訓練戦略
-  1. Standard
-  2. Deep Supervision
-  3. ASHEM（本研究）
+  1. Standard LEGO
+  2. Deep Supervision LEGO
+  3. ASHEM LEGO（本研究）
 
 ### 4. ASHEM Training Strategy
 - 動機: Hard Examplesの効率的学習
@@ -120,7 +120,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
   - Phase 2: 深層モデル訓練（Hard Examplesのみ）
   - Two-Stage Inference
 - アルゴリズム詳細
-- LASHフレームワークとの統合
+- LEGOフレームワークとの統合
 
 ### 5. Experiments
 - 実験設定
@@ -141,7 +141,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
   - Val PPL基準Early Stoppingの重要性
 
 ### 6. Discussion
-- LASHフレームワークの利点
+- LEGOフレームワークの利点
   - 統一インターフェース
   - 拡張性
   - 性能最適化
@@ -154,7 +154,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 - 将来の方向性
 
 ### 7. Conclusion
-- LASHフレームワークの提案と実証
+- LEGOフレームワークの提案と実証
 - ASHEMの有効性確認
 - より大規模な実験への展望
 
@@ -176,7 +176,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
    - C4 (小規模サンプル)
 
 3. **ASHEM以外の新戦略**
-   - LASHの柔軟性を示すため
+   - LEGOの柔軟性を示すため
 
 ### 中期（論文採択後）
 
@@ -225,7 +225,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 
 ## 💡 主張のポイント
 
-### LASHフレームワーク
+### LEGOフレームワーク
 
 **主張**: 「既存の訓練手法を統一的に実現する初のフレームワーク」
 
@@ -249,7 +249,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 
 ### 新規性の明確化
 
-**LASH**:
+**LEGO**:
 - ✅ 新規: 統一フレームワーク
 - ✅ 新規: 2つのコアオプション設計
 - ⚠️ 既存技術の組み合わせ: 個別技術は既存
@@ -283,7 +283,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 ### Phase 2: 論文執筆（1ヶ月）
 - [ ] Abstract, Introduction
 - [ ] Related Work
-- [ ] Method (LASH + ASHEM)
+- [ ] Method (LEGO + ASHEM)
 - [ ] Experiments
 - [ ] Discussion, Conclusion
 
@@ -315,7 +315,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 
 ## 📌 まとめ
 
-**LASH**: 既存訓練手法を統一的に実現する柔軟なフレームワーク
+**LEGO**: 既存訓練手法を統一的に実現する柔軟なフレームワーク
 - 2つのコアオプション
 - 3つの訓練戦略サポート
 - 自動最適化
@@ -326,7 +326,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 - Two-Stage Inference
 
 **新規性**:
-- LASHの統一フレームワーク設計
+- LEGOの統一フレームワーク設計
 - ASHEMの3技術統合
 - 実験による実証
 

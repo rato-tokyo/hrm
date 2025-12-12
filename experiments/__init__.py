@@ -1,7 +1,7 @@
 """
-LASH Experiments
+LEGO Experiments
 
-Utilities for running experiments with LASH framework.
+Utilities for running experiments with LEGO framework.
 """
 
 from .utils import (

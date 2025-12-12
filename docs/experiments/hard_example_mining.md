@@ -3,7 +3,7 @@
 **実験日**: 2025-12-12
 **実験コード**: colab2.py
 **デバイス**: NVIDIA L4 GPU (Google Colab)
-**フレームワーク**: LASH (Layered Adaptive Supervision Hierarchy)
+**フレームワーク**: LEGO (Layered Ensemble with Gradual Optimization)
 
 ---
 

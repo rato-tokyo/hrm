@@ -1,6 +1,6 @@
 # Summary of All Results
 
-**⚠️ HISTORICAL DOCUMENT**: This document describes experiments conducted with the older framework that included `layer_lr_scales` as a core option. The current LASH framework (v0.2.0) uses only **2 core options** (`layer_weights` and `routing_threshold`). See [CLAUDE.md](../../CLAUDE.md) for the latest framework specification.
+**⚠️ HISTORICAL DOCUMENT**: This document describes experiments conducted with the older framework that included `layer_lr_scales` as a core option. The current LEGO framework (v0.2.0) uses only **2 core options** (`layer_weights` and `routing_threshold`). See [CLAUDE.md](../../CLAUDE.md) for the latest framework specification.
 
 ---
 
