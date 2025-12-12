@@ -49,6 +49,10 @@ from .trainer import (
     Trainer,
     create_standard_config,
     create_deep_supervision_config,
+    ASHEMConfig,
+    compute_confidence,
+    compute_confidence_threshold,
+    collect_hard_examples,
 )
 from .modules import (
     RMSNorm,
@@ -69,6 +73,11 @@ __all__ = [
     'Trainer',
     'create_standard_config',
     'create_deep_supervision_config',
+    # ASHEM
+    'ASHEMConfig',
+    'compute_confidence',
+    'compute_confidence_threshold',
+    'collect_hard_examples',
     # Modules
     'RMSNorm',
     'RotaryPositionalEmbedding',

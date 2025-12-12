@@ -1,11 +1,17 @@
 """
 EASE Framework - Training Configuration
 
-Simple training framework with two base models and three options:
+Simple training framework with two base models and four training strategies:
 
 Base Models:
 - Standard: Final layer loss only
 - Deep Supervision: Loss at all layers
+
+Training Strategies:
+1. Standard: Final layer loss only
+2. Deep Supervision: Loss at all layers
+3. Discriminative Fine-Tuning: Layer-wise learning rates
+4. ASHEM: Hard example mining with progressive layer addition
 
 Options:
 - layer_weights: Layer-wise loss weights
@@ -16,6 +22,7 @@ References:
 - Deep Supervision: Lee et al., 2015
 - Discriminative Fine-Tuning: Howard & Ruder, 2018
 - Early Exit: Teerapittayanon et al., 2016
+- ASHEM: Adaptive Supervision via Hard Example Mining
 """
 
 import torch
@@ -81,6 +88,39 @@ def create_deep_supervision_config(num_layers: int = 3) -> TrainingConfig:
     weight = 1.0 / num_layers
     weights = {i: weight for i in range(1, num_layers + 1)}
     return TrainingConfig(layer_weights=weights)
+
+
+@dataclass
+class ASHEMConfig:
+    """
+    Configuration for ASHEM (Adaptive Supervision via Hard Example Mining).
+
+    ASHEM is a two-phase training strategy:
+    1. Phase 1: Train shallow model on all data
+    2. Phase 2: Extend model with additional layers, train only on hard examples
+
+    Args:
+        phase1_layers: Number of layers for shallow model in Phase 1
+        phase1_lr: Learning rate for Phase 1 training
+        phase1_patience: Early stopping patience for Phase 1 (default: 1)
+        hard_example_ratio: Target ratio of hard examples to collect (0.0-1.0).
+                           e.g., 0.5 means target 50% of examples as hard
+        phase2_layers: Total number of layers after extension (must be > phase1_layers)
+        phase2_lr: Learning rate for Phase 2 (typically lower for fine-tuning)
+        phase2_patience: Early stopping patience for Phase 2 (default: 3)
+    """
+    # Phase 1: Shallow model
+    phase1_layers: int = 2
+    phase1_lr: float = 1e-3
+    phase1_patience: int = 1
+
+    # Hard example collection
+    hard_example_ratio: float = 0.5  # Target 50% as hard examples
+
+    # Phase 2: Deep model
+    phase2_layers: int = 4  # Total layers
+    phase2_lr: float = 1e-4  # Lower LR for fine-tuning
+    phase2_patience: int = 3  # Higher patience for new layers
 
 
 class Trainer:
@@ -375,3 +415,148 @@ class Trainer:
             'total_epochs': epoch + 1,
             'stopped_early': patience_counter >= patience
         }
+
+
+# ==============================================================================
+# ASHEM Utility Functions
+# ==============================================================================
+
+def compute_confidence(model: nn.Module, hidden_state: torch.Tensor) -> torch.Tensor:
+    """
+    Compute prediction confidence from hidden state.
+
+    Confidence is defined as the maximum probability in the softmax distribution.
+    Higher confidence indicates the model is more certain about its prediction.
+
+    Args:
+        model: Model with output_head attribute
+        hidden_state: Hidden state tensor of shape (batch_size, seq_len, dim)
+
+    Returns:
+        Confidence values of shape (batch_size, seq_len), range [0, 1]
+    """
+    logits = model.output_head(hidden_state)
+    probs = F.softmax(logits, dim=-1)
+    return probs.max(dim=-1).values
+
+
+def compute_confidence_threshold(
+    model: nn.Module,
+    val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+    target_ratio: float,
+    device: str
+) -> float:
+    """
+    Compute confidence threshold to achieve target hard example ratio.
+
+    The threshold is set such that approximately target_ratio of examples
+    fall below this confidence value (i.e., classified as hard examples).
+
+    Strategy:
+    1. Compute confidence for all validation examples
+    2. Find the target_ratio percentile of these confidences
+    3. Use this percentile as the threshold
+
+    Args:
+        model: Trained model to evaluate
+        val_batches: Validation data batches
+        target_ratio: Desired ratio of hard examples (e.g., 0.5 for 50%)
+        device: Device to run computation on
+
+    Returns:
+        Confidence threshold value
+    """
+    model.eval()
+    all_confidences = []
+
+    with torch.no_grad():
+        for x, y in val_batches:
+            x = x.to(device)
+
+            # Forward pass through all layers
+            h = model.embedding(x)
+            for layer in model.layers:
+                h = layer(h)
+
+            # Compute confidence
+            confidence = compute_confidence(model, h)
+            all_confidences.append(confidence.view(-1))
+
+    # Concatenate all confidences and compute threshold
+    all_confidences = torch.cat(all_confidences)
+    threshold = torch.quantile(all_confidences, target_ratio).item()
+
+    return threshold
+
+
+def collect_hard_examples(
+    model: nn.Module,
+    val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+    threshold: float,
+    device: str
+) -> Dict[str, torch.Tensor]:
+    """
+    Collect hard examples (low confidence samples) from validation set.
+
+    Hard examples are defined as samples where the model's prediction
+    confidence falls below the specified threshold. These examples are
+    challenging for the shallow model and benefit from deeper processing.
+
+    Args:
+        model: Trained shallow model
+        val_batches: Validation data batches
+        threshold: Confidence threshold for identifying hard examples
+        device: Device to run computation on
+
+    Returns:
+        Dictionary containing:
+        - 'inputs': Original input tokens
+        - 'hidden_states': Layer outputs (used as input for deeper layers)
+        - 'targets': Ground truth labels
+        - 'confidences': Confidence scores
+    """
+    model.eval()
+
+    hard_inputs = []
+    hard_hidden_states = []
+    hard_targets = []
+    hard_confidences = []
+
+    with torch.no_grad():
+        for x, y in val_batches:
+            x, y = x.to(device), y.to(device)
+
+            # Forward pass through all layers
+            h = model.embedding(x)
+            for layer in model.layers:
+                h = layer(h)
+
+            # Compute confidence
+            confidence = compute_confidence(model, h)
+
+            # Identify low-confidence samples
+            mask = confidence < threshold
+
+            if mask.any():
+                # Flatten batch and sequence dimensions
+                x_flat = x.view(-1)
+                h_flat = h.view(-1, h.shape[-1])
+                y_flat = y.view(-1)
+                confidence_flat = confidence.view(-1)
+                mask_flat = mask.view(-1)
+
+                # Collect hard examples
+                hard_inputs.append(x_flat[mask_flat])
+                hard_hidden_states.append(h_flat[mask_flat])
+                hard_targets.append(y_flat[mask_flat])
+                hard_confidences.append(confidence_flat[mask_flat])
+
+    if not hard_inputs:
+        raise ValueError("No hard examples found. Try increasing threshold.")
+
+    return {
+        'inputs': torch.cat(hard_inputs),
+        'hidden_states': torch.cat(hard_hidden_states),
+        'targets': torch.cat(hard_targets),
+        'confidences': torch.cat(hard_confidences)
+    }
