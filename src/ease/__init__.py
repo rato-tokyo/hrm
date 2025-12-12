@@ -1,7 +1,7 @@
 """
 LASH: Layered Adaptive Supervision Hierarchy
 
-層を組み合わせる柔軟なフレームワーク。3つのコアオプションで全てを制御。
+層を組み合わせる柔軟なフレームワーク。2つのコアオプションで全てを制御。
 
 Base Models:
 - StandardTransformer: Final layer loss only
@@ -9,14 +9,12 @@ Base Models:
 
 Core Options (via TrainingConfig):
 - layer_weights: Layer-wise loss weights
-- layer_lr_scales: Layer-wise learning rates
 - routing_threshold: Early exit at inference
 
 Training Strategies:
 1. Standard: Final layer only
 2. Deep Supervision: All layers equally
-3. Discriminative Fine-Tuning: Layer-wise learning rates
-4. ASHEM: Hard example mining with progressive layer addition
+3. ASHEM: Hard example mining with 2-stage training
 
 Usage:
     from ease import DeepSupervisionTransformer, Trainer, TrainingConfig
@@ -24,10 +22,9 @@ Usage:
     # Create model
     model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
 
-    # Configure training (LASH's 3 core options)
+    # Configure training (LASH's 2 core options)
     config = TrainingConfig(
         layer_weights={1: 0.7, 2: 0, 3: 0.3},
-        layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1},
         routing_threshold=0.95,
     )
 

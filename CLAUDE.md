@@ -6,7 +6,9 @@
 
 層を組み合わせる柔軟なフレームワーク。2つのコアオプションで全てを制御。
 
-**Staged Deep Supervision (SDS)**: Deep SupervisionとASHEMを時間軸で統一する新概念（概念のみ提案、実装は未完成）。
+**ASHEM (Adaptive Supervision via Hard Example Mining)**: Hard examplesに特化した2-Stage訓練戦略（実装完成、動作確認済み、詳細は[docs/ASHEM_STAGE_SPECIFICATION.md](docs/ASHEM_STAGE_SPECIFICATION.md)参照）。
+
+**Staged Deep Supervision (SDS)**: ASHEMをN-Stageに拡張する一般化概念（概念のみ、実装未完成）。
 
 ---
 
@@ -287,15 +289,22 @@ ashem_config = ASHEMConfig(
 詳細: [docs/experiments/hard_example_mining.md](docs/experiments/hard_example_mining.md)
 
 ### 4. Staged Deep Supervision (SDS) - 概念のみ
-**核心的洞察**: Deep SupervisionとASHEMは同じ概念の時間的変種
+
+**核心的洞察**: Deep SupervisionとASHEMを統一する時間軸フレームワーク
 
 ```
 Deep Supervision = 1 stage, all layers, all data
-ASHEM = 2 stages, progressive layers, filtered data
-SDS = N stages, flexible configuration
+ASHEM = 2 stages, selective layer expansion, filtered data
+SDS = N stages, flexible configuration (一般化)
 ```
 
-**注意**: SDS の実装（`staged_ds.py`）は現在未完成。Per-token filtering と Sequence-level filtering のミスマッチによるバグが判明。コミット fc9b140 の LASH + ASHEM 実装を使用すること。
+**ASHEM の詳細仕様**: [docs/ASHEM_STAGE_SPECIFICATION.md](docs/ASHEM_STAGE_SPECIFICATION.md)
+- Stage (ステージ) の正確な定義
+- Per-token Filtering の必須仕様
+- Early Exit の必須使用
+- 実験結果の検証方法
+
+**注意**: SDS の実装は未完成。現在は ASHEM (2-Stage) のみ動作確認済み (commit fc9b140)。
 
 ---
 
