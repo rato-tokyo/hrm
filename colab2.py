@@ -60,8 +60,8 @@ class Config:
     phase1_epochs: int = 50
     phase1_patience: int = 1
 
-    # Hard example threshold
-    confidence_threshold: float = 0.8  # Collect examples with confidence < 0.8
+    # Hard example threshold (auto-adjusted to target this percentage)
+    hard_example_ratio: float = 0.5  # Target 50% of examples as hard examples
 
     # Phase 2: Train on hard examples
     phase2_layers: int = 4  # Total: 2 + 2
@@ -77,6 +77,53 @@ def create_dataloaders(num_samples: int, batch_size: int, seq_len: int):
     """Create train and validation dataloaders."""
     train_loader, val_loader = create_dataloaders_from_colab(num_samples, batch_size, seq_len)
     return train_loader, val_loader
+
+
+def compute_confidence_threshold(
+    model: nn.Module,
+    val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+    target_ratio: float,
+    device: str
+) -> float:
+    """
+    Compute confidence threshold to achieve target hard example ratio.
+
+    Args:
+        model: Trained model
+        val_batches: Validation batches
+        target_ratio: Target ratio of hard examples (e.g., 0.5 for 50%)
+        device: Device to use
+
+    Returns:
+        Confidence threshold value
+    """
+    model.eval()
+    all_confidences = []
+
+    with torch.no_grad():
+        for x, y in val_batches:
+            x = x.to(device)
+
+            # Get Layer 2 output
+            h = model.embedding(x)
+            for i in range(model.num_layers):
+                h = model.layers[i](h)
+
+            # Compute confidence
+            logits = model.output_head(h)
+            probs = F.softmax(logits, dim=-1)
+            confidence = probs.max(dim=-1).values
+
+            all_confidences.append(confidence.view(-1))
+
+    # Concatenate all confidences
+    all_confidences = torch.cat(all_confidences)
+
+    # Compute threshold as the target_ratio percentile
+    # For 50%, we want the median confidence value
+    threshold = torch.quantile(all_confidences, target_ratio).item()
+
+    return threshold
 
 
 def collect_hard_examples(
@@ -324,22 +371,37 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print(f"  Time: {phase1_time:.2f}s")
 
     # ========================================
+    # Compute Confidence Threshold
+    # ========================================
+    print(f"\n{'='*60}")
+    print(f"Computing Confidence Threshold (target ratio: {CONFIG.hard_example_ratio*100:.0f}%)")
+    print(f"{'='*60}\n")
+
+    confidence_threshold = compute_confidence_threshold(
+        model, val_loader, CONFIG.hard_example_ratio, device
+    )
+
+    print(f"✓ Computed confidence threshold: {confidence_threshold:.4f}")
+    print(f"  Examples with confidence < {confidence_threshold:.4f} will be treated as hard examples")
+
+    # ========================================
     # Collect Hard Examples
     # ========================================
     print(f"\n{'='*60}")
-    print(f"Collecting Hard Examples (confidence < {CONFIG.confidence_threshold})")
+    print(f"Collecting Hard Examples")
     print(f"{'='*60}\n")
 
     hard_examples = collect_hard_examples(
-        model, val_loader, CONFIG.confidence_threshold, device
+        model, val_loader, confidence_threshold, device
     )
 
     num_hard = len(hard_examples['targets'])
     avg_confidence = hard_examples['confidences'].mean().item()
+    total_samples = CONFIG.phase1_samples * 0.2 * CONFIG.seq_len
 
     print(f"✓ Collected {num_hard:,} hard examples")
     print(f"  Average confidence: {avg_confidence:.4f}")
-    print(f"  Percentage of total: {num_hard / (CONFIG.phase1_samples * 0.2 * CONFIG.seq_len) * 100:.1f}%")
+    print(f"  Actual ratio: {num_hard / total_samples * 100:.1f}% (target: {CONFIG.hard_example_ratio*100:.0f}%)")
 
     # ========================================
     # Phase 2: Extend to 4 layers + Train on hard examples
@@ -427,7 +489,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print(f"{'='*60}\n")
 
     stats = evaluate_two_stage(
-        model_extended, val_loader, CONFIG.confidence_threshold,
+        model_extended, val_loader, confidence_threshold,
         CONFIG.vocab_size, device, CONFIG.phase1_layers
     )
 
@@ -468,7 +530,7 @@ def main():
 
     print("\nExperiment Design:")
     print(f"  Phase 1: Train {CONFIG.phase1_layers}-layer model")
-    print(f"  Collect: Hard examples (confidence < {CONFIG.confidence_threshold})")
+    print(f"  Compute: Auto-adjust threshold to collect {CONFIG.hard_example_ratio*100:.0f}% hard examples")
     print(f"  Phase 2: Add {CONFIG.phase2_layers - CONFIG.phase1_layers} layers → Train on hard examples")
     print("  Eval: Two-stage inference (Layer 2 or Layer 4)")
     print()
