@@ -75,31 +75,40 @@ config = TrainingConfig(
 
 ---
 
-## ファイル構成
+## ドキュメント管理ポリシー
 
-```
-hrm/
-├── CLAUDE.md                    # このファイル
-├── src/
-│   └── ease/                    # LASH フレームワーク（ディレクトリ名は互換性のためease）
-│       ├── __init__.py          # メインエントリポイント
-│       ├── models.py            # Standard, DeepSupervision Transformer
-│       ├── trainer.py           # TrainingConfig, Trainer, ASHEMConfig
-│       └── modules/             # コアモジュール
-│           ├── norm.py          # RMSNorm
-│           ├── attention.py     # MultiHeadAttention, RoPE
-│           ├── ffn.py           # GatedLinearUnit
-│           └── transformer.py   # TransformerBlock
-├── experiments/
-│   ├── __init__.py
-│   └── utils.py                 # データローダー、実験ユーティリティ
-├── docs/
-│   ├── PAPER_DIRECTION.md       # 論文の方向性
-│   └── experiments/             # 実験結果ドキュメント
-│       ├── hard_example_mining.md
-│       └── progressive_layer_training.md
-└── colab2.py                    # ASHEM実験（Colab実行用メインスクリプト）
-```
+### ファイル構成セクションの削除理由
+
+**CLAUDE.mdにファイル構成セクションは記載しない**
+
+**理由**:
+- ファイル構成は頻繁に変更される（リファクタリング、新機能追加等）
+- ドキュメントの更新忘れによる情報の陳腐化を防ぐ
+- 実際のコードベースを見れば構成は把握できる
+- Globツールで簡単に確認可能: `**/*.py`
+
+**推奨アプローチ**:
+- 重要なのは「使い方」と「概念」
+- ファイルの場所はインポート例で十分
+- 構造的な説明が必要な場合は、コメントやdocstringに記載
+
+---
+
+## コードモジュール構成
+
+### LASHフレームワーク (src/ease/)
+
+**コアモジュール**:
+- `models.py` - StandardTransformer, DeepSupervisionTransformer
+- `trainer.py` - TrainingConfig, Trainer (コア訓練フレームワーク)
+- `ashem.py` - ASHEMConfig, ASHEM訓練戦略
+- `modules/` - TransformerBlock, Attention, FFN, RMSNorm等
+
+**実験ユーティリティ (experiments/)**:
+- `utils.py` - データローダー、デバイス管理、seed設定
+
+**実験スクリプト (root)**:
+- `colab2.py` - ASHEM実験メインスクリプト
 
 ---
 
@@ -281,6 +290,28 @@ config = TrainingConfig(layer_weights={1: 0.7, 2: 0, 3: 0.3})
 - Progressive Layer Addition: Related to PLD (NeurIPS 2020)
 
 ---
+
+## コードアーキテクチャ
+
+### モジュール分離原則
+
+**訓練フレームワークと訓練戦略の分離**:
+- `trainer.py` (385行) - コア訓練フレームワーク（TrainingConfig, Trainer）
+- `ashem.py` (341行) - ASHEM訓練戦略専用モジュール
+
+**分離の利点**:
+- 明確な責務分離: フレームワーク vs 戦略
+- 拡張性: 新しい訓練戦略を独立したモジュールとして追加可能
+- 保守性: 各モジュールが特定の責務に集中
+
+**将来の拡張例**:
+```python
+# 新しい訓練戦略を追加する場合
+src/ease/
+├── trainer.py      # コアフレームワーク（変更不要）
+├── ashem.py        # ASHEM戦略
+└── new_strategy.py # 新しい戦略（独立したモジュール）
+```
 
 ---
 
