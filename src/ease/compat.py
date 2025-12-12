@@ -154,23 +154,28 @@ class Trainer:
                     for i in range(exit_layer):
                         h = model.layers[i](h)
 
-                    # Check confidence
+                    # Check per-token confidence
                     logits_early = model.output_head(h)
                     probs = F.softmax(logits_early, dim=-1)
-                    confidence = probs.max(dim=-1).values.mean().item()
+                    confidence = probs.max(dim=-1).values  # (batch_size, seq_len)
 
-                    if confidence >= routing_threshold:
-                        # Use shallow exit
+                    # Per-token Early Exit decision
+                    shallow_mask = confidence >= routing_threshold
+                    deep_mask = ~shallow_mask
+
+                    # Count exits
+                    shallow_exits += shallow_mask.sum().item()
+                    total_exits += confidence.numel()
+
+                    # For simplicity, if majority is shallow, use shallow exit
+                    if shallow_mask.float().mean() >= 0.5:
                         logits = logits_early
                         used_shallow = True
-                        shallow_exits += x.size(0) * x.size(1)
                     else:
                         # Continue to deep layers
                         for i in range(exit_layer, model.num_layers):
                             h = model.layers[i](h)
                         logits = model.output_head(h)
-
-                    total_exits += x.size(0) * x.size(1)
                 else:
                     # No Early Exit, process all layers
                     for layer in model.layers:
