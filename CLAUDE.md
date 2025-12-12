@@ -189,3 +189,62 @@ stats = eval_trainer.evaluate(model_extended, val_loader)
 | `create_hard_example_loader()` | Hard examplesをバッチ化 |
 | `train_upper_layers()` | 上位層のみを訓練 |
 | `evaluate_on_hard_examples()` | Hard examplesでの評価（PPL計算） |
+
+---
+
+## ⚠️ 過去の実装ミスと再発防止
+
+### 2025-12-12 リファクタリングミスの記録
+
+#### 発生した問題
+
+「純粋なLEGO設計」への移行を試みた際に、ASHEM戦略の核心を誤って変更してしまった。
+
+**誤った変更内容:**
+1. `collect_hard_examples()` をトークン単位からシーケンス単位に変更
+2. `train_upper_layers()`, `evaluate_on_hard_examples()`, `create_hard_example_loader()` を削除
+3. 標準のTrainerワークフローでPhase 2を訓練するように変更
+
+**結果:**
+- Hard examples収集: 51.2% → 100%（ほぼ全シーケンスに1つはhardトークンがある）
+- Phase 2 PPL: 829.78 → 1076.02（悪化）
+- Hard PPL改善: 75.8% → 悪化
+
+#### 根本原因
+
+**ASHEM戦略の核心を理解していなかった:**
+
+1. **Hard examplesはトークン単位で収集すべき**
+   - シーケンス単位で収集すると、1シーケンスに1つでも難しいトークンがあれば全体が「難しい」扱いになる
+   - 結果：ほぼ100%のデータが「難しい」と判定され、Phase 2の意味がなくなる
+
+2. **`train_upper_layers()`は削除してはならない**
+   - この関数は**hidden statesから直接Layer 3-4を訓練する**
+   - 標準のTrainerはトークン→Embedding→Layer 1-2→Layer 3-4と全層を通す
+   - Phase 2では既に計算済みのLayer 2出力（hidden states）から開始することで効率化している
+
+3. **「純粋な設計」と「効率的な実装」は異なる**
+   - LEGOの2つのコアオプション（StageConfig, routing_threshold）は訓練/推論の設定
+   - ASHEMのユーティリティ関数はこれらを**効率的に実現するための実装**
+   - 両者は補完関係にあり、ユーティリティ関数を削除することは設計の「純化」ではない
+
+#### 再発防止のためのチェックリスト
+
+リファクタリング前に以下を確認すること：
+
+- [ ] **既存の実験結果を確認したか？** (`dont_delete.md`等)
+- [ ] **変更後の期待される結果を明確にしたか？**
+- [ ] **関数削除時：その関数が実現する機能を他でカバーできるか？**
+- [ ] **トークン/シーケンス単位の違いを理解しているか？**
+- [ ] **効率化のための実装（hidden statesの再利用等）を維持しているか？**
+
+#### ASHEMの不変要素（削除禁止）
+
+以下の要素は削除・簡略化してはならない：
+
+1. **`collect_hard_examples()`** - トークン単位でhidden statesとtargetsを収集
+2. **`create_hard_example_loader()`** - hidden statesをバッチ化
+3. **`train_upper_layers()`** - hidden statesから直接Layer 3-4を訓練
+4. **`evaluate_on_hard_examples()`** - hard examplesのPPL計算
+
+これらは「実装の詳細」ではなく、**ASHEMの効率性を実現する核心機能**である。

@@ -11,7 +11,7 @@ A two-phase training strategy that focuses computational resources on hard examp
 Key Benefits:
 - 78% improvement on hard examples (PPL: 2600 → 571)
 - 36% compute cost reduction using adaptive routing
-- Fully integrated with LEGO framework's 3 core options
+- Fully integrated with LEGO framework's 2 core options
 
 References:
 - ASHEM: Adaptive Supervision via Hard Example Mining (本研究)
@@ -133,33 +133,39 @@ def compute_confidence_threshold(
 
 def collect_hard_examples(
     model: nn.Module,
-    data_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+    val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
     threshold: float,
     device: str
-) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+) -> Dict[str, torch.Tensor]:
     """
-    Collect hard examples (low confidence sequences) from dataset.
+    Collect hard examples (low confidence tokens) from validation set.
 
-    Hard examples are sequences containing at least one token where the model's
-    prediction confidence falls below the specified threshold. Returns full
-    sequences (not individual tokens) to maintain compatibility with standard
-    LEGO training workflow.
+    Hard examples are defined as tokens where the model's prediction
+    confidence falls below the specified threshold. These tokens are
+    challenging for the shallow model and benefit from deeper processing.
 
     Args:
         model: Trained shallow model
-        data_batches: Data batches (train or val)
+        val_batches: Validation data batches
         threshold: Confidence threshold for identifying hard examples
         device: Device to run computation on
 
     Returns:
-        List of (input, target) batches containing only hard sequences
+        Dictionary containing:
+        - 'inputs': Original input tokens
+        - 'hidden_states': Layer outputs (used as input for deeper layers)
+        - 'targets': Ground truth labels
+        - 'confidences': Confidence scores
     """
     model.eval()
 
-    hard_batches: List[Tuple[torch.Tensor, torch.Tensor]] = []
+    hard_inputs = []
+    hard_hidden_states = []
+    hard_targets = []
+    hard_confidences = []
 
     with torch.no_grad():
-        for x, y in data_batches:
+        for x, y in val_batches:
             x, y = x.to(device), y.to(device)
 
             # Forward pass through all layers
@@ -167,60 +173,172 @@ def collect_hard_examples(
             for layer in model.layers:
                 h = layer(h)
 
-            # Compute confidence per token
+            # Compute confidence
             confidence = compute_confidence(model, h)
 
-            # Identify sequences with at least one hard token
-            # Shape: (batch_size,) - True if any token in sequence is hard
-            hard_seq_mask = (confidence < threshold).any(dim=1)
+            # Identify low-confidence tokens
+            mask = confidence < threshold
 
-            if hard_seq_mask.any():
-                # Keep only hard sequences
-                hard_x = x[hard_seq_mask]
-                hard_y = y[hard_seq_mask]
-                hard_batches.append((hard_x.cpu(), hard_y.cpu()))
+            if mask.any():
+                # Flatten batch and sequence dimensions
+                x_flat = x.view(-1)
+                h_flat = h.view(-1, h.shape[-1])
+                y_flat = y.view(-1)
+                confidence_flat = confidence.view(-1)
+                mask_flat = mask.view(-1)
 
-    if not hard_batches:
+                # Collect hard examples (token-level)
+                hard_inputs.append(x_flat[mask_flat])
+                hard_hidden_states.append(h_flat[mask_flat])
+                hard_targets.append(y_flat[mask_flat])
+                hard_confidences.append(confidence_flat[mask_flat])
+
+    if not hard_inputs:
         raise ValueError("No hard examples found. Try increasing threshold.")
 
-    return hard_batches
+    return {
+        'inputs': torch.cat(hard_inputs),
+        'hidden_states': torch.cat(hard_hidden_states),
+        'targets': torch.cat(hard_targets),
+        'confidences': torch.cat(hard_confidences)
+    }
 
 
-def freeze_lower_layers(model: nn.Module, num_lower_layers: int) -> None:
+def create_hard_example_loader(
+    hard_examples: Dict[str, torch.Tensor],
+    batch_size: int
+) -> List[Tuple[torch.Tensor, torch.Tensor]]:
     """
-    Freeze embedding and lower layers for Phase 2 training.
-
-    In LEGO's ASHEM strategy, lower layers (Block 1) are frozen after Phase 1,
-    and only upper layers (Block 2) are trained on hard examples.
+    Create batched dataloader from collected hard examples.
 
     Args:
-        model: Model to freeze lower layers
-        num_lower_layers: Number of layers to freeze (including embedding)
-    """
-    # Freeze embedding
-    for param in model.embedding.parameters():
-        param.requires_grad = False
-
-    # Freeze lower layers
-    for i in range(num_lower_layers):
-        for param in model.layers[i].parameters():
-            param.requires_grad = False
-
-
-def get_trainable_params_info(model: nn.Module) -> Dict[str, int]:
-    """
-    Get information about trainable and total parameters.
-
-    Args:
-        model: Model to analyze
+        hard_examples: Dictionary with 'hidden_states' and 'targets'
+        batch_size: Number of examples per batch
 
     Returns:
-        Dictionary with 'trainable', 'total', and 'ratio' keys
+        List of batches (hidden_state, target) tuples
     """
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in model.parameters())
-    return {
-        'trainable': trainable,
-        'total': total,
-        'ratio': trainable / total if total > 0 else 0.0
-    }
+    hidden_states = hard_examples['hidden_states']
+    targets = hard_examples['targets']
+
+    num_samples = len(targets)
+    indices = torch.randperm(num_samples)
+
+    batches = []
+    for i in range(0, num_samples, batch_size):
+        batch_indices = indices[i:i + batch_size]
+        # Add seq_len dimension: (batch_size, dim) -> (batch_size, 1, dim)
+        h_batch = hidden_states[batch_indices].unsqueeze(1)
+        t_batch = targets[batch_indices]
+        batches.append((h_batch, t_batch))
+
+    return batches
+
+
+def train_upper_layers(
+    model: nn.Module,
+    hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+    optimizer: torch.optim.Optimizer,
+    vocab_size: int,
+    device: str,
+    num_lower_layers: int = 2
+) -> float:
+    """
+    Train upper layers on hard examples only.
+
+    The lower layers are frozen (already trained in Phase 1).
+    Only the newly added upper layers are trained on hard examples.
+
+    This function processes hidden states directly through Layer 3-4,
+    skipping Layer 1-2 (which are frozen and already computed).
+
+    Args:
+        model: Extended model with upper layers
+        hard_batches: Batches of (hidden_state, target) pairs
+        optimizer: Optimizer for trainable parameters
+        vocab_size: Vocabulary size for loss computation
+        device: Device to run training on
+        num_lower_layers: Number of frozen lower layers
+
+    Returns:
+        Average training loss for this epoch
+    """
+    model.train()
+    total_loss = 0.0
+
+    for h, y in hard_batches:
+        h, y = h.to(device), y.to(device)
+        optimizer.zero_grad()
+
+        # Process through upper layers only (Layer 3-4)
+        for i in range(num_lower_layers, model.num_layers):
+            h = model.layers[i](h)
+
+        # Compute classification loss
+        # h shape: (batch_size, 1, dim)
+        logits = model.output_head(h).squeeze(1)  # (batch_size, vocab_size)
+        loss = F.cross_entropy(logits, y)
+
+        loss.backward()  # type: ignore[no-untyped-call]
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+
+        total_loss += loss.item()
+
+    return total_loss / len(hard_batches)
+
+
+def evaluate_on_hard_examples(
+    model: nn.Module,
+    hard_examples: Dict[str, torch.Tensor],
+    vocab_size: int,
+    device: str,
+    batch_size: int = 64,
+    num_lower_layers: int = 2
+) -> float:
+    """
+    Evaluate model performance on hard examples only.
+
+    This measures how well the model handles the most challenging examples,
+    which is crucial for understanding the benefit of deeper processing.
+
+    Args:
+        model: Model to evaluate (can be shallow or deep)
+        hard_examples: Dictionary with 'hidden_states' and 'targets'
+        vocab_size: Vocabulary size for loss computation
+        device: Device to run evaluation on
+        batch_size: Batch size for evaluation
+        num_lower_layers: Number of lower layers (for deep model evaluation)
+
+    Returns:
+        Perplexity on hard examples
+    """
+    model.eval()
+    total_loss = 0.0
+    total_samples = 0
+
+    hidden_states = hard_examples['hidden_states']
+    targets = hard_examples['targets']
+    num_samples = len(targets)
+
+    with torch.no_grad():
+        for i in range(0, num_samples, batch_size):
+            # Get batch
+            h_batch = hidden_states[i:i + batch_size].unsqueeze(1).to(device)
+            y_batch = targets[i:i + batch_size].to(device)
+
+            # If deep model, process through upper layers
+            if hasattr(model, 'num_layers') and model.num_layers > num_lower_layers:
+                for layer_idx in range(num_lower_layers, model.num_layers):
+                    h_batch = model.layers[layer_idx](h_batch)
+
+            # Compute loss
+            logits = model.output_head(h_batch).squeeze(1)
+            loss = F.cross_entropy(logits, y_batch, reduction='sum')
+
+            total_loss += loss.item()
+            total_samples += len(y_batch)
+
+    avg_loss = total_loss / total_samples
+    ppl = torch.exp(torch.tensor(avg_loss)).item()
+    return ppl
