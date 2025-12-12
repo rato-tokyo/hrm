@@ -21,6 +21,7 @@ from typing import List, Tuple, Dict
 
 from ease import (
     StandardTransformer,
+    DeepSupervisionTransformer,
     Trainer,
     create_standard_config,
 )
@@ -410,12 +411,15 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print("Phase 2: Add 2 layers → Train on hard examples")
     print(f"{'='*60}\n")
 
-    # Create 4-layer model and copy weights
-    model_extended = ModelClass(
+    # Create 4-layer model with Early Exit support
+    # Always use DeepSupervisionTransformer for Phase 2 (two-stage inference)
+    model_extended = DeepSupervisionTransformer(
         vocab_size=CONFIG.vocab_size,
         dim=CONFIG.dim,
         num_layers=CONFIG.phase2_layers,
-        num_heads=CONFIG.num_heads
+        num_heads=CONFIG.num_heads,
+        exit_layer=CONFIG.phase1_layers,  # Exit at Layer 2
+        routing_threshold=confidence_threshold  # Use auto-computed threshold
     ).to(device)
 
     # Copy lower layers (1-2)
