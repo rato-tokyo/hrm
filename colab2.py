@@ -45,6 +45,7 @@ from ease import (
     DeepSupervisionTransformer,
     Trainer,
     TrainingConfig,
+    StageConfig,
     create_standard_config,
     ASHEMConfig,
     compute_confidence_threshold,
@@ -273,7 +274,7 @@ def run_experiment(
 
     # Configure training (final layer only for loss)
     phase2_config = TrainingConfig(
-        layer_weights={1: 0, 2: 0, 3: 0, 4: 1}  # Final layer only for loss
+        stages=[StageConfig(layers=(4, 4), loss_weight=1.0)]  # Final layer only for loss
     )
 
     trainer_phase2 = Trainer(phase2_config, vocab_size=CONFIG.vocab_size)
@@ -313,11 +314,10 @@ def run_experiment(
 
         # Evaluate with LASH's Early Exit
         eval_config = TrainingConfig(
-            layer_weights={i: 0 for i in range(1, CONFIG.ashem.phase2_layers + 1)},
+            stages=[StageConfig(layers=(CONFIG.ashem.phase2_layers, CONFIG.ashem.phase2_layers), loss_weight=1.0)],
             routing_threshold=confidence_threshold,
             exit_layer=CONFIG.ashem.phase1_layers
         )
-        eval_config.layer_weights[CONFIG.ashem.phase2_layers] = 1.0
 
         eval_trainer = Trainer(eval_config, vocab_size=CONFIG.vocab_size, device=device)
         val_stats = eval_trainer.evaluate(model_extended, val_loader)
@@ -368,11 +368,10 @@ def run_experiment(
 
     # Get final val stats
     final_eval_config = TrainingConfig(
-        layer_weights={i: 0 for i in range(1, CONFIG.ashem.phase2_layers + 1)},
+        stages=[StageConfig(layers=(CONFIG.ashem.phase2_layers, CONFIG.ashem.phase2_layers), loss_weight=1.0)],
         routing_threshold=confidence_threshold,
         exit_layer=CONFIG.ashem.phase1_layers
     )
-    final_eval_config.layer_weights[CONFIG.ashem.phase2_layers] = 1.0
     final_eval_trainer = Trainer(final_eval_config, vocab_size=CONFIG.vocab_size, device=device)
     final_val_stats = final_eval_trainer.evaluate(model_extended, val_loader)
 
@@ -392,11 +391,10 @@ def run_experiment(
 
     # Use LASH's built-in Early Exit evaluation
     final_config = TrainingConfig(
-        layer_weights={i: 0 for i in range(1, CONFIG.ashem.phase2_layers + 1)},
+        stages=[StageConfig(layers=(CONFIG.ashem.phase2_layers, CONFIG.ashem.phase2_layers), loss_weight=1.0)],
         routing_threshold=confidence_threshold,
         exit_layer=CONFIG.ashem.phase1_layers
     )
-    final_config.layer_weights[CONFIG.ashem.phase2_layers] = 1.0
 
     final_trainer = Trainer(final_config, vocab_size=CONFIG.vocab_size, device=device)
     stats = final_trainer.evaluate(model_extended, val_loader)

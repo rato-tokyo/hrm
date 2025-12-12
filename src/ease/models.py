@@ -7,9 +7,8 @@ Two base models:
 - StandardTransformer: Final layer loss only
 - DeepSupervisionTransformer: Loss at all layers with early exit support
 
-Both support LASH's 3 core options:
-- layer_weights: Layer-wise loss weights
-- layer_lr_scales: Layer-wise learning rates
+Both support LASH's 2 core options:
+- stages: Stage-based training configuration
 - routing_threshold: Early exit at inference
 """
 

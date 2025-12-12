@@ -8,23 +8,26 @@ Base Models:
 - DeepSupervisionTransformer: Loss at all layers with early exit support
 
 Core Options (via TrainingConfig):
-- layer_weights: Layer-wise loss weights
+- stages: Stage-based training configuration
 - routing_threshold: Early exit at inference
 
 Training Strategies:
-1. Standard: Final layer only
-2. Deep Supervision: All layers equally
+1. Standard: Final layer only (1 stage)
+2. Deep Supervision: All layers equally (all stages)
 3. ASHEM: Hard example mining with 2-stage training
 
 Usage:
-    from ease import DeepSupervisionTransformer, Trainer, TrainingConfig
+    from ease import DeepSupervisionTransformer, Trainer, TrainingConfig, StageConfig
 
     # Create model
     model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
 
     # Configure training (LASH's 2 core options)
     config = TrainingConfig(
-        layer_weights={1: 0.7, 2: 0, 3: 0.3},
+        stages=[
+            StageConfig(layers=(1, 2), loss_weight=0.7),
+            StageConfig(layers=(3, 3), loss_weight=0.3),
+        ],
         routing_threshold=0.95,
     )
 
@@ -41,7 +44,6 @@ Usage:
 References:
 - LASH: Layered Adaptive Supervision Hierarchy
 - Deep Supervision: Lee et al., 2015
-- Discriminative Fine-Tuning: Howard & Ruder, 2018
 - Early Exit: Teerapittayanon et al., 2016
 - ASHEM: Adaptive Supervision via Hard Example Mining
 """
@@ -51,6 +53,7 @@ from .models import (
     DeepSupervisionTransformer,
 )
 from .trainer import (
+    StageConfig,
     TrainingConfig,
     Trainer,
     create_standard_config,
@@ -80,6 +83,7 @@ __all__ = [
     'StandardTransformer',
     'DeepSupervisionTransformer',
     # Trainer
+    'StageConfig',
     'TrainingConfig',
     'Trainer',
     'create_standard_config',

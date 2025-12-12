@@ -8,12 +8,12 @@ Base Models:
 - Deep Supervision: Loss at all layers
 
 Training Strategies:
-1. Standard: Final layer loss only
-2. Deep Supervision: Loss at all layers
-3. ASHEM: Hard example mining with selective layer expansion
+1. Standard: Final layer loss only (1 stage)
+2. Deep Supervision: Loss at all layers (all stages)
+3. ASHEM: Hard example mining with 2-stage training
 
 Core Options (2つのコアオプション):
-- layer_weights: Layer-wise loss weights
+- stages: Which stages to train (stage-based configuration)
 - routing_threshold: Early Exit at inference
 
 References:
@@ -28,25 +28,40 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+
+@dataclass
+class StageConfig:
+    """
+    Configuration for a single stage.
+
+    A stage represents a contiguous group of layers that are trained together.
+
+    Args:
+        layers: Tuple of (start_layer, end_layer) inclusive, 1-indexed.
+               e.g., (1, 2) means layers 1 and 2
+        loss_weight: Loss weight for this stage (default: 1.0)
+    """
+    layers: Tuple[int, int]
+    loss_weight: float = 1.0
 
 
 @dataclass
 class TrainingConfig:
     """
-    Training configuration for LASH framework.
+    Stage-based training configuration for LASH framework.
 
     LASH (Layered Adaptive Supervision Hierarchy) uses 2 core options:
-    1. layer_weights: Which layers to train (loss weights)
+    1. stages: Which stages to train (stage-based configuration)
     2. routing_threshold: When to exit early (inference efficiency)
 
     Args:
-        layer_weights: Loss weight for each layer (1-indexed).
-                      e.g., {1: 0.7, 2: 0, 3: 0.3} for asymmetric loss
-        routing_threshold: Confidence threshold for early exit (0 = disabled).
-        exit_layer: Which layer to use for early exit (1-indexed).
+        stages: List of StageConfig defining which layer groups to train
+        routing_threshold: Confidence threshold for early exit (0 = disabled)
+        exit_layer: Which layer to use for early exit (1-indexed)
     """
-    layer_weights: Dict[int, float]
+    stages: List[StageConfig] = field(default_factory=list)
     routing_threshold: float = 0.0
     exit_layer: int = 1
 
@@ -57,8 +72,11 @@ class TrainingConfig:
 
     def describe(self) -> str:
         """Human-readable description."""
-        weights_str = ", ".join([f"L{k}:{v:.2f}" for k, v in sorted(self.layer_weights.items())])
-        desc = f"Weights: [{weights_str}]"
+        stages_str = ", ".join([
+            f"L{s.layers[0]}-{s.layers[1]}:{s.loss_weight:.2f}"
+            for s in self.stages
+        ])
+        desc = f"Stages: [{stages_str}]"
 
         if self.has_routing:
             desc += f", Early Exit: threshold={self.routing_threshold}"
@@ -67,17 +85,27 @@ class TrainingConfig:
 
 
 def create_standard_config(num_layers: int = 3) -> TrainingConfig:
-    """Create Standard LLM config (final layer loss only)."""
-    weights = {i: 0.0 for i in range(1, num_layers + 1)}
-    weights[num_layers] = 1.0
-    return TrainingConfig(layer_weights=weights)
+    """
+    Create Standard LLM config (final layer loss only).
+
+    Standard = 1 stage containing only the final layer.
+    """
+    return TrainingConfig(stages=[
+        StageConfig(layers=(num_layers, num_layers), loss_weight=1.0)
+    ])
 
 
 def create_deep_supervision_config(num_layers: int = 3) -> TrainingConfig:
-    """Create Deep Supervision config (equal loss on all layers)."""
+    """
+    Create Deep Supervision config (equal loss on all layers).
+
+    Deep Supervision = num_layers stages, each containing one layer.
+    """
     weight = 1.0 / num_layers
-    weights = {i: weight for i in range(1, num_layers + 1)}
-    return TrainingConfig(layer_weights=weights)
+    return TrainingConfig(stages=[
+        StageConfig(layers=(i, i), loss_weight=weight)
+        for i in range(1, num_layers + 1)
+    ])
 
 
 class Trainer:
@@ -85,7 +113,7 @@ class Trainer:
     Trainer for LASH models.
 
     Supports LASH's 2 core options:
-    - layer_weights: Layer-wise loss weighting
+    - stages: Stage-based training configuration
     - routing_threshold: Early exit evaluation
     """
 
@@ -96,17 +124,26 @@ class Trainer:
 
     def compute_loss(self, model: nn.Module, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         """
-        Compute weighted loss across layers (optimized).
+        Compute weighted loss across stages (optimized).
 
         Optimization: Use fast path (forward()) when only final layer is needed.
         Maintains full compatibility with both core options:
-        - layer_weights: Determines which layers to compute
+        - stages: Determines which stages to compute
         - routing_threshold: Independent (used in evaluation only)
         """
-        # Determine which layers need loss computation
+        # Determine which layers need loss computation from stages
         num_layers = model.num_layers if hasattr(model, 'num_layers') else len(model.layers)
-        active_layers = [(idx, weight) for idx, weight in self.config.layer_weights.items()
-                        if weight > 0 and idx <= num_layers]
+
+        # Convert stages to layer-weight pairs
+        layer_weights: Dict[int, float] = {}
+        for stage in self.config.stages:
+            start, end = stage.layers
+            for layer_idx in range(start, end + 1):
+                if layer_idx <= num_layers:
+                    # Accumulate weights if multiple stages cover same layer
+                    layer_weights[layer_idx] = layer_weights.get(layer_idx, 0.0) + stage.loss_weight
+
+        active_layers = [(idx, weight) for idx, weight in layer_weights.items() if weight > 0]
 
         # Fast path: Only final layer needed (Standard Transformer pattern)
         if len(active_layers) == 1 and active_layers[0][0] == num_layers:

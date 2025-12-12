@@ -1,6 +1,3 @@
-From https://github.com/rato-tokyo/hrm
- * branch            main       -> FETCH_HEAD
-Already up to date.
 ============================================================
 Hard Example Mining + Two-Stage Inference
 ============================================================
@@ -20,13 +17,6 @@ Standard Transformer - Hard Example Mining
 
 Phase 1: Train 2-layer model
 ============================================================
-README.md: 10.5kB [00:00, 32.8MB/s]
-wikitext-2-raw-v1/test-00000-of-00001.pa(…): 100% 733k/733k [00:01<00:00, 538kB/s]
-wikitext-2-raw-v1/train-00000-of-00001.p(…): 100% 6.36M/6.36M [00:00<00:00, 8.81MB/s]
-wikitext-2-raw-v1/validation-00000-of-00(…): 100% 657k/657k [00:00<00:00, 1.27MB/s]
-Generating test split: 100% 4358/4358 [00:00<00:00, 96184.85 examples/s]
-Generating train split: 100% 36718/36718 [00:00<00:00, 804946.84 examples/s]
-Generating validation split: 100% 3760/3760 [00:00<00:00, 611002.40 examples/s]
 Epoch 1/50 - Train PPL: 3208.8367 | Val PPL: 1155.4391 | Val Acc: 14.53%
   → New best model (val_loss: 7.0522)
 Epoch 2/50 - Train PPL: 688.4413 | Val PPL: 995.6865 | Val Acc: 15.84%
@@ -44,7 +34,7 @@ Restored best model from epoch 3
 Phase 1 Results:
   Best Acc: 16.03%
   Best PPL: 986.43
-  Time: 23.26s
+  Time: 22.41s
 
 ============================================================
 Computing Confidence Threshold (target ratio: 50%)
@@ -117,7 +107,7 @@ Phase 2 Results:
   Best Val PPL: 829.78
   Best Hard PPL: 668.08
   Hard PPL Improvement: +2095.60 (+75.8%)
-  Time: 67.94s
+  Time: 66.58s
 
 ============================================================
 Final Evaluation (Two-Stage Inference)
