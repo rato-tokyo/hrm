@@ -59,9 +59,16 @@ from .staged_ds import (
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
-    create_standard_config,
+    train_upper_layers,
+    evaluate_on_hard_examples,
     create_deep_supervision_config,
     create_ashem_config,
+)
+from .compat import (
+    ASHEMConfig,
+    TrainingConfig,
+    Trainer,
+    create_standard_config,
 )
 from .modules import (
     RMSNorm,
@@ -85,9 +92,15 @@ __all__ = [
     'compute_confidence_threshold',
     'collect_hard_examples',
     'create_hard_example_loader',
-    'create_standard_config',
+    'train_upper_layers',
+    'evaluate_on_hard_examples',
     'create_deep_supervision_config',
     'create_ashem_config',
+    # Legacy compatibility
+    'ASHEMConfig',
+    'TrainingConfig',
+    'Trainer',
+    'create_standard_config',
     # Modules
     'RMSNorm',
     'RotaryPositionalEmbedding',

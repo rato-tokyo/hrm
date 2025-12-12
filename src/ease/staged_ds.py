@@ -229,6 +229,112 @@ def create_hard_example_loader(
     return batches
 
 
+def train_upper_layers(
+    model: nn.Module,
+    hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+    optimizer: torch.optim.Optimizer,
+    vocab_size: int,
+    device: str,
+    num_lower_layers: int = 2
+) -> float:
+    """
+    Train upper layers on hard examples only.
+
+    The lower layers are frozen (already trained in Phase 1).
+    Only the newly added upper layers are trained on hard examples.
+
+    Args:
+        model: Extended model with upper layers
+        hard_batches: Batches of (hidden_state, target) pairs
+        optimizer: Optimizer for trainable parameters
+        vocab_size: Vocabulary size for loss computation
+        device: Device to run training on
+        num_lower_layers: Number of frozen lower layers
+
+    Returns:
+        Average training loss for this epoch
+    """
+    model.train()
+    total_loss = 0.0
+
+    for h, y in hard_batches:
+        h, y = h.to(device), y.to(device)
+        optimizer.zero_grad()
+
+        # Process through upper layers only
+        for i in range(num_lower_layers, model.num_layers):
+            h = model.layers[i](h)
+
+        # Compute classification loss
+        # h shape: (batch_size, 1, dim)
+        logits = model.output_head(h).squeeze(1)  # (batch_size, vocab_size)
+        loss = F.cross_entropy(logits, y)
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+
+        total_loss += loss.item()
+
+    return total_loss / len(hard_batches)
+
+
+def evaluate_on_hard_examples(
+    model: nn.Module,
+    hard_examples: Dict[str, torch.Tensor],
+    vocab_size: int,
+    device: str,
+    batch_size: int = 64,
+    num_lower_layers: int = 2
+) -> float:
+    """
+    Evaluate model performance on hard examples only.
+
+    This measures how well the model handles the most challenging examples,
+    which is crucial for understanding the benefit of deeper processing.
+
+    Args:
+        model: Model to evaluate (can be shallow or deep)
+        hard_examples: Dictionary with 'hidden_states' and 'targets'
+        vocab_size: Vocabulary size for loss computation
+        device: Device to run evaluation on
+        batch_size: Batch size for evaluation
+        num_lower_layers: Number of lower layers (for deep model evaluation)
+
+    Returns:
+        Perplexity on hard examples
+    """
+    model.eval()
+    total_loss = 0.0
+    total_samples = 0
+
+    hidden_states = hard_examples['hidden_states']
+    targets = hard_examples['targets']
+    num_samples = len(targets)
+
+    with torch.no_grad():
+        for i in range(0, num_samples, batch_size):
+            # Get batch
+            h_batch = hidden_states[i:i + batch_size].unsqueeze(1).to(device)
+            y_batch = targets[i:i + batch_size].to(device)
+
+            # If deep model, process through upper layers
+            if hasattr(model, 'num_layers') and model.num_layers > num_lower_layers:
+                for layer_idx in range(num_lower_layers, model.num_layers):
+                    h_batch = model.layers[layer_idx](h_batch)
+
+            # Compute loss
+            logits = model.output_head(h_batch).squeeze(1)
+            loss = F.cross_entropy(logits, y_batch, reduction='sum')
+
+            total_loss += loss.item()
+            total_samples += len(y_batch)
+
+    avg_loss = total_loss / total_samples
+    ppl = torch.exp(torch.tensor(avg_loss)).item()
+    return ppl
+
+
 # ==============================================================================
 # Staged Trainer
 # ==============================================================================
