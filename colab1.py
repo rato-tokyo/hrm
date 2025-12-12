@@ -13,15 +13,11 @@ import time
 import torch
 import torch.nn as nn
 from dataclasses import dataclass
-from typing import List
-import matplotlib.pyplot as plt
 
 from ease import (
     StandardTransformer,
-    DeepSupervisionTransformer,
     Trainer,
     create_standard_config,
-    create_deep_supervision_config,
 )
 
 # データローダー
@@ -267,60 +263,6 @@ def run_progressive_experiment(model_name: str, ModelClass, config_fn, device: s
     }
 
 
-def plot_results(results: List[dict]):
-    """Plot comparison of progressive training results."""
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
-
-    models = [r['model_name'] for r in results]
-
-    # Accuracy comparison
-    ax = axes[0]
-    phase1_accs = [r['phase1_acc'] for r in results]
-    phase2_accs = [r['phase2_acc'] for r in results]
-
-    x = range(len(models))
-    width = 0.35
-    ax.bar([i - width/2 for i in x], phase1_accs, width, label='Phase 1 (3 layers)', alpha=0.8)
-    ax.bar([i + width/2 for i in x], phase2_accs, width, label='Phase 2 (+1 layer)', alpha=0.8)
-    ax.set_ylabel('Accuracy (%)')
-    ax.set_title('Accuracy Comparison')
-    ax.set_xticks(x)
-    ax.set_xticklabels(models, rotation=15, ha='right')
-    ax.legend()
-    ax.grid(axis='y', alpha=0.3)
-
-    # PPL comparison
-    ax = axes[1]
-    phase1_ppls = [r['phase1_ppl'] for r in results]
-    phase2_ppls = [r['phase2_ppl'] for r in results]
-
-    ax.bar([i - width/2 for i in x], phase1_ppls, width, label='Phase 1 (3 layers)', alpha=0.8)
-    ax.bar([i + width/2 for i in x], phase2_ppls, width, label='Phase 2 (+1 layer)', alpha=0.8)
-    ax.set_ylabel('Perplexity')
-    ax.set_title('Perplexity Comparison (lower is better)')
-    ax.set_xticks(x)
-    ax.set_xticklabels(models, rotation=15, ha='right')
-    ax.legend()
-    ax.grid(axis='y', alpha=0.3)
-
-    # Training time
-    ax = axes[2]
-    phase1_times = [r['phase1_time'] for r in results]
-    phase2_times = [r['phase2_time'] for r in results]
-
-    ax.bar([i - width/2 for i in x], phase1_times, width, label='Phase 1', alpha=0.8)
-    ax.bar([i + width/2 for i in x], phase2_times, width, label='Phase 2', alpha=0.8)
-    ax.set_ylabel('Time (seconds)')
-    ax.set_title('Training Time Comparison')
-    ax.set_xticks(x)
-    ax.set_xticklabels(models, rotation=15, ha='right')
-    ax.legend()
-    ax.grid(axis='y', alpha=0.3)
-
-    plt.tight_layout()
-    plt.show()
-
-
 def main():
     print("="*60)
     print("Progressive Layer Training Experiment")
@@ -335,39 +277,14 @@ def main():
     print()
 
     device = get_device()
-    results = []
 
-    # Standard Transformer
+    # Run experiment (Standard Transformer with final layer loss only)
     result = run_progressive_experiment(
-        "Standard",
+        "Standard Transformer",
         StandardTransformer,
         create_standard_config,
         device
     )
-    results.append(result)
-
-    # Deep Supervision Transformer
-    result = run_progressive_experiment(
-        "Deep Supervision",
-        DeepSupervisionTransformer,
-        create_deep_supervision_config,
-        device
-    )
-    results.append(result)
-
-    # Final comparison
-    print("\n" + "="*80)
-    print("FINAL COMPARISON: Progressive Layer Training")
-    print("="*80)
-    print(f"{'Model':<20} {'Phase1 Acc':<12} {'Phase2 Acc':<12} {'Acc Gain':<12} {'Total Time':<12}")
-    print("-"*80)
-    for r in results:
-        print(f"{r['model_name']:<20} {r['phase1_acc']:>10.2f}% {r['phase2_acc']:>10.2f}% "
-              f"{r['acc_gain']:>+10.2f}% {r['total_time']:>10.2f}s")
-    print("="*80)
-
-    # Plot
-    plot_results(results)
 
     print("\n" + "="*60)
     print("Experiment completed!")

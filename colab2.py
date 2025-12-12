@@ -21,10 +21,8 @@ from typing import List, Tuple, Dict
 
 from ease import (
     StandardTransformer,
-    DeepSupervisionTransformer,
     Trainer,
     create_standard_config,
-    create_deep_supervision_config,
 )
 
 from colab import create_dataloaders as create_dataloaders_from_colab
@@ -476,37 +474,14 @@ def main():
     print()
 
     device = get_device()
-    results = []
 
-    # Standard Transformer
+    # Run experiment (Standard Transformer with final layer loss only)
     result = run_experiment(
-        "Standard",
+        "Standard Transformer",
         StandardTransformer,
         create_standard_config,
         device
     )
-    results.append(result)
-
-    # Deep Supervision Transformer
-    result = run_experiment(
-        "Deep Supervision",
-        DeepSupervisionTransformer,
-        create_deep_supervision_config,
-        device
-    )
-    results.append(result)
-
-    # Final comparison
-    print("\n" + "="*80)
-    print("FINAL COMPARISON")
-    print("="*80)
-    print(f"{'Model':<20} {'2-layer':<12} {'Two-stage':<12} {'Improvement':<12} {'Compute':<12}")
-    print("-"*80)
-    for r in results:
-        print(f"{r['model_name']:<20} {r['phase1_acc']:>10.2f}% "
-              f"{r['two_stage_acc']:>10.2f}% {r['two_stage_acc'] - r['phase1_acc']:>+10.2f}% "
-              f"{r['compute_cost']:>10.1%}")
-    print("="*80)
 
     print("\n" + "="*60)
     print("Experiment completed!")
