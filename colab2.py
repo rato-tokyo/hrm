@@ -67,7 +67,7 @@ class Config:
     phase2_layers: int = 4  # Total: 2 + 2
     phase2_batch: int = 64
     phase2_epochs: int = 50
-    phase2_patience: int = 1
+    phase2_patience: int = 3  # Higher patience for randomly initialized layers
     phase2_lr: float = 1e-4  # Lower LR for fine-tuning
 
 CONFIG = Config()
@@ -388,7 +388,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     # Collect Hard Examples
     # ========================================
     print(f"\n{'='*60}")
-    print(f"Collecting Hard Examples")
+    print("Collecting Hard Examples")
     print(f"{'='*60}\n")
 
     hard_examples = collect_hard_examples(
@@ -559,7 +559,7 @@ def main():
     device = get_device()
 
     # Run experiment (Standard Transformer with final layer loss only)
-    result = run_experiment(
+    run_experiment(
         "Standard Transformer",
         StandardTransformer,
         create_standard_config,

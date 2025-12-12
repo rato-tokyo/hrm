@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 from ease import (
     StandardTransformer,
+    DeepSupervisionTransformer,
     Trainer,
     create_standard_config,
 )
@@ -279,7 +280,7 @@ def main():
     device = get_device()
 
     # Run experiment (Standard Transformer with final layer loss only)
-    result = run_progressive_experiment(
+    run_progressive_experiment(
         "Standard Transformer",
         StandardTransformer,
         create_standard_config,

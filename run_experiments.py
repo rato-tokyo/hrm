@@ -19,7 +19,6 @@ from datetime import datetime
 from typing import Dict, List
 
 from ease import (
-    StandardTransformer,
     DeepSupervisionTransformer,
     TrainingConfig,
     Trainer,
