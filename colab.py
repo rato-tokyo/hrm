@@ -81,42 +81,68 @@ def prepare_dataloaders(num_samples: int, vocab_size: int = 1000, seq_len: int =
 def run_experiment(model_name: str, model: nn.Module, config: TrainingConfig,
                   train_loader: DataLoader, val_loader: DataLoader,
                   num_epochs: int = 10, base_lr: float = 1e-3,
-                  device: str = 'cuda') -> Dict:
+                  device: str = 'cuda', use_early_stopping: bool = False,
+                  patience: int = 5) -> Dict:
     """単一モデルの実験を実行"""
     print(f"\n{'='*60}")
     print(f"Experiment: {model_name}")
+    if use_early_stopping:
+        print(f"Early Stopping: enabled (patience={patience})")
     print(f"{'='*60}")
 
     model = model.to(device)
     trainer = Trainer(config, vocab_size=1000, device=device)
     optimizer = trainer.create_optimizer(model, base_lr=base_lr)
 
-    train_losses = []
-    val_losses = []
-    val_accs = []
-
     start_time = time.time()
 
-    for epoch in range(num_epochs):
-        train_loss = trainer.train_epoch(model, train_loader, optimizer)
-        train_losses.append(train_loss)
+    if use_early_stopping:
+        # Early Stopping使用
+        result = trainer.train_with_early_stopping(
+            model=model,
+            train_batches=train_loader,
+            val_batches=val_loader,
+            optimizer=optimizer,
+            max_epochs=num_epochs,
+            patience=patience,
+            verbose=True
+        )
+        train_losses = result['train_losses']
+        val_losses = result['val_losses']
+        val_accs = [acc * 100 for acc in result['val_accs']]  # Convert to percentage
+        stopped_early = result['stopped_early']
+        best_epoch = result['best_epoch']
+    else:
+        # 通常訓練
+        train_losses = []
+        val_losses = []
+        val_accs = []
 
-        val_stats = trainer.evaluate(model, val_loader)
-        val_ppl = val_stats['ppl']
-        val_acc = val_stats['acc'] * 100  # Convert to percentage
+        for epoch in range(num_epochs):
+            train_loss = trainer.train_epoch(model, train_loader, optimizer)
+            train_losses.append(train_loss)
 
-        val_losses.append(val_ppl)
-        val_accs.append(val_acc)
+            val_stats = trainer.evaluate(model, val_loader)
+            val_ppl = val_stats['ppl']
+            val_acc = val_stats['acc'] * 100  # Convert to percentage
 
-        print(f"Epoch {epoch+1}/{num_epochs} - "
-              f"Train Loss: {train_loss:.4f} | "
-              f"Val PPL: {val_ppl:.4f} | "
-              f"Val Acc: {val_acc:.2f}%")
+            val_losses.append(val_ppl)
+            val_accs.append(val_acc)
+
+            print(f"Epoch {epoch+1}/{num_epochs} - "
+                  f"Train Loss: {train_loss:.4f} | "
+                  f"Val PPL: {val_ppl:.4f} | "
+                  f"Val Acc: {val_acc:.2f}%")
+
+        stopped_early = False
+        best_epoch = val_accs.index(max(val_accs))
 
     training_time = time.time() - start_time
 
     print(f"\nTraining completed in {training_time:.2f}s")
-    print(f"Best Val Acc: {max(val_accs):.2f}%")
+    print(f"Best Val Acc: {max(val_accs):.2f}% (epoch {best_epoch+1})")
+    if use_early_stopping and stopped_early:
+        print("Early stopping was triggered")
 
     return {
         'model_name': model_name,
@@ -124,7 +150,9 @@ def run_experiment(model_name: str, model: nn.Module, config: TrainingConfig,
         'val_losses': val_losses,
         'val_accs': val_accs,
         'training_time': training_time,
-        'best_val_acc': max(val_accs)
+        'best_val_acc': max(val_accs),
+        'best_epoch': best_epoch,
+        'stopped_early': stopped_early if use_early_stopping else False
     }
 
 

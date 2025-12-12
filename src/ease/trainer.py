@@ -265,3 +265,96 @@ class Trainer:
             total_loss += loss.item()
 
         return total_loss / len(train_batches)
+
+    def train_with_early_stopping(
+        self,
+        model: nn.Module,
+        train_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+        val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+        optimizer: torch.optim.Optimizer,
+        max_epochs: int = 100,
+        patience: int = 5,
+        min_delta: float = 0.0,
+        grad_clip: float = 1.0,
+        verbose: bool = True
+    ) -> Dict:
+        """
+        Train with early stopping.
+
+        Args:
+            model: Model to train
+            train_batches: Training data batches
+            val_batches: Validation data batches
+            optimizer: Optimizer
+            max_epochs: Maximum number of epochs
+            patience: Number of epochs to wait for improvement
+            min_delta: Minimum change to qualify as improvement
+            grad_clip: Gradient clipping value
+            verbose: Print progress
+
+        Returns:
+            Dictionary containing training history and best model state
+        """
+        best_val_loss = float('inf')
+        best_epoch = 0
+        patience_counter = 0
+        best_model_state = None
+
+        train_losses = []
+        val_losses = []
+        val_accs = []
+
+        for epoch in range(max_epochs):
+            # Training
+            train_loss = self.train_epoch(model, train_batches, optimizer, grad_clip)
+            train_losses.append(train_loss)
+
+            # Validation
+            val_stats = self.evaluate(model, val_batches)
+            val_ppl = val_stats['ppl']
+            val_acc = val_stats['acc']
+            val_loss = np.log(val_ppl)  # Convert PPL back to loss
+
+            val_losses.append(val_ppl)
+            val_accs.append(val_acc)
+
+            if verbose:
+                print(f"Epoch {epoch+1}/{max_epochs} - "
+                      f"Train Loss: {train_loss:.4f} | "
+                      f"Val PPL: {val_ppl:.4f} | "
+                      f"Val Acc: {val_acc*100:.2f}%")
+
+            # Early stopping check
+            if val_loss < best_val_loss - min_delta:
+                best_val_loss = val_loss
+                best_epoch = epoch
+                patience_counter = 0
+                best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                if verbose:
+                    print(f"  → New best model (val_loss: {val_loss:.4f})")
+            else:
+                patience_counter += 1
+                if verbose and patience_counter > 0:
+                    print(f"  → No improvement ({patience_counter}/{patience})")
+
+            # Check if should stop
+            if patience_counter >= patience:
+                if verbose:
+                    print(f"\nEarly stopping triggered at epoch {epoch+1}")
+                    print(f"Best model was at epoch {best_epoch+1}")
+                break
+
+        # Restore best model
+        if best_model_state is not None:
+            model.load_state_dict(best_model_state)
+            if verbose:
+                print(f"\nRestored best model from epoch {best_epoch+1}")
+
+        return {
+            'train_losses': train_losses,
+            'val_losses': val_losses,
+            'val_accs': val_accs,
+            'best_epoch': best_epoch,
+            'total_epochs': epoch + 1,
+            'stopped_early': patience_counter >= patience
+        }
