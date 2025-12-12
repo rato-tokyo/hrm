@@ -4,26 +4,74 @@
 
 **EASE: Efficient Asymmetric Supervision for Early-Exit Transformers**
 
-シンプルな学習フレームワーク。2つの基本モデルと3つのオプションで構成。
+完全に柔軟な設定可能フレームワーク。3つのオプションを自由に組み合わせて、あらゆる訓練戦略を実現。
 
 ---
 
 ## フレームワーク概要
 
-### 基本モデル（2種類）
+### コアコンセプト: 完全な柔軟性
 
-| モデル | 説明 |
-|--------|------|
-| **StandardTransformer** | 最終層のみで損失計算 |
-| **DeepSupervisionTransformer** | 全層で損失計算 + Early Exit対応 |
-
-### オプション（3つ）
+**L3T (Layer-wise Loss, LR, and Threshold)** の3つのオプションで全てを制御：
 
 | オプション | 説明 | Reference |
 |-----------|------|-----------|
-| `layer_weights` | 層ごとの損失重み | - |
-| `layer_lr_scales` | 層ごとの学習率 | Howard & Ruder, 2018 |
-| `routing_threshold` | 推論時Early Exit | Teerapittayanon et al., 2016 |
+| **layer_weights** | 層ごとの損失重み（どの層で学習するか） | - |
+| **layer_lr_scales** | 層ごとの学習率スケール | Howard & Ruder, 2018 |
+| **routing_threshold** | 推論時Early Exit閾値 | Teerapittayanon et al., 2016 |
+
+**重要**: StandardとDeep Supervisionは単なる設定パターンの違い。同じフレームワークで実現可能。
+
+### 設定例：柔軟な組み合わせ
+
+#### パターン1: Standard Transformer（従来型LLM）
+```python
+config = TrainingConfig(
+    layer_weights={1: 0, 2: 0, 3: 1}  # 最終層のみ
+)
+```
+
+#### パターン2: Deep Supervision（全層均等）
+```python
+config = TrainingConfig(
+    layer_weights={1: 0.33, 2: 0.33, 3: 0.33}  # 全層で学習
+)
+```
+
+#### パターン3: Asymmetric + Early Exit（柔軟な設定）
+```python
+# 6層モデル、Layer 3と6でのみ損失計算 + Early Exit
+config = TrainingConfig(
+    layer_weights={
+        1: 0,    # 学習しない
+        2: 0,    # 学習しない
+        3: 0.5,  # 学習する（Early Exit候補層）
+        4: 0,    # 学習しない
+        5: 0,    # 学習しない
+        6: 0.5   # 学習する（最終層）
+    },
+    routing_threshold=0.95,  # 推論時、Layer 3で95%信頼度あれば終了
+    exit_layer=3
+)
+```
+
+#### パターン4: Discriminative Fine-Tuning（層ごとの学習率）
+```python
+config = TrainingConfig(
+    layer_weights={1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 1},  # 最終層のみ
+    layer_lr_scales={1: 1.0, 2: 0.8, 3: 0.6, 4: 0.4, 5: 0.2, 6: 0.1}  # 深い層ほど低学習率
+)
+```
+
+#### パターン5: 完全カスタム（全オプション活用）
+```python
+config = TrainingConfig(
+    layer_weights={1: 0.7, 2: 0, 3: 0.3, 4: 0, 5: 0, 6: 0},  # Layer 1重視
+    layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1, 4: 0.05, 5: 0.02, 6: 0.01},
+    routing_threshold=0.9,  # Layer 1で90%信頼度あれば終了
+    exit_layer=1
+)
+```
 
 ---
 
@@ -81,19 +129,21 @@ loss = trainer.train_epoch(model, train_batches, optimizer)
 stats = trainer.evaluate(model, val_batches)
 ```
 
-### ヘルパー関数
+### ヘルパー関数（便利な設定プリセット）
 
 ```python
 from ease import create_standard_config, create_deep_supervision_config
 
-# Standard LLM設定
+# Standard LLM設定（最終層のみ）
 config = create_standard_config(num_layers=3)
 # → layer_weights={1: 0, 2: 0, 3: 1}
 
-# Deep Supervision設定
+# Deep Supervision設定（全層均等）
 config = create_deep_supervision_config(num_layers=3)
 # → layer_weights={1: 0.33, 2: 0.33, 3: 0.33}
 ```
+
+**注意**: これらはあくまでプリセット。`TrainingConfig`で自由にカスタマイズ可能。
 
 ### Early Stopping（訓練時の早期終了）
 
@@ -139,17 +189,17 @@ result = trainer.train_with_early_stopping(
 **3つのオプションを完全に維持したまま、訓練速度を最適化**:
 
 ```python
-# Standard Transformer (最終層のみ)
+# 最終層のみ（高速パス使用）
 config = TrainingConfig(layer_weights={1: 0, 2: 0, 3: 1})
-# → 高速パス: forward() を使用（約25-30%高速化）
+# → forward() を使用（約8%高速化）
 
-# Deep Supervision (全層)
+# 複数層（汎用パス使用）
 config = TrainingConfig(layer_weights={1: 0.33, 2: 0.33, 3: 0.33})
-# → 汎用パス: forward_all_layers() を使用（最適化の余地なし）
+# → forward_all_layers() を使用
 
-# 非対称重み
+# 非対称（汎用パス使用）
 config = TrainingConfig(layer_weights={1: 0.7, 2: 0, 3: 0.3})
-# → 汎用パス: 複数層必要なため forward_all_layers() 使用
+# → forward_all_layers() を使用
 ```
 
 **最適化の仕組み**:
@@ -159,12 +209,12 @@ config = TrainingConfig(layer_weights={1: 0.7, 2: 0, 3: 0.3})
 
 **互換性保証**:
 - ✅ `layer_weights`: すべてのパターンで動作
-- ✅ `layer_lr_scales`: 影響なし（optimizer独立）
-- ✅ `routing_threshold`: 影響なし（評価時のみ使用）
+- ✅ `layer_lr_scales`: 独立（optimizer側で処理）
+- ✅ `routing_threshold`: 独立（評価時のみ使用）
 
-**期待される効果**:
-- Standard Transformer: **25-30%高速化**
-- Deep Supervision: 変化なし（すでに最適）
+**実測効果**（WikiText-2, 10K samples）:
+- 最終層のみ: **8.4%高速化**（25.51秒 → 23.38秒）
+- 複数層: 変化なし（すでに最適）
 
 ---
 
