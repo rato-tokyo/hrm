@@ -7,6 +7,27 @@ Core Options (2つのコアオプション):
 1. stages: Which stage blocks to train (stage-based configuration)
 2. routing_threshold: Early Exit at inference
 
+Usage:
+    from ease import Trainer, TrainingConfig, StageConfig, create_standard_config
+
+    # Standard training (final layer loss only)
+    config = create_standard_config(num_layers=4)
+    trainer = Trainer(config, vocab_size=10000, device='cuda')
+
+    # Train for one epoch
+    loss = trainer.train_epoch(model, train_batches, optimizer)
+
+    # Evaluate
+    stats = trainer.evaluate(model, val_batches)
+    print(f"PPL: {stats['ppl']:.2f}, Acc: {stats['acc']*100:.2f}%")
+
+    # With early exit routing
+    config = TrainingConfig(
+        stages=[StageConfig(layers=(4, 4), loss_weight=1.0)],
+        routing_threshold=0.8,
+        exit_layer=2
+    )
+
 References:
 - LEGO: Layered Ensemble with Gradual Optimization
 - ASHEM: Adaptive Supervision via Hard Example Mining
@@ -16,8 +37,53 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple
+from typing_extensions import TypedDict
 from dataclasses import dataclass, field
+
+
+# ==============================================================================
+# Type Definitions
+# ==============================================================================
+
+class EvalStats(TypedDict):
+    """
+    Evaluation statistics returned by Trainer.evaluate().
+
+    Attributes:
+        ppl: Perplexity (lower is better)
+        acc: Accuracy (0.0-1.0)
+        shallow_ratio: Fraction of tokens using early exit (0.0-1.0)
+        compute_cost: Relative compute cost (1.0 = full model)
+    """
+    ppl: float
+    acc: float
+    shallow_ratio: float
+    compute_cost: float
+
+
+class TrainingHistory(TypedDict):
+    """
+    Training history returned by Trainer.train_with_early_stopping().
+
+    Attributes:
+        train_losses: Training loss per epoch
+        val_losses: Validation PPL per epoch
+        val_accs: Validation accuracy per epoch
+        best_epoch: Epoch with best validation loss (0-indexed)
+        total_epochs: Total epochs trained
+        stopped_early: Whether early stopping was triggered
+    """
+    train_losses: List[float]
+    val_losses: List[float]
+    val_accs: List[float]
+    best_epoch: int
+    total_epochs: int
+    stopped_early: bool
+
+
+# Type alias for data batches
+DataBatch = Tuple[torch.Tensor, torch.Tensor]
 
 
 @dataclass
@@ -152,7 +218,7 @@ class Trainer:
         return torch.optim.AdamW(model.parameters(), lr=base_lr)
 
     @torch.no_grad()
-    def evaluate(self, model: nn.Module, val_batches: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, float]:
+    def evaluate(self, model: nn.Module, val_batches: List[DataBatch]) -> EvalStats:
         """Evaluate model with optional early exit."""
         model.eval()
 
@@ -161,7 +227,7 @@ class Trainer:
         else:
             return self._evaluate_routing(model, val_batches)
 
-    def _evaluate_standard(self, model: nn.Module, val_batches: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, float]:
+    def _evaluate_standard(self, model: nn.Module, val_batches: List[DataBatch]) -> EvalStats:
         """Standard evaluation using final layer output."""
         total_loss = 0.0
         total_correct = 0
@@ -185,7 +251,7 @@ class Trainer:
             'compute_cost': 1.0,
         }
 
-    def _evaluate_routing(self, model: nn.Module, val_batches: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, float]:
+    def _evaluate_routing(self, model: nn.Module, val_batches: List[DataBatch]) -> EvalStats:
         """Evaluation with early exit routing."""
         total_loss = 0.0
         total_correct = 0
@@ -234,7 +300,7 @@ class Trainer:
             'compute_cost': total_compute / len(val_batches),
         }
 
-    def train_epoch(self, model: nn.Module, train_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+    def train_epoch(self, model: nn.Module, train_batches: List[DataBatch],
                     optimizer: torch.optim.Optimizer, grad_clip: float = 1.0) -> float:
         """Train for one epoch."""
         model.train()
@@ -257,15 +323,15 @@ class Trainer:
     def train_with_early_stopping(
         self,
         model: nn.Module,
-        train_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-        val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+        train_batches: List[DataBatch],
+        val_batches: List[DataBatch],
         optimizer: torch.optim.Optimizer,
         max_epochs: int = 100,
         patience: int = 5,
         min_delta: float = 0.0,
         grad_clip: float = 1.0,
         verbose: bool = True
-    ) -> Dict[str, Any]:
+    ) -> TrainingHistory:
         """
         Train with early stopping.
 

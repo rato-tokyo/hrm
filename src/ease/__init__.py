@@ -44,12 +44,17 @@ from .trainer import (
     StageConfig,
     TrainingConfig,
     Trainer,
+    EvalStats,
+    TrainingHistory,
     create_standard_config,
 )
 
 # ASHEM
 from .ashem import (
     ASHEMConfig,
+    HardExamples,
+    DataBatch,
+    HardBatch,
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
@@ -67,9 +72,14 @@ __all__ = [
     'StageConfig',
     'TrainingConfig',
     'Trainer',
+    'EvalStats',
+    'TrainingHistory',
     'create_standard_config',
     # ASHEM
     'ASHEMConfig',
+    'HardExamples',
+    'DataBatch',
+    'HardBatch',
     'compute_confidence_threshold',
     'collect_hard_examples',
     'create_hard_example_loader',

@@ -21,12 +21,16 @@ import math
 from .modules import TransformerBlock
 
 
-class StandardTransformer(nn.Module):
+class BaseTransformer(nn.Module):
     """
-    Standard Transformer for language modeling.
+    Base Transformer class with shared functionality.
 
-    Base model with final layer loss only.
-    Supports forward_all_layers() for deep supervision training.
+    Contains common components:
+    - Embedding layer
+    - Transformer layers
+    - Output head
+    - Weight initialization
+    - forward() and forward_all_layers() methods
     """
 
     def __init__(
@@ -73,7 +77,17 @@ class StandardTransformer(nn.Module):
         return outputs
 
 
-class DeepSupervisionTransformer(nn.Module):
+class StandardTransformer(BaseTransformer):
+    """
+    Standard Transformer for language modeling.
+
+    Base model with final layer loss only.
+    Supports forward_all_layers() for deep supervision training.
+    """
+    pass
+
+
+class DeepSupervisionTransformer(BaseTransformer):
     """
     Deep Supervision Transformer with Early Exit support.
 
@@ -94,50 +108,15 @@ class DeepSupervisionTransformer(nn.Module):
         exit_layer: int = 1,
         routing_threshold: float = 0.8,
     ):
-        super().__init__()
-        self.vocab_size = vocab_size
-        self.dim = dim
-        self.num_layers = num_layers
+        super().__init__(vocab_size, dim, num_layers, num_heads)
         self.exit_layer = exit_layer
         self.routing_threshold = routing_threshold
-
-        self.embedding = nn.Embedding(vocab_size, dim)
-        self.layers = nn.ModuleList([
-            TransformerBlock(dim, num_heads) for _ in range(num_layers)
-        ])
-        self.output_head = nn.Linear(dim, vocab_size, bias=False)
-
-        self._init_weights()
-
-    def _init_weights(self) -> None:
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                nn.init.trunc_normal_(module.weight, std=1.0 / math.sqrt(self.dim))
-            elif isinstance(module, nn.Embedding):
-                nn.init.trunc_normal_(module.weight, std=0.02)
 
     def compute_confidence(self, h: torch.Tensor) -> torch.Tensor:
         """Compute confidence (max probability) from hidden state."""
         logits = self.output_head(h)
         probs = F.softmax(logits, dim=-1)
-        confidence = probs.max(dim=-1).values
-        return confidence
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Standard forward (deep path only)."""
-        h = self.embedding(x)
-        for layer in self.layers:
-            h = layer(h)
-        return self.output_head(h)  # type: ignore[no-any-return]
-
-    def forward_all_layers(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """Forward returning output from each layer (for Deep Supervision training)."""
-        h = self.embedding(x)
-        outputs = []
-        for layer in self.layers:
-            h = layer(h)
-            outputs.append(self.output_head(h))
-        return outputs
+        return probs.max(dim=-1).values
 
     def forward_train(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """

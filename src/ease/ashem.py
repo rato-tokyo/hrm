@@ -13,6 +13,25 @@ Key Benefits:
 - 36% compute cost reduction using adaptive routing
 - Fully integrated with LEGO framework's 2 core options
 
+Usage:
+    from ease import (
+        compute_confidence_threshold,
+        collect_hard_examples,
+        create_hard_example_loader,
+        train_upper_layers,
+        evaluate_on_hard_examples,
+    )
+
+    # After Phase 1 training:
+    threshold = compute_confidence_threshold(model, val_batches, 0.5, device)
+    hard_examples = collect_hard_examples(model, val_batches, threshold, device)
+    hard_batches = create_hard_example_loader(hard_examples, batch_size=64)
+
+    # Phase 2 training:
+    for epoch in range(num_epochs):
+        loss = train_upper_layers(model_extended, hard_batches, optimizer, vocab_size, device)
+        ppl = evaluate_on_hard_examples(model_extended, hard_examples, vocab_size, device)
+
 References:
 - ASHEM: Adaptive Supervision via Hard Example Mining (本研究)
 - Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
@@ -22,8 +41,37 @@ References:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Dict, List, Tuple
+from typing import List, Tuple
+from typing_extensions import TypedDict
 from dataclasses import dataclass
+
+
+# ==============================================================================
+# Type Definitions
+# ==============================================================================
+
+class HardExamples(TypedDict):
+    """
+    Collection of hard examples for Phase 2 training.
+
+    Hard examples are tokens where the shallow model has low confidence.
+    These benefit most from deeper processing.
+
+    Attributes:
+        inputs: Original input token IDs (num_hard_tokens,)
+        hidden_states: Layer outputs from shallow model (num_hard_tokens, dim)
+        targets: Ground truth labels (num_hard_tokens,)
+        confidences: Confidence scores at collection time (num_hard_tokens,)
+    """
+    inputs: torch.Tensor
+    hidden_states: torch.Tensor
+    targets: torch.Tensor
+    confidences: torch.Tensor
+
+
+# Type alias for data batches
+DataBatch = Tuple[torch.Tensor, torch.Tensor]
+HardBatch = Tuple[torch.Tensor, torch.Tensor]  # (hidden_states, targets)
 
 
 @dataclass
@@ -84,7 +132,7 @@ def compute_confidence(model: nn.Module, hidden_state: torch.Tensor) -> torch.Te
 
 def compute_confidence_threshold(
     model: nn.Module,
-    val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+    val_batches: List[DataBatch],
     target_ratio: float,
     device: str
 ) -> float:
@@ -133,10 +181,10 @@ def compute_confidence_threshold(
 
 def collect_hard_examples(
     model: nn.Module,
-    val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+    val_batches: List[DataBatch],
     threshold: float,
     device: str
-) -> Dict[str, torch.Tensor]:
+) -> HardExamples:
     """
     Collect hard examples (low confidence tokens) from validation set.
 
@@ -205,9 +253,9 @@ def collect_hard_examples(
 
 
 def create_hard_example_loader(
-    hard_examples: Dict[str, torch.Tensor],
+    hard_examples: HardExamples,
     batch_size: int
-) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+) -> List[HardBatch]:
     """
     Create batched dataloader from collected hard examples.
 
@@ -237,7 +285,7 @@ def create_hard_example_loader(
 
 def train_upper_layers(
     model: nn.Module,
-    hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+    hard_batches: List[HardBatch],
     optimizer: torch.optim.Optimizer,
     vocab_size: int,
     device: str,
@@ -290,7 +338,7 @@ def train_upper_layers(
 
 def evaluate_on_hard_examples(
     model: nn.Module,
-    hard_examples: Dict[str, torch.Tensor],
+    hard_examples: HardExamples,
     vocab_size: int,
     device: str,
     batch_size: int = 64,
