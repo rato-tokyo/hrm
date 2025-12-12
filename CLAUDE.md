@@ -98,8 +98,7 @@ hrm/
 │   └── experiments/             # 実験結果ドキュメント
 │       ├── hard_example_mining.md
 │       └── progressive_layer_training.md
-├── colab2.py                    # ASHEM実験（メインスクリプト）
-└── run_experiments.py           # 基本実験スクリプト
+└── colab2.py                    # ASHEM実験（Colab実行用メインスクリプト）
 ```
 
 ---
@@ -280,6 +279,50 @@ config = TrainingConfig(layer_weights={1: 0.7, 2: 0, 3: 0.3})
 - **ASHEM**: Adaptive Supervision via Hard Example Mining（本研究）
 - Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
 - Progressive Layer Addition: Related to PLD (NeurIPS 2020)
+
+---
+
+---
+
+## 実験実行原則
+
+### Google Colab実行を前提
+
+**重要**: しばらくの間、すべての実験はGoogle Colabで実行します。
+
+#### 理由
+- GPU（NVIDIA L4等）の利用可能性
+- 大規模データセット（WikiText-2等）の高速処理
+- 長時間訓練の安定実行
+
+#### 実行スクリプト
+- **メイン実験**: `colab2.py` (ASHEM実験)
+- ローカル実行用スクリプトは削除済み
+
+#### Colab実行時の注意点
+
+**データローダー**:
+```python
+# datasets ライブラリのインストール必要
+!pip install datasets
+
+# 自動的にHugging Faceからダウンロード
+from experiments.utils import create_wikitext_dataloaders
+```
+
+**GPU確認**:
+```python
+import torch
+print(f"Device: {'cuda' if torch.cuda.is_available() else 'cpu'}")
+if torch.cuda.is_available():
+    print(f"GPU: {torch.cuda.get_device_name(0)}")
+```
+
+**実行コマンド**:
+```bash
+# Colabセルで実行
+!python colab2.py
+```
 
 ---
 
