@@ -4,7 +4,66 @@
 
 **LASH: Layered Adaptive Supervision Hierarchy**
 
-層を組み合わせる柔軟なフレームワーク。3つのコアオプションで全てを制御。
+層を組み合わせる柔軟なフレームワーク。2つのコアオプションで全てを制御。
+
+**Staged Deep Supervision (SDS)**: Deep SupervisionとASHEMを時間軸で統一する新概念（概念のみ提案、実装は未完成）。
+
+---
+
+## 🚨 重要な実装上の注意事項
+
+### Per-token Filtering - ASHEM実装の必須仕様
+
+**⚠️ CRITICAL**: ASHEMのHard Example Miningでは**Per-token filtering**を使用することが必須です。
+
+**動作する実装**: コミット **fc9b140** (Consolidate LASH to 2 core options)
+- `src/ease/ashem.py`: Per-token filtering実装
+- `colab2.py`: 動作確認済み実験スクリプト
+
+**Per-token filteringの実装**:
+```python
+def compute_confidence_threshold(model, val_batches, target_ratio, device):
+    """Per-token quantile calculation"""
+    all_confidences = []
+    for x, _ in val_batches:
+        h = model.forward_to_layer(x, model.num_layers)
+        confidence = compute_confidence(model, h)
+        all_confidences.append(confidence.view(-1))  # ← Flatten per-token
+
+    all_confidences = torch.cat(all_confidences)
+    threshold = torch.quantile(all_confidences, target_ratio).item()
+    return threshold
+
+def collect_hard_examples(model, val_batches, threshold, device):
+    """Per-token filtering"""
+    for x, y in val_batches:
+        h = model.forward_to_layer(x, model.num_layers)
+        confidence = compute_confidence(model, h)
+
+        # Per-token comparison
+        mask = confidence < threshold  # (batch, seq_len)
+
+        x_flat = x.view(-1)
+        h_flat = h.view(-1, h.shape[-1])
+        y_flat = y.view(-1)
+        mask_flat = mask.view(-1)
+
+        hard_inputs.append(x_flat[mask_flat])
+        hard_hidden_states.append(h_flat[mask_flat])
+        hard_targets.append(y_flat[mask_flat])
+```
+
+**期待される実験結果** (WikiText-2, 10K samples):
+- Stage 1 Hard PPL: ~2,763
+- Stage 2 Hard PPL: ~668
+- Hard PPL Improvement: 75.8%
+- Collected hard examples: ~32,768 (50% of total tokens)
+
+**禁止事項**:
+- ❌ Sequence-level averaging (`.mean(dim=1)`) を使用すること
+- ❌ Per-token thresholdとSequence-level averageを混在させること
+
+**理由**: Threshold計算とフィルタリングの方法が一致していないと、hard examplesが正しく収集されず、実験が失敗します。
 
 ---
 
@@ -91,14 +150,14 @@ config = TrainingConfig(
 **コアモジュール**:
 - `models.py` - StandardTransformer, DeepSupervisionTransformer
 - `trainer.py` - TrainingConfig, Trainer (コア訓練フレームワーク)
-- `ashem.py` - ASHEMConfig, ASHEM訓練戦略
+- `ashem.py` - ASHEMConfig, ASHEM訓練戦略（Per-token filtering実装）
 - `modules/` - TransformerBlock, Attention, FFN, RMSNorm等
 
 **実験ユーティリティ (experiments/)**:
 - `utils.py` - データローダー、デバイス管理、seed設定
 
 **実験スクリプト (root)**:
-- `colab2.py` - ASHEM実験メインスクリプト
+- `colab2.py` - ASHEM実験メインスクリプト（fc9b140で動作確認済み）
 
 ---
 
@@ -209,13 +268,14 @@ Hard examplesに特化した段階的訓練戦略
 - **Phase 2**: 深層モデル（4層）でHard examplesのみ訓練（Selective Layer Expansion）
 - **推論**: Two-stage routing（Early Exit）で計算効率化
 
-**実験結果** (WikiText-2, 10K samples):
+**実験結果** (WikiText-2, 10K samples, commit fc9b140):
 - Hard PPL: **78%改善** (2763 → 668)
 - 計算コスト: **36%削減** (64.82% of full model)
 - Overall PPL: **15.9%改善** (986 → 830)
 
+**使用例**:
 ```python
-from ease import ASHEMConfig  # Note: Package name migration to 'lash' is planned
+from ease import ASHEMConfig
 
 ashem_config = ASHEMConfig(
     phase1_layers=2,
@@ -226,13 +286,24 @@ ashem_config = ASHEMConfig(
 
 詳細: [docs/experiments/hard_example_mining.md](docs/experiments/hard_example_mining.md)
 
+### 4. Staged Deep Supervision (SDS) - 概念のみ
+**核心的洞察**: Deep SupervisionとASHEMは同じ概念の時間的変種
+
+```
+Deep Supervision = 1 stage, all layers, all data
+ASHEM = 2 stages, progressive layers, filtered data
+SDS = N stages, flexible configuration
+```
+
+**注意**: SDS の実装（`staged_ds.py`）は現在未完成。Per-token filtering と Sequence-level filtering のミスマッチによるバグが判明。コミット fc9b140 の LASH + ASHEM 実装を使用すること。
+
 ---
 
 ## パフォーマンス最適化
 
 ### compute_loss() の自動最適化
 
-**LASHの3つのオプションを完全に維持したまま、訓練速度を最適化**:
+**LASHの2つのオプションを完全に維持したまま、訓練速度を最適化**:
 
 ```python
 # 最終層のみ（高速パス使用）
@@ -255,7 +326,6 @@ config = TrainingConfig(layer_weights={1: 0.7, 2: 0, 3: 0.3})
 
 **互換性保証**:
 - ✅ `layer_weights`: すべてのパターンで動作
-- ✅ `layer_lr_scales`: 独立（optimizer側で処理）
 - ✅ `routing_threshold`: 独立（評価時のみ使用）
 
 **実測効果**（WikiText-2, 10K samples）:
@@ -297,8 +367,8 @@ config = TrainingConfig(layer_weights={1: 0.7, 2: 0, 3: 0.3})
 ### モジュール分離原則
 
 **訓練フレームワークと訓練戦略の分離**:
-- `trainer.py` (385行) - コア訓練フレームワーク（TrainingConfig, Trainer）
-- `ashem.py` (341行) - ASHEM訓練戦略専用モジュール
+- `trainer.py` - コア訓練フレームワーク（TrainingConfig, Trainer）
+- `ashem.py` - ASHEM訓練戦略専用モジュール（Per-token filtering実装）
 
 **分離の利点**:
 - 明確な責務分離: フレームワーク vs 戦略
@@ -328,7 +398,7 @@ src/ease/
 - 長時間訓練の安定実行
 
 #### 実行スクリプト
-- **メイン実験**: `colab2.py` (ASHEM実験)
+- **メイン実験**: `colab2.py` (ASHEM実験、fc9b140で動作確認済み)
 - ローカル実行用スクリプトは削除済み
 
 #### Colab実行時の注意点
@@ -354,6 +424,15 @@ if torch.cuda.is_available():
 ```bash
 # Colabセルで実行
 !python colab2.py
+```
+
+#### Git操作（動作するバージョンへの切り替え）
+```bash
+# 動作確認済みのコミットに切り替え
+git checkout fc9b140
+
+# または、最新のmainブランチを使用（fc9b140と同じ）
+git checkout main
 ```
 
 ---
@@ -466,7 +545,7 @@ This is the first method to combine hard example mining with selective layer exp
 
 #### 4. 実験結果の新規性
 
-**WikiText-2での検証結果**（10K samples）:
+**WikiText-2での検証結果**（10K samples, fc9b140）:
 - Hard PPL: **78%改善**（2763 → 668）
 - 計算コスト: **36%削減**（64.82% of full model）
 - Overall PPL: **15.9%改善**（986 → 830）
@@ -494,17 +573,16 @@ This is the first method to combine hard example mining with selective layer exp
    - **Early Exit Networks** (Teerapittayanon et al., 2016; BranchyNet)
    - **Hard Example Mining** (HAM, HSM等 - 主にCV/セキュリティ分野)
    - **Recent Surveys** (ACM Survey Nov 2024, NLP Survey Jan 2025)
-   - **既存手法の課題**: 個別実装、統合の困難さ、層ごとの学習率制御の欠如
+   - **既存手法の課題**: 個別実装、統合の困難さ
 
-3. **LASH Framework**: 3つのコアオプションとアーキテクチャ
+3. **LASH Framework**: 2つのコアオプションとアーキテクチャ
    - `layer_weights`: 任意の非対称パターン
-   - `layer_lr_scales`: 層ごとの学習率制御（新規）
    - `routing_threshold`: Early Exit閾値
    - 自動最適化機構
 
 4. **ASHEM Training Strategy**: Hard example miningを活用した新しい訓練戦略
    - Two-Phase Training（浅層→深層）
-   - Hard Example Identification
+   - Hard Example Identification（Per-token filtering）
    - Two-Stage Inference
 
 5. **Experiments**: WikiText-2/103でのベースライン比較
@@ -550,3 +628,4 @@ This is the first method to combine hard example mining with selective layer exp
 - [ ] 実際の LLM (Llama 等) での検証
 - [ ] ASHEM以外の新しい訓練戦略の開発
 - [ ] 他のデータセット（C4, The Pile等）での検証
+- [ ] Staged DS の実装完成（Per-token filtering の正しい実装）
