@@ -276,7 +276,7 @@ def train_upper_layers(
         logits = model.output_head(h).squeeze(1)  # (batch_size, vocab_size)
         loss = F.cross_entropy(logits, y)
 
-        loss.backward()
+        loss.backward()  # type: ignore[no-untyped-call]
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
 

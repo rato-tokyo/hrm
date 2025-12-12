@@ -86,4 +86,4 @@ class MultiHeadAttention(nn.Module):
 
         out = torch.matmul(attn, v)
         out = out.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
-        return self.o_proj(out)
+        return self.o_proj(out)  # type: ignore[no-any-return]

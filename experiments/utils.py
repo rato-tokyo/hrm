@@ -102,7 +102,7 @@ def load_wikitext_tokenized(seq_len: int = 32, seed: int = 42) -> Tuple[torch.Te
     dataset = load_dataset('wikitext', 'wikitext-2-raw-v1')
 
     # Simple word tokenizer
-    def simple_tokenize(text):
+    def simple_tokenize(text: str) -> list[str]:
         return text.lower().split()
 
     # Build vocabulary
@@ -117,8 +117,8 @@ def load_wikitext_tokenized(seq_len: int = 32, seed: int = 42) -> Tuple[torch.Te
     vocab_size = len(vocab)
 
     # Tokenize data
-    def tokenize_split(split_name):
-        all_tokens = []
+    def tokenize_split(split_name: str) -> torch.Tensor:
+        all_tokens: list[int] = []
         for item in dataset[split_name]:
             tokens = simple_tokenize(item['text'])
             token_ids = [vocab.get(t, vocab['<unk>']) for t in tokens]

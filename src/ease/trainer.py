@@ -30,7 +30,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 
 
@@ -281,7 +281,7 @@ class Trainer:
             optimizer.zero_grad()
 
             loss = self.compute_loss(model, x, y)
-            loss.backward()
+            loss.backward()  # type: ignore[no-untyped-call]
 
             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
             optimizer.step()
@@ -301,7 +301,7 @@ class Trainer:
         min_delta: float = 0.0,
         grad_clip: float = 1.0,
         verbose: bool = True
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         """
         Train with early stopping.
 

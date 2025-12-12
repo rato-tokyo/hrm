@@ -13,11 +13,11 @@ Both support LASH's 3 core options:
 - routing_threshold: Early exit at inference
 """
 
+from typing import Tuple, List, Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-from typing import List, Dict
 
 from .modules import TransformerBlock
 
@@ -62,7 +62,7 @@ class StandardTransformer(nn.Module):
         h = self.embedding(x)
         for layer in self.layers:
             h = layer(h)
-        return self.output_head(h)
+        return self.output_head(h)  # type: ignore[no-any-return]
 
     def forward_all_layers(self, x: torch.Tensor) -> List[torch.Tensor]:
         """Forward returning output from each layer (for Deep Supervision)."""
@@ -129,7 +129,7 @@ class DeepSupervisionTransformer(nn.Module):
         h = self.embedding(x)
         for layer in self.layers:
             h = layer(h)
-        return self.output_head(h)
+        return self.output_head(h)  # type: ignore[no-any-return]
 
     def forward_all_layers(self, x: torch.Tensor) -> List[torch.Tensor]:
         """Forward returning output from each layer (for Deep Supervision training)."""
@@ -176,7 +176,7 @@ class DeepSupervisionTransformer(nn.Module):
             'shallow_ratio': (confidence >= self.routing_threshold).float().mean().item(),
         }
 
-    def forward_inference(self, x: torch.Tensor) -> tuple:
+    def forward_inference(self, x: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
         Inference forward: hard routing based on confidence.
 

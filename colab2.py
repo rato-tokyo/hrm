@@ -38,8 +38,9 @@ sys.path.insert(0, 'src')
 
 import time
 import torch
+import torch.nn as nn
 from dataclasses import dataclass, field
-from typing import Dict
+from typing import Dict, Any, Callable, Type
 
 from ease import (
     StandardTransformer,
@@ -113,7 +114,12 @@ CONFIG = ExperimentConfig()
 # Experiment Runner
 # ==============================================================================
 
-def run_experiment(model_name: str, ModelClass, config_fn, device: str) -> Dict:
+def run_experiment(
+    model_name: str,
+    ModelClass: Type[nn.Module],
+    config_fn: Callable[[int], TrainingConfig],
+    device: str
+) -> Dict[str, Any]:
     """
     Run complete hard example mining experiment.
 
@@ -157,7 +163,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str) -> Dict:
     ).to(device)
 
     # Train with early stopping
-    config = config_fn(num_layers=CONFIG.ashem.phase1_layers)
+    config = config_fn(CONFIG.ashem.phase1_layers)
     trainer = Trainer(config, vocab_size=CONFIG.vocab_size, device=device)
     optimizer = trainer.create_optimizer(model, base_lr=CONFIG.ashem.phase1_lr)
 
@@ -279,7 +285,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str) -> Dict:
 
     trainable = sum(p.numel() for p in model_extended.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model_extended.parameters())
-    print(f"\n✓ All layers trainable with discriminative LRs")
+    print("\n✓ All layers trainable with discriminative LRs")
     print(f"  Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.1f}%)")
 
     # Create hard example loader
@@ -440,7 +446,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str) -> Dict:
 # Main Entry Point
 # ==============================================================================
 
-def main():
+def main() -> None:
     """Run Hard Example Mining experiment."""
     print("="*60)
     print("Hard Example Mining + Two-Stage Inference")
