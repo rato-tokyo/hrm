@@ -38,12 +38,21 @@ from ease import (
 # ================================================================================
 
 def create_synthetic_data(num_samples: int, vocab_size: int, seq_len: int, seed: int = 42):
-    """シンプルな合成データを作成（次トークン予測タスク）"""
+    """
+    学習可能なパターンを持つ合成データを作成
+
+    タスク: Copy task - 入力シーケンスを次のステップで予測
+    例: x = [1, 2, 3, 4] → y = [2, 3, 4, 5] (各トークン+1)
+    """
     torch.manual_seed(seed)
     np.random.seed(seed)
 
-    x = torch.randint(0, vocab_size, (num_samples, seq_len))
-    y = torch.cat([x[:, 1:], torch.randint(0, vocab_size, (num_samples, 1))], dim=1)
+    # ランダムシーケンス生成（vocab_sizeの半分のみ使用して+1の余地を作る）
+    x = torch.randint(0, vocab_size // 2, (num_samples, seq_len))
+
+    # 簡単な学習可能パターン: 各トークンに1を加える
+    # これにより、モデルは「次のトークン = 現在のトークン + 1」を学習できる
+    y = (x + 1) % vocab_size
 
     return x, y
 
