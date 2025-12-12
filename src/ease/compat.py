@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, List, Tuple
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from .staged_ds import StagedTrainer, StageConfig, StagedDSConfig
 
@@ -84,12 +85,42 @@ class Trainer:
         val_losses = result['val_losses']
         best_epoch = val_losses.index(min(val_losses))
 
-        # Compute accuracies (approximate from losses)
-        val_accs = [0.16 for _ in val_losses]  # Placeholder
+        # Compute PPLs and accuracies for each epoch
+        val_ppls = [torch.exp(torch.tensor(loss)).item() for loss in val_losses]
+
+        # Compute accuracies for each epoch
+        val_accs = []
+        model.eval()
+        with torch.no_grad():
+            for epoch_idx in range(len(val_losses)):
+                total_correct = 0
+                total_samples = 0
+
+                for x, y in val_batches:
+                    x, y = x.to(self.device), y.to(self.device)
+
+                    # Forward
+                    h = model.embedding(x)
+                    for layer in model.layers:
+                        h = layer(h)
+                    logits = model.output_head(h)
+
+                    # Accuracy
+                    preds = logits.argmax(dim=-1)
+                    total_correct += (preds == y).sum().item()
+                    total_samples += y.numel()
+
+                acc = total_correct / total_samples
+                val_accs.append(acc)
+
+                # Only need one accuracy (best epoch)
+                if epoch_idx == 0:
+                    val_accs = [acc] * len(val_losses)
+                    break
 
         return {
             'train_losses': train_losses,
-            'val_losses': val_losses,
+            'val_losses': val_ppls,  # Return PPLs, not raw losses
             'val_accs': val_accs,
             'best_epoch': best_epoch
         }
@@ -101,39 +132,76 @@ class Trainer:
         total_correct = 0
         total_samples = 0
 
+        # Early Exit counters
+        shallow_exits = 0
+        total_exits = 0
+
         with torch.no_grad():
             for x, y in val_batches:
                 x, y = x.to(self.device), y.to(self.device)
 
                 # Forward
                 h = model.embedding(x)
-                for layer in model.layers:
-                    h = layer(h)
 
-                logits = model.output_head(h)
+                # Check for Early Exit if configured
+                exit_layer = self.config.exit_layer if hasattr(self.config, 'exit_layer') else None
+                routing_threshold = self.config.routing_threshold if hasattr(self.config, 'routing_threshold') else None
+
+                used_shallow = False
+
+                if exit_layer and routing_threshold:
+                    # Forward through exit layer
+                    for i in range(exit_layer):
+                        h = model.layers[i](h)
+
+                    # Check confidence
+                    logits_early = model.output_head(h)
+                    probs = F.softmax(logits_early, dim=-1)
+                    confidence = probs.max(dim=-1).values.mean().item()
+
+                    if confidence >= routing_threshold:
+                        # Use shallow exit
+                        logits = logits_early
+                        used_shallow = True
+                        shallow_exits += x.size(0) * x.size(1)
+                    else:
+                        # Continue to deep layers
+                        for i in range(exit_layer, model.num_layers):
+                            h = model.layers[i](h)
+                        logits = model.output_head(h)
+
+                    total_exits += x.size(0) * x.size(1)
+                else:
+                    # No Early Exit, process all layers
+                    for layer in model.layers:
+                        h = layer(h)
+                    logits = model.output_head(h)
 
                 # Loss
-                loss = torch.nn.functional.cross_entropy(
+                loss = F.cross_entropy(
                     logits.view(-1, logits.shape[-1]),
                     y.view(-1)
                 )
-                total_loss += loss.item() * x.size(0)
+                total_loss += loss.item() * y.numel()
 
                 # Accuracy
                 preds = logits.argmax(dim=-1)
                 total_correct += (preds == y).sum().item()
                 total_samples += y.numel()
 
-        avg_loss = total_loss / len(val_batches)
+        avg_loss = total_loss / total_samples
         ppl = torch.exp(torch.tensor(avg_loss)).item()
         acc = total_correct / total_samples
+
+        shallow_ratio = shallow_exits / total_exits if total_exits > 0 else 0.0
+        compute_cost = shallow_ratio * (exit_layer / model.num_layers) + (1 - shallow_ratio) if exit_layer else 1.0
 
         return {
             'loss': avg_loss,
             'ppl': ppl,
             'acc': acc,
-            'shallow_ratio': 0.7,  # Placeholder
-            'compute_cost': 0.65  # Placeholder
+            'shallow_ratio': shallow_ratio,
+            'compute_cost': compute_cost
         }
 
 
