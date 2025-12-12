@@ -451,41 +451,62 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
 
     print(f"  Using learning rate: {CONFIG.phase2_lr:.1e}")
 
-    best_loss = float('inf')
+    best_val_acc = 0.0
+    best_model_state = None
     patience_counter = 0
 
     start_time = time.time()
     for epoch in range(CONFIG.phase2_epochs):
+        # Train on hard examples
         train_loss = train_upper_layers(
             model_extended, hard_batches, optimizer_upper,
             CONFIG.vocab_size, device, CONFIG.phase1_layers
         )
 
-        print(f"Epoch {epoch+1}/{CONFIG.phase2_epochs} - Train Loss: {train_loss:.4f}")
+        # Evaluate on validation set with two-stage inference
+        val_stats = evaluate_two_stage(
+            model_extended, val_loader, confidence_threshold,
+            CONFIG.vocab_size, device, CONFIG.phase1_layers
+        )
 
-        if train_loss < best_loss:
-            best_loss = train_loss
+        val_acc = val_stats['accuracy']
+        train_ppl = torch.exp(torch.tensor(train_loss)).item()
+
+        print(f"Epoch {epoch+1}/{CONFIG.phase2_epochs} - "
+              f"Train PPL: {train_ppl:.4f} | "
+              f"Val Acc: {val_acc*100:.2f}%")
+
+        # Early stopping based on validation accuracy
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_model_state = {k: v.cpu().clone() for k, v in model_extended.state_dict().items()}
             patience_counter = 0
-            print(f"  → New best (loss: {train_loss:.4f})")
+            print(f"  → New best (val_acc: {val_acc*100:.2f}%)")
         else:
             patience_counter += 1
             print(f"  → No improvement ({patience_counter}/{CONFIG.phase2_patience})")
 
         if patience_counter >= CONFIG.phase2_patience:
             print(f"\nEarly stopping at epoch {epoch+1}")
+            print(f"Best model was at epoch {epoch - patience_counter + 1}")
             break
 
     phase2_time = time.time() - start_time
 
+    # Restore best model
+    if best_model_state is not None:
+        model_extended.load_state_dict({k: v.to(device) for k, v in best_model_state.items()})
+        print("\nRestored best model from Phase 2")
+
     print("\nPhase 2 Results:")
-    print(f"  Best Loss: {best_loss:.4f}")
+    print(f"  Best Val Acc: {best_val_acc*100:.2f}%")
     print(f"  Time: {phase2_time:.2f}s")
 
     # ========================================
-    # Evaluate Two-Stage Inference
+    # Final Evaluation (Two-Stage Inference)
     # ========================================
     print(f"\n{'='*60}")
-    print("Two-Stage Inference Evaluation")
+    print("Final Evaluation (Two-Stage Inference)")
     print(f"{'='*60}\n")
 
     stats = evaluate_two_stage(
