@@ -88,7 +88,7 @@ def run_experiment(model_name: str, model: nn.Module, config: TrainingConfig,
     print(f"{'='*60}")
 
     model = model.to(device)
-    trainer = Trainer(config, vocab_size=1000)
+    trainer = Trainer(config, vocab_size=1000, device=device)
     optimizer = trainer.create_optimizer(model, base_lr=base_lr)
 
     train_losses = []
