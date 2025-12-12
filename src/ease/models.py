@@ -30,7 +30,8 @@ class BaseTransformer(nn.Module):
     - Transformer layers
     - Output head
     - Weight initialization
-    - forward() and forward_all_layers() methods
+    - forward(), forward_to_hidden(), forward_all_layers() methods
+    - compute_confidence() for confidence-based routing
     """
 
     def __init__(
@@ -60,11 +61,41 @@ class BaseTransformer(nn.Module):
             elif isinstance(module, nn.Embedding):
                 nn.init.trunc_normal_(module.weight, std=0.02)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Standard forward: output from final layer."""
+    def forward_to_hidden(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass returning final hidden state (before output_head).
+
+        Args:
+            x: Input tensor of shape (batch_size, seq_len)
+
+        Returns:
+            Hidden state tensor of shape (batch_size, seq_len, dim)
+        """
         h = self.embedding(x)
         for layer in self.layers:
             h = layer(h)
+        return h
+
+    def compute_confidence(self, h: torch.Tensor) -> torch.Tensor:
+        """
+        Compute prediction confidence from hidden state.
+
+        Confidence is defined as the maximum probability in the softmax distribution.
+        Higher confidence indicates the model is more certain about its prediction.
+
+        Args:
+            h: Hidden state tensor of shape (batch_size, seq_len, dim)
+
+        Returns:
+            Confidence values of shape (batch_size, seq_len), range [0, 1]
+        """
+        logits = self.output_head(h)
+        probs = F.softmax(logits, dim=-1)
+        return probs.max(dim=-1).values
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Standard forward: output from final layer."""
+        h = self.forward_to_hidden(x)
         return self.output_head(h)  # type: ignore[no-any-return]
 
     def forward_all_layers(self, x: torch.Tensor) -> List[torch.Tensor]:
@@ -111,12 +142,6 @@ class DeepSupervisionTransformer(BaseTransformer):
         super().__init__(vocab_size, dim, num_layers, num_heads)
         self.exit_layer = exit_layer
         self.routing_threshold = routing_threshold
-
-    def compute_confidence(self, h: torch.Tensor) -> torch.Tensor:
-        """Compute confidence (max probability) from hidden state."""
-        logits = self.output_head(h)
-        probs = F.softmax(logits, dim=-1)
-        return probs.max(dim=-1).values
 
     def forward_train(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """

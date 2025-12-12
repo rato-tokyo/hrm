@@ -38,52 +38,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from typing import Dict, List, Tuple
-from typing_extensions import TypedDict
 from dataclasses import dataclass, field
 
-
-# ==============================================================================
-# Type Definitions
-# ==============================================================================
-
-class EvalStats(TypedDict):
-    """
-    Evaluation statistics returned by Trainer.evaluate().
-
-    Attributes:
-        ppl: Perplexity (lower is better)
-        acc: Accuracy (0.0-1.0)
-        shallow_ratio: Fraction of tokens using early exit (0.0-1.0)
-        compute_cost: Relative compute cost (1.0 = full model)
-    """
-    ppl: float
-    acc: float
-    shallow_ratio: float
-    compute_cost: float
-
-
-class TrainingHistory(TypedDict):
-    """
-    Training history returned by Trainer.train_with_early_stopping().
-
-    Attributes:
-        train_losses: Training loss per epoch
-        val_losses: Validation PPL per epoch
-        val_accs: Validation accuracy per epoch
-        best_epoch: Epoch with best validation loss (0-indexed)
-        total_epochs: Total epochs trained
-        stopped_early: Whether early stopping was triggered
-    """
-    train_losses: List[float]
-    val_losses: List[float]
-    val_accs: List[float]
-    best_epoch: int
-    total_epochs: int
-    stopped_early: bool
-
-
-# Type alias for data batches
-DataBatch = Tuple[torch.Tensor, torch.Tensor]
+from .types import DataBatch, EvalStats, TrainingHistory
 
 
 @dataclass

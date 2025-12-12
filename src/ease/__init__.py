@@ -33,6 +33,15 @@ References:
 - ASHEM: Adaptive Supervision via Hard Example Mining
 """
 
+# Types (shared across modules)
+from .types import (
+    DataBatch,
+    HardBatch,
+    HardExamples,
+    EvalStats,
+    TrainingHistory,
+)
+
 # Models
 from .models import (
     StandardTransformer,
@@ -44,17 +53,12 @@ from .trainer import (
     StageConfig,
     TrainingConfig,
     Trainer,
-    EvalStats,
-    TrainingHistory,
     create_standard_config,
 )
 
 # ASHEM
 from .ashem import (
     ASHEMConfig,
-    HardExamples,
-    DataBatch,
-    HardBatch,
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
@@ -65,6 +69,12 @@ from .ashem import (
 __version__ = "0.3.0"
 
 __all__ = [
+    # Types
+    'DataBatch',
+    'HardBatch',
+    'HardExamples',
+    'EvalStats',
+    'TrainingHistory',
     # Models
     'StandardTransformer',
     'DeepSupervisionTransformer',
@@ -72,14 +82,9 @@ __all__ = [
     'StageConfig',
     'TrainingConfig',
     'Trainer',
-    'EvalStats',
-    'TrainingHistory',
     'create_standard_config',
     # ASHEM
     'ASHEMConfig',
-    'HardExamples',
-    'DataBatch',
-    'HardBatch',
     'compute_confidence_threshold',
     'collect_hard_examples',
     'create_hard_example_loader',

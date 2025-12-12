@@ -41,37 +41,10 @@ References:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import List, Tuple
-from typing_extensions import TypedDict
+from typing import List
 from dataclasses import dataclass
 
-
-# ==============================================================================
-# Type Definitions
-# ==============================================================================
-
-class HardExamples(TypedDict):
-    """
-    Collection of hard examples for Phase 2 training.
-
-    Hard examples are tokens where the shallow model has low confidence.
-    These benefit most from deeper processing.
-
-    Attributes:
-        inputs: Original input token IDs (num_hard_tokens,)
-        hidden_states: Layer outputs from shallow model (num_hard_tokens, dim)
-        targets: Ground truth labels (num_hard_tokens,)
-        confidences: Confidence scores at collection time (num_hard_tokens,)
-    """
-    inputs: torch.Tensor
-    hidden_states: torch.Tensor
-    targets: torch.Tensor
-    confidences: torch.Tensor
-
-
-# Type alias for data batches
-DataBatch = Tuple[torch.Tensor, torch.Tensor]
-HardBatch = Tuple[torch.Tensor, torch.Tensor]  # (hidden_states, targets)
+from .types import DataBatch, HardBatch, HardExamples
 
 
 @dataclass
@@ -111,25 +84,6 @@ class ASHEMConfig:
 # ASHEM Utility Functions
 # ==============================================================================
 
-def compute_confidence(model: nn.Module, hidden_state: torch.Tensor) -> torch.Tensor:
-    """
-    Compute prediction confidence from hidden state.
-
-    Confidence is defined as the maximum probability in the softmax distribution.
-    Higher confidence indicates the model is more certain about its prediction.
-
-    Args:
-        model: Model with output_head attribute
-        hidden_state: Hidden state tensor of shape (batch_size, seq_len, dim)
-
-    Returns:
-        Confidence values of shape (batch_size, seq_len), range [0, 1]
-    """
-    logits = model.output_head(hidden_state)
-    probs = F.softmax(logits, dim=-1)
-    return probs.max(dim=-1).values
-
-
 def compute_confidence_threshold(
     model: nn.Module,
     val_batches: List[DataBatch],
@@ -148,7 +102,7 @@ def compute_confidence_threshold(
     3. Use this percentile as the threshold
 
     Args:
-        model: Trained model to evaluate
+        model: Trained model to evaluate (must have forward_to_hidden and compute_confidence methods)
         val_batches: Validation data batches
         target_ratio: Desired ratio of hard examples (e.g., 0.5 for 50%)
         device: Device to run computation on
@@ -160,19 +114,12 @@ def compute_confidence_threshold(
     all_confidences: List[torch.Tensor] = []
 
     with torch.no_grad():
-        for x, y in val_batches:
+        for x, _ in val_batches:
             x = x.to(device)
-
-            # Forward pass through all layers
-            h = model.embedding(x)
-            for layer in model.layers:
-                h = layer(h)
-
-            # Compute confidence
-            confidence = compute_confidence(model, h)
+            h = model.forward_to_hidden(x)
+            confidence = model.compute_confidence(h)
             all_confidences.append(confidence.view(-1))
 
-    # Concatenate all confidences and compute threshold
     all_confidences_tensor = torch.cat(all_confidences)
     threshold = torch.quantile(all_confidences_tensor, target_ratio).item()
 
@@ -193,7 +140,7 @@ def collect_hard_examples(
     challenging for the shallow model and benefit from deeper processing.
 
     Args:
-        model: Trained shallow model
+        model: Trained shallow model (must have forward_to_hidden and compute_confidence methods)
         val_batches: Validation data batches
         threshold: Confidence threshold for identifying hard examples
         device: Device to run computation on
@@ -216,13 +163,8 @@ def collect_hard_examples(
         for x, y in val_batches:
             x, y = x.to(device), y.to(device)
 
-            # Forward pass through all layers
-            h = model.embedding(x)
-            for layer in model.layers:
-                h = layer(h)
-
-            # Compute confidence
-            confidence = compute_confidence(model, h)
+            h = model.forward_to_hidden(x)
+            confidence = model.compute_confidence(h)
 
             # Identify low-confidence tokens
             mask = confidence < threshold
