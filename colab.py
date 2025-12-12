@@ -64,7 +64,7 @@ def prepare_dataloaders(num_samples: int, vocab_size: int = 1000, seq_len: int =
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
 
-    print(f"\nDataset prepared:")
+    print("\nDataset prepared:")
     print(f"  Train samples: {len(x_train)}")
     print(f"  Val samples: {len(x_val)}")
     print(f"  Vocab size: {vocab_size}")
