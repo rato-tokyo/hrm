@@ -1,4 +1,4 @@
-# Progressive Layer Training Experiment
+# Incremental Layer Addition Experiment
 
 **実験日**: 2025-12-12
 **実験コード**: colab1.py
@@ -10,7 +10,7 @@
 
 ### 目的
 
-Deep Supervisionが段階的な層追加訓練（Progressive Layer Training）に有利かを検証する。
+Deep Supervisionが段階的な層追加訓練（Incremental Layer Addition）に有利かを検証する。
 
 ### 仮説
 
@@ -347,7 +347,7 @@ def freeze_initial_layers(model, num_layers_to_freeze=3):
 
 ## まとめ
 
-**Progressive Layer Training（1層追加）の検証結果**:
+**Incremental Layer Addition（1層追加）の検証結果**:
 
 ✅ **実験自体は成功**: 段階的訓練の実装と検証ができた
 ❌ **仮説は不成立**: Deep Supervisionの優位性なし

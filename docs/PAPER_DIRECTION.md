@@ -52,12 +52,12 @@
 ### 2. ASHEM Training Strategy（副次的貢献）
 
 #### 新規性
-**Hard Example Mining + Progressive Layer Addition + Early Exitの統合**
+**Hard Example Mining + Selective Layer Expansion + Early Exitの統合**
 
 ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 
 1. **Hard Example Mining**: 難しいサンプルの識別と選択的訓練
-2. **Progressive Layer Addition**: 段階的な層追加と選択的学習
+2. **Selective Layer Expansion**: Hard examplesに対する段階的な層追加と選択的学習
 3. **Two-Stage Inference**: 信頼度ベースのEarly Exit
 
 #### 既存研究との関係
@@ -65,10 +65,11 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 | 既存技術 | ASHEM での活用 |
 |---------|---------------|
 | Hard Example Mining (HAM, HSM) | Phase 1で難しいサンプルを自動識別 |
-| Progressive Layer Addition (PLD) | Phase 2で新層を追加して訓練 |
+| Selective Layer Expansion | Phase 2でHard examples用に新層を追加して訓練 |
 | Early Exit (BranchyNet) | 推論時に適応的ルーティング |
 
 **重要**: これら3つを統合した訓練戦略は既存研究に存在しない（新規性）
+**注意**: "Progressive Layer Addition"という用語はPLD (NeurIPS 2020)と混同される可能性があるため、"Selective Layer Expansion"を使用
 
 #### 実験結果による実証
 
@@ -130,7 +131,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
   - データセット: WikiText-2
   - モデル: dim=64, layers=2→4
   - 比較対象: Standard, Deep Supervision
-- 実験1: Progressive Layer Training
+- 実験1: Incremental Layer Addition
   - 仮説検証: Deep Supervisionの優位性
   - 結果: 優位性なし（興味深い否定的結果）
 - 実験2: ASHEM
@@ -239,7 +240,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 
 ### ASHEM訓練戦略
 
-**主張**: 「Hard Example Mining、Progressive Layer Addition、Early Exitを統合した初の訓練戦略」
+**主張**: 「Hard Example Mining、Selective Layer Expansion、Early Exitを統合した初の訓練戦略」
 
 **根拠**:
 - Hard PPL 78%改善
@@ -258,7 +259,7 @@ ASHEM は以下3つの技術を組み合わせた**初の訓練戦略**：
 - ⚠️ 既存技術の組み合わせ: 個別技術は既存
 
 **ASHEM**:
-- ✅ 新規: Hard Example Mining + Progressive Layer + Early Exitの統合
+- ✅ 新規: Hard Example Mining + Selective Layer Expansion + Early Exitの統合
 - ⚠️ 既存技術の組み合わせ: 個別技術は既存
 
 ### 強調すべき点

@@ -220,14 +220,22 @@ config = TrainingConfig(
 ```
 
 ### 4. ASHEM (Adaptive Supervision via Hard Example Mining)
-Hard examplesに特化した段階的訓練
-- **Phase 1**: 浅層モデル（2層）で全データ訓練
-- **Phase 2**: 深層モデル（4層）でHard examplesのみ訓練
-- **推論**: Two-stage routing（Early Exit）
-- **実験結果**: Hard PPL 78%改善、計算コスト36%削減
+Hard examplesに特化した段階的訓練戦略
+
+**新規性**: 両サーベイ論文（2024-2025）にEarly ExitとHard Example Miningの組み合わせに関する記述なし
+
+**訓練手順**:
+- **Phase 1**: 浅層モデル（2層）で全データ訓練 → Hard example識別
+- **Phase 2**: 深層モデル（4層）でHard examplesのみ訓練（Selective Layer Expansion）
+- **推論**: Two-stage routing（Early Exit）で計算効率化
+
+**実験結果** (WikiText-2, 10K samples):
+- Hard PPL: **78%改善** (2763 → 668)
+- 計算コスト: **36%削減** (64.82% of full model)
+- Overall PPL: **15.9%改善** (986 → 830)
 
 ```python
-from ease import ASHEMConfig
+from ease import ASHEMConfig  # Note: Package name migration to 'lash' is planned
 
 ashem_config = ASHEMConfig(
     phase1_layers=2,
@@ -282,12 +290,25 @@ config = TrainingConfig(layer_weights={1: 0.7, 2: 0, 3: 0.3})
 - **LASH**: Layered Adaptive Supervision Hierarchy（本フレームワーク）
 - Lee et al. (2015) - Deep Supervision
 - Howard & Ruder (2018) - Discriminative Fine-Tuning
-- Teerapittayanon et al. (2016) - Early Exit
+- Teerapittayanon et al. (2016) - Early Exit (BranchyNet)
 
 ### ASHEM Training Strategy
 - **ASHEM**: Adaptive Supervision via Hard Example Mining（本研究）
 - Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
-- Progressive Layer Addition: Related to PLD (NeurIPS 2020)
+- **注意**: "Progressive Layer Addition"ではなく"Selective Layer Expansion"を使用（PLD (NeurIPS 2020)との混同を避けるため）
+
+### Early Exit Surveys (新規性検証用)
+- **ACM Survey** (Nov 2024): "Early-Exit Deep Neural Network—A Comprehensive Survey" (37 pages)
+  - Haseena Rahmath P et al., ACM Computing Surveys
+  - DOI: 10.1145/3698767
+- **NLP Survey** (Jan 2025): "A Survey of Early Exit Deep Neural Networks in NLP" (13 pages)
+  - Divya Jyoti Bajpai and Manjesh Kumar Hanawal
+  - arXiv:2501.07670v1
+
+**重要な知見**:
+- 両サーベイとも、Early Exitの文脈での層ごとの学習率制御（`layer_lr_scales`）に言及なし
+- 両サーベイとも、Early ExitとHard Example Miningの組み合わせに言及なし
+- 既存研究では`wi = i`（深い層ほど重みが大きい）が一般的
 
 ---
 
@@ -371,6 +392,10 @@ if torch.cuda.is_available():
 
 ### 新規性（Novelty）の主張
 
+**参考文献**:
+- ACM Survey (Nov 2024): "Early-Exit Deep Neural Network—A Comprehensive Survey" (37 pages)
+- NLP Survey (Jan 2025): "A Survey of Early Exit Deep Neural Networks in NLP" (13 pages)
+
 #### 1. 統一フレームワークとしての新規性
 
 **既存研究の問題点**:
@@ -383,20 +408,80 @@ if torch.cuda.is_available():
 - 単一フレームワークで4つ以上の訓練戦略をサポート
 - 無限の戦略カスタマイズが可能
 
-**Claim**: "LASH is the first unified framework that enables flexible combination of layer-wise supervision, discriminative learning rates, and early exit through a single configuration interface."
+**各オプションの新規性分析**:
+
+1. **`layer_weights` (層ごとの損失重み)**:
+   - ⚠️ 既存研究で使用されている（両サーベイ論文で確認）
+   - 最も一般的なパターンは `wi = i`（深い層ほど重みが大きい）
+   - ✅ **LASHの独自性**: 任意の非対称パターンが可能（例: `{1: 0.7, 2: 0, 3: 0.3}`）
+   - ✅ ゼロ重みによる層のスキップが可能
+
+2. **`layer_lr_scales` (層ごとの学習率)**:
+   - ✅ **Strong Novelty**: 両サーベイ論文で**一切言及されていない**
+   - Howard & Ruder (2018)のDiscriminative Fine-Tuningを引用しているが、Early Exitとの統合は本研究が初
+   - ACM Surveyの6種類の訓練戦略にも含まれていない
+
+3. **`routing_threshold` (Early Exit閾値)**:
+   - ⚠️ Early Exit自体は既存技術（Teerapittayanon et al., 2016 - BranchyNet以降）
+   - ✅ **LASHの独自性**: 他の2つのパラメータとの統合
+
+**修正されたClaim**:
+"While existing work uses layer-wise loss weights with simple patterns (typically wi=i) [Survey'24], LASH is the first framework to simultaneously integrate:
+1) Arbitrary asymmetric layer-wise supervision patterns
+2) Discriminative learning rates (not discussed in early exit literature)
+3) Early exit mechanisms
+through three independent, composable configuration parameters."
 
 #### 2. ASHEM訓練戦略の新規性
 
 **既存研究との差別化**:
 - HAM/HSM: セキュリティ分野のHard example mining（CV/NLP分野とは異なる）
 - PLD: Progressive layer addition（Hard example miningとの統合なし）
+- **両サーベイ論文**: Early ExitとHard Example Miningの組み合わせに関する記述なし
 
 **ASHEMの独自性**:
-- Hard Example Mining + Progressive Layering の統合
-- Two-Stage Inference（Early Exit）との組み合わせ
-- 言語モデリングへの適用（既存研究は主にCV分野）
+- ✅ **Strong Novelty**: Hard Example Mining + Early Exitの統合
+- ✅ Two-Phase Training（浅層→深層への段階的展開）
+- ✅ Two-Stage Inference（Early Exit）との組み合わせ
+- ✅ 言語モデリングへの適用（既存研究は主にCV分野）
 
-**Claim**: "ASHEM is the first training strategy that combines hard example mining with progressive layer addition and two-stage inference for efficient language model training."
+**修正されたClaim**:
+"ASHEM introduces a novel two-phase training paradigm that:
+1) Trains a shallow model on all data
+2) Selectively expands to deeper architecture trained exclusively on hard examples identified via confidence thresholds
+3) Employs two-stage inference for computational efficiency
+
+This is the first method to combine hard example mining with selective layer expansion and early exit for language modeling."
+
+**注意**: "Progressive Layer Addition"という用語はPLD (NeurIPS 2020)と混同される可能性があるため、"Selective Layer Expansion"を使用することを推奨。
+
+---
+
+### 新規性評価の総括
+
+**✅ 確認された強い新規性**:
+1. **Discriminative Learning Rates (`layer_lr_scales`)**
+   - 両サーベイ論文(ACM Survey Nov 2024, NLP Survey Jan 2025)で一切言及なし
+   - Early Exitの文脈での統合は本研究が初めて
+
+2. **Hard Example Mining + Early Exit**
+   - 両サーベイ論文で組み合わせに関する記述なし
+   - 言語モデリングへの適用は本研究が初めて
+
+3. **3パラメータ統合フレームワーク**
+   - 独立かつ組み合わせ可能な3つのパラメータによる統一的制御
+   - 既存手法は個別実装が必要
+
+**⚠️ 既存技術を含む要素**:
+1. **Layer-wise Loss Weights**: 既存研究で使用済み（ただし任意パターンは新規）
+2. **Early Exit**: 2016年から確立された技術（ただし統合方法は新規）
+
+**📊 実験的検証**:
+- WikiText-2 (10K samples)での定量的成果
+- Hard examplesへの顕著な改善効果（78% PPL改善）
+- 計算効率と精度の両立を実証
+
+---
 
 #### 3. 自動最適化の新規性
 
@@ -409,25 +494,61 @@ if torch.cuda.is_available():
 
 #### 4. 実験結果の新規性
 
-**WikiText-2での検証結果**:
-- Hard PPL: 78%改善（2763 → 668）
-- 計算コスト: 36%削減（64.82% of full model）
-- Overall PPL: 15.9%改善（986 → 830）
+**WikiText-2での検証結果**（10K samples）:
+- Hard PPL: **78%改善**（2763 → 668）
+- 計算コスト: **36%削減**（64.82% of full model）
+- Overall PPL: **15.9%改善**（986 → 830）
+- Overall Accuracy: 16.03% → 15.77%（微減）
 
 **既存研究との差別化**:
-- Deep Supervision: 全層で計算コスト高
-- Early Exit: 訓練戦略は従来型のまま
-- ASHEM: 訓練と推論の両方を最適化
+- **Deep Supervision**: 全層で計算コストが高い（効率性に課題）
+- **Early Exit**: 訓練戦略は従来型のまま（Hard examplesへの対応なし）
+- **ASHEM**: 訓練と推論の両方を最適化（Hard examplesに特化した段階的訓練）
+
+**重要な知見**:
+- Hard examplesへの特化訓練により、難しいサンプルでの性能が大幅向上
+- Early Exitによる推論時の計算コスト削減
+- 全体の精度を維持しながら効率を改善
 
 ### 論文構成案
 
 1. **Introduction**: 統一フレームワークの必要性
-2. **Related Work**: Deep Supervision, Discriminative FT, Early Exit, Hard Example Mining
+   - 既存手法の個別実装の課題
+   - 柔軟な戦略カスタマイズの重要性
+
+2. **Related Work**:
+   - **Deep Supervision** (Lee et al., 2015)
+   - **Discriminative Fine-Tuning** (Howard & Ruder, 2018)
+   - **Early Exit Networks** (Teerapittayanon et al., 2016; BranchyNet)
+   - **Hard Example Mining** (HAM, HSM等 - 主にCV/セキュリティ分野)
+   - **Recent Surveys** (ACM Survey Nov 2024, NLP Survey Jan 2025)
+   - **既存手法の課題**: 個別実装、統合の困難さ、層ごとの学習率制御の欠如
+
 3. **LASH Framework**: 3つのコアオプションとアーキテクチャ
+   - `layer_weights`: 任意の非対称パターン
+   - `layer_lr_scales`: 層ごとの学習率制御（新規）
+   - `routing_threshold`: Early Exit閾値
+   - 自動最適化機構
+
 4. **ASHEM Training Strategy**: Hard example miningを活用した新しい訓練戦略
+   - Two-Phase Training（浅層→深層）
+   - Hard Example Identification
+   - Two-Stage Inference
+
 5. **Experiments**: WikiText-2/103でのベースライン比較
-6. **Analysis**: Ablation study, scalability, computational efficiency
+   - Standard vs Deep Supervision vs ASHEM
+   - Hard examples vs Easy examples の分析
+   - 計算コストと精度のトレードオフ
+
+6. **Analysis**:
+   - Ablation study（ASHEMの各コンポーネント）
+   - Threshold感度分析
+   - 計算効率分析（FLOPs, wall-clock time）
+   - Scalability検証
+
 7. **Conclusion**: 統一フレームワークの意義と将来展望
+   - 新規性の再確認
+   - 大規模モデルへの展開可能性
 
 ### 今後の実験計画
 

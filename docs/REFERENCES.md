@@ -69,16 +69,17 @@
 
 ---
 
-### 5. Progressive Layer Training
+### 5. Incremental Layer Training / Layer Stacking
 
 層を段階的に追加・学習する手法。
 
-**Progressive Layer Dropping:**
+**Progressive Layer Dropping (PLD):**
 - Zhang, M., et al. (2020). **Accelerating Training of Transformer-Based Language Models with Progressive Layer Dropping**. In *NeurIPS 2020*.
   - URL: https://arxiv.org/abs/2010.13369
   - DeepSpeed Implementation: https://www.deepspeed.ai/tutorials/progressive_layer_dropping/
+  - **注意**: 本プロジェクトの"Selective Layer Expansion"とは異なる手法
 
-**Progressive Growing:**
+**Progressive Growing / Stacking:**
 - Gong, L., et al. (2019). **Efficient Training of BERT by Progressively Stacking**. In *ICML 2019*.
   - URL: https://arxiv.org/abs/1910.02697
 

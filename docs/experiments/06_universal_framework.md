@@ -1,10 +1,12 @@
-# EASE: Simplified Training Framework
+# LASH: Layered Adaptive Supervision Hierarchy
 
 ## Overview
 
-**EASE** (Efficient Asymmetric Supervision for Early-Exit) は、シンプルな学習フレームワークです。
+**LASH** (Layered Adaptive Supervision Hierarchy) は、統一的な学習フレームワークです。
 
-2つの基本モデルと3つのオプションで構成されています。
+2つの基本モデルと3つのコアオプションで構成されています。
+
+**注**: パッケージ名は現在`ease`ですが、将来的に`lash`へ移行予定です。
 
 ---
 
