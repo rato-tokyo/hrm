@@ -95,6 +95,27 @@ config = create_deep_supervision_config(num_layers=3)
 # → layer_weights={1: 0.33, 2: 0.33, 3: 0.33}
 ```
 
+### Early Stopping（訓練時の早期終了）
+
+```python
+# Early Stopping付き訓練
+result = trainer.train_with_early_stopping(
+    model=model,
+    train_batches=train_loader,
+    val_batches=val_loader,
+    optimizer=optimizer,
+    max_epochs=100,
+    patience=1,  # デフォルト値: 1エポック改善なしで停止
+    verbose=True
+)
+```
+
+**重要ルール**:
+- **patienceのデフォルト値は1**
+- 検証損失が1エポックでも悪化したら訓練を停止
+- 過学習を防ぎ、訓練時間を短縮
+- 最良モデルの状態を自動保存・復元
+
 ---
 
 ## References

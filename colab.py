@@ -82,7 +82,7 @@ def run_experiment(model_name: str, model: nn.Module, config: TrainingConfig,
                   train_loader: DataLoader, val_loader: DataLoader,
                   num_epochs: int = 10, base_lr: float = 1e-3,
                   device: str = 'cuda', use_early_stopping: bool = False,
-                  patience: int = 5) -> Dict:
+                  patience: int = 1) -> Dict:
     """単一モデルの実験を実行"""
     print(f"\n{'='*60}")
     print(f"Experiment: {model_name}")
@@ -244,7 +244,7 @@ def main():
     NUM_SAMPLES_SMALL = 1000
     BATCH_SIZE_SMALL = 32
     NUM_EPOCHS_SMALL = 20  # Early Stoppingで自動終了
-    PATIENCE_SMALL = 3
+    PATIENCE_SMALL = 1
 
     train_loader_small, val_loader_small = prepare_dataloaders(
         num_samples=NUM_SAMPLES_SMALL,
@@ -314,7 +314,7 @@ def main():
     NUM_SAMPLES_MEDIUM = 10000
     BATCH_SIZE_MEDIUM = 64
     NUM_EPOCHS_MEDIUM = 50  # Early Stoppingで自動終了
-    PATIENCE_MEDIUM = 5
+    PATIENCE_MEDIUM = 1
 
     train_loader_medium, val_loader_medium = prepare_dataloaders(
         num_samples=NUM_SAMPLES_MEDIUM,
