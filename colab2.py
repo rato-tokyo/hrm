@@ -1,13 +1,20 @@
 """
 Hard Example Mining + Two-Stage Inference Experiment
 
-Experiment Design:
-- Phase 1: Train 2-layer model + collect hard examples (low confidence)
-- Phase 2: Train additional 2 layers on hard examples only
-- Validation: Two-stage inference using EASE framework's Early Exit
+This experiment demonstrates an efficient training strategy for early-exit models:
+1. Phase 1: Train a shallow model (2 layers) on all data
+2. Identify hard examples (low confidence predictions from shallow model)
+3. Phase 2: Train additional layers (2 more) on hard examples only
+4. Inference: Use EASE's Early Exit - simple cases exit at layer 2, hard cases use layer 4
 
-Key Improvement: Uses EASE's built-in Early Exit functionality instead of
-manual implementation for cleaner, more maintainable code.
+Key Benefits:
+- Focuses computational resources on hard examples during training
+- Reduces overall training time by avoiding redundant deep processing of easy examples
+- Uses EASE framework's built-in Early Exit for clean, maintainable inference
+
+References:
+- Hard Example Mining: Similar to curriculum learning and active learning approaches
+- Two-Stage Inference: Inspired by cascade classifiers and early-exit networks
 """
 
 import sys
@@ -31,8 +38,53 @@ from ease import (
 from colab import create_dataloaders as create_dataloaders_from_colab
 
 
-def set_seed(seed: int = 42):
-    """Set random seed for reproducibility."""
+# ==============================================================================
+# Configuration
+# ==============================================================================
+
+@dataclass
+class ExperimentConfig:
+    """
+    Configuration for Hard Example Mining experiment.
+
+    Training is divided into two phases:
+    - Phase 1: Train shallow model on all data
+    - Phase 2: Train deeper model on hard examples only
+    """
+    # Model architecture
+    vocab_size: int = 69830
+    seq_len: int = 32
+    dim: int = 64
+    num_heads: int = 4
+
+    # Phase 1: Shallow model training
+    phase1_layers: int = 2
+    phase1_samples: int = 10000
+    phase1_batch: int = 64
+    phase1_epochs: int = 50
+    phase1_patience: int = 1
+    base_lr: float = 1e-3
+
+    # Hard example collection
+    hard_example_ratio: float = 0.5  # Target 50% of examples as hard
+
+    # Phase 2: Deep model training on hard examples
+    phase2_layers: int = 4  # Total layers (2 new + 2 from phase 1)
+    phase2_batch: int = 64
+    phase2_epochs: int = 50
+    phase2_patience: int = 3  # Higher patience for randomly initialized layers
+    phase2_lr: float = 1e-4  # Lower LR for fine-tuning
+
+
+CONFIG = ExperimentConfig()
+
+
+# ==============================================================================
+# Utility Functions
+# ==============================================================================
+
+def set_seed(seed: int = 42) -> None:
+    """Set random seed for reproducibility across all random number generators."""
     import random
     import numpy as np
     random.seed(seed)
@@ -43,52 +95,27 @@ def set_seed(seed: int = 42):
 
 
 def get_device() -> str:
-    """Get device (cuda or cpu)."""
+    """Get available compute device (CUDA if available, otherwise CPU)."""
     return 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-@dataclass
-class Config:
-    """Experiment configuration"""
-    vocab_size: int = 69830
-    seq_len: int = 32
-    dim: int = 64
-    num_heads: int = 4
-    base_lr: float = 1e-3
-
-    # Phase 1: Train 2-layer model
-    phase1_layers: int = 2
-    phase1_samples: int = 10000
-    phase1_batch: int = 64
-    phase1_epochs: int = 50
-    phase1_patience: int = 1
-
-    # Hard example threshold (auto-adjusted to target this percentage)
-    hard_example_ratio: float = 0.5  # Target 50% of examples as hard examples
-
-    # Phase 2: Train on hard examples
-    phase2_layers: int = 4  # Total: 2 + 2
-    phase2_batch: int = 64
-    phase2_epochs: int = 50
-    phase2_patience: int = 3  # Higher patience for randomly initialized layers
-    phase2_lr: float = 1e-4  # Lower LR for fine-tuning
-
-
-CONFIG = Config()
-
+# ==============================================================================
+# Confidence Computation
+# ==============================================================================
 
 def compute_confidence(model: nn.Module, hidden_state: torch.Tensor) -> torch.Tensor:
     """
-    Compute confidence (max probability) from hidden state.
+    Compute prediction confidence from hidden state.
 
-    Centralized confidence computation to avoid duplication.
+    Confidence is defined as the maximum probability in the softmax distribution.
+    Higher confidence indicates the model is more certain about its prediction.
 
     Args:
-        model: Model with output_head
-        hidden_state: Hidden state tensor (batch_size, seq_len, dim)
+        model: Model with output_head attribute
+        hidden_state: Hidden state tensor of shape (batch_size, seq_len, dim)
 
     Returns:
-        Confidence values (batch_size, seq_len)
+        Confidence values of shape (batch_size, seq_len), range [0, 1]
     """
     logits = model.output_head(hidden_state)
     probs = F.softmax(logits, dim=-1)
@@ -104,11 +131,19 @@ def compute_confidence_threshold(
     """
     Compute confidence threshold to achieve target hard example ratio.
 
+    The threshold is set such that approximately target_ratio of examples
+    fall below this confidence value (i.e., classified as hard examples).
+
+    Strategy:
+    1. Compute confidence for all validation examples
+    2. Find the target_ratio percentile of these confidences
+    3. Use this percentile as the threshold
+
     Args:
-        model: Trained model
-        val_batches: Validation batches
-        target_ratio: Target ratio of hard examples (e.g., 0.5 for 50%)
-        device: Device to use
+        model: Trained model to evaluate
+        val_batches: Validation data batches
+        target_ratio: Desired ratio of hard examples (e.g., 0.5 for 50%)
+        device: Device to run computation on
 
     Returns:
         Confidence threshold value
@@ -120,24 +155,25 @@ def compute_confidence_threshold(
         for x, y in val_batches:
             x = x.to(device)
 
-            # Get output from all layers
+            # Forward pass through all layers
             h = model.embedding(x)
             for layer in model.layers:
                 h = layer(h)
 
-            # Compute confidence using centralized function
+            # Compute confidence
             confidence = compute_confidence(model, h)
             all_confidences.append(confidence.view(-1))
 
-    # Concatenate all confidences
+    # Concatenate all confidences and compute threshold
     all_confidences = torch.cat(all_confidences)
-
-    # Compute threshold as the target_ratio percentile
-    # For 50%, we want the median confidence value
     threshold = torch.quantile(all_confidences, target_ratio).item()
 
     return threshold
 
+
+# ==============================================================================
+# Hard Example Mining
+# ==============================================================================
 
 def collect_hard_examples(
     model: nn.Module,
@@ -148,11 +184,21 @@ def collect_hard_examples(
     """
     Collect hard examples (low confidence samples) from validation set.
 
+    Hard examples are defined as samples where the model's prediction
+    confidence falls below the specified threshold. These examples are
+    challenging for the shallow model and benefit from deeper processing.
+
+    Args:
+        model: Trained shallow model
+        val_batches: Validation data batches
+        threshold: Confidence threshold for identifying hard examples
+        device: Device to run computation on
+
     Returns:
-        Dictionary with:
-        - 'inputs': Input sequences
-        - 'hidden_states': Layer 2 outputs (hidden states)
-        - 'targets': Target labels
+        Dictionary containing:
+        - 'inputs': Original input tokens
+        - 'hidden_states': Layer outputs (used as input for deeper layers)
+        - 'targets': Ground truth labels
         - 'confidences': Confidence scores
     """
     model.eval()
@@ -166,15 +212,15 @@ def collect_hard_examples(
         for x, y in val_batches:
             x, y = x.to(device), y.to(device)
 
-            # Get output from all layers
+            # Forward pass through all layers
             h = model.embedding(x)
             for layer in model.layers:
                 h = layer(h)
 
-            # Compute confidence using centralized function
+            # Compute confidence
             confidence = compute_confidence(model, h)
 
-            # Collect low-confidence samples
+            # Identify low-confidence samples
             mask = confidence < threshold
 
             if mask.any():
@@ -206,8 +252,17 @@ def create_hard_example_loader(
     hard_examples: Dict[str, torch.Tensor],
     batch_size: int
 ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-    """Create dataloader from hard examples."""
-    hidden_states = hard_examples['hidden_states']  # Shape: (num_samples, dim)
+    """
+    Create batched dataloader from collected hard examples.
+
+    Args:
+        hard_examples: Dictionary with 'hidden_states' and 'targets'
+        batch_size: Number of examples per batch
+
+    Returns:
+        List of batches (hidden_state, target) tuples
+    """
+    hidden_states = hard_examples['hidden_states']
     targets = hard_examples['targets']
 
     num_samples = len(targets)
@@ -216,12 +271,66 @@ def create_hard_example_loader(
     batches = []
     for i in range(0, num_samples, batch_size):
         batch_indices = indices[i:i + batch_size]
-        # Add seq_len dimension: (batch_size, dim) → (batch_size, 1, dim)
+        # Add seq_len dimension: (batch_size, dim) -> (batch_size, 1, dim)
         h_batch = hidden_states[batch_indices].unsqueeze(1)
         t_batch = targets[batch_indices]
         batches.append((h_batch, t_batch))
 
     return batches
+
+
+# ==============================================================================
+# Training and Evaluation
+# ==============================================================================
+
+def train_upper_layers(
+    model: nn.Module,
+    hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+    optimizer: torch.optim.Optimizer,
+    vocab_size: int,
+    device: str,
+    num_lower_layers: int = 2
+) -> float:
+    """
+    Train upper layers on hard examples only.
+
+    The lower layers are frozen (already trained in Phase 1).
+    Only the newly added upper layers are trained on hard examples.
+
+    Args:
+        model: Extended model with upper layers
+        hard_batches: Batches of (hidden_state, target) pairs
+        optimizer: Optimizer for trainable parameters
+        vocab_size: Vocabulary size for loss computation
+        device: Device to run training on
+        num_lower_layers: Number of frozen lower layers
+
+    Returns:
+        Average training loss for this epoch
+    """
+    model.train()
+    total_loss = 0.0
+
+    for h, y in hard_batches:
+        h, y = h.to(device), y.to(device)
+        optimizer.zero_grad()
+
+        # Process through upper layers only
+        for i in range(num_lower_layers, model.num_layers):
+            h = model.layers[i](h)
+
+        # Compute classification loss
+        # h shape: (batch_size, 1, dim)
+        logits = model.output_head(h).squeeze(1)  # (batch_size, vocab_size)
+        loss = F.cross_entropy(logits, y)
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        optimizer.step()
+
+        total_loss += loss.item()
+
+    return total_loss / len(hard_batches)
 
 
 def evaluate_on_hard_examples(
@@ -233,15 +342,18 @@ def evaluate_on_hard_examples(
     num_lower_layers: int = 2
 ) -> float:
     """
-    Evaluate model on hard examples only (measure PPL on hard examples).
+    Evaluate model performance on hard examples only.
+
+    This measures how well the model handles the most challenging examples,
+    which is crucial for understanding the benefit of deeper processing.
 
     Args:
-        model: Model to evaluate (can be 2-layer or 4-layer)
+        model: Model to evaluate (can be shallow or deep)
         hard_examples: Dictionary with 'hidden_states' and 'targets'
         vocab_size: Vocabulary size for loss computation
-        device: Device to use
+        device: Device to run evaluation on
         batch_size: Batch size for evaluation
-        num_lower_layers: Number of lower layers (if 4-layer model, process through layers 3-4)
+        num_lower_layers: Number of lower layers (for deep model evaluation)
 
     Returns:
         Perplexity on hard examples
@@ -257,16 +369,16 @@ def evaluate_on_hard_examples(
     with torch.no_grad():
         for i in range(0, num_samples, batch_size):
             # Get batch
-            h_batch = hidden_states[i:i + batch_size].unsqueeze(1).to(device)  # (batch_size, 1, dim)
+            h_batch = hidden_states[i:i + batch_size].unsqueeze(1).to(device)
             y_batch = targets[i:i + batch_size].to(device)
 
-            # If 4-layer model, process through upper layers (3-4)
+            # If deep model, process through upper layers
             if hasattr(model, 'num_layers') and model.num_layers > num_lower_layers:
                 for layer_idx in range(num_lower_layers, model.num_layers):
                     h_batch = model.layers[layer_idx](h_batch)
 
             # Compute loss
-            logits = model.output_head(h_batch).squeeze(1)  # (batch_size, vocab_size)
+            logits = model.output_head(h_batch).squeeze(1)
             loss = F.cross_entropy(logits, y_batch, reduction='sum')
 
             total_loss += loss.item()
@@ -277,63 +389,36 @@ def evaluate_on_hard_examples(
     return ppl
 
 
-def train_upper_layers(
-    model: nn.Module,
-    hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-    optimizer: torch.optim.Optimizer,
-    vocab_size: int,
-    device: str,
-    num_lower_layers: int = 2
-) -> float:
+# ==============================================================================
+# Experiment Runner
+# ==============================================================================
+
+def run_experiment(model_name: str, ModelClass, config_fn, device: str) -> Dict:
     """
-    Train upper layers (3-4) on hard examples.
+    Run complete hard example mining experiment.
+
+    Experiment flow:
+    1. Phase 1: Train shallow model (2 layers) on all data
+    2. Compute confidence threshold and collect hard examples
+    3. Phase 2: Extend to 4 layers, train upper layers on hard examples only
+    4. Evaluate using two-stage inference (EASE Early Exit)
 
     Args:
-        model: Extended model with upper layers
-        hard_batches: Batches of hard examples (hidden states, targets)
-        optimizer: Optimizer for upper layers
-        vocab_size: Vocabulary size for loss computation
-        device: Device to use
-        num_lower_layers: Number of lower layers (already trained)
+        model_name: Name of model architecture for logging
+        ModelClass: Model class to use for Phase 1
+        config_fn: Function to create training config
+        device: Device to run experiment on
 
     Returns:
-        Average training loss
+        Dictionary with experiment results and metrics
     """
-    model.train()
-    total_loss = 0.0
-
-    for h, y in hard_batches:
-        h, y = h.to(device), y.to(device)
-        optimizer.zero_grad()
-
-        # Process through upper layers only
-        for i in range(num_lower_layers, model.num_layers):
-            h = model.layers[i](h)
-
-        # Compute loss
-        # h shape: (batch_size, 1, dim)
-        # Remove seq_len dimension for classification
-        logits = model.output_head(h).squeeze(1)  # (batch_size, vocab_size)
-        loss = F.cross_entropy(logits, y)
-
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
-
-        total_loss += loss.item()
-
-    return total_loss / len(hard_batches)
-
-
-def run_experiment(model_name: str, ModelClass, config_fn, device: str):
-    """Run hard example mining experiment."""
     print(f"\n{'='*60}")
     print(f"{model_name} - Hard Example Mining")
     print(f"{'='*60}\n")
 
-    # ========================================
-    # Phase 1: Train 2-layer model
-    # ========================================
+    # ==========================================================================
+    # Phase 1: Train Shallow Model
+    # ==========================================================================
     print(f"Phase 1: Train {CONFIG.phase1_layers}-layer model")
     print(f"{'='*60}")
 
@@ -342,7 +427,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
         CONFIG.phase1_samples, CONFIG.phase1_batch, CONFIG.seq_len
     )
 
-    # Create 2-layer model
+    # Create shallow model
     model = ModelClass(
         vocab_size=CONFIG.vocab_size,
         dim=CONFIG.dim,
@@ -350,6 +435,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
         num_heads=CONFIG.num_heads
     ).to(device)
 
+    # Train with early stopping
     config = config_fn(num_layers=CONFIG.phase1_layers)
     trainer = Trainer(config, vocab_size=CONFIG.vocab_size, device=device)
     optimizer = trainer.create_optimizer(model, base_lr=CONFIG.base_lr)
@@ -374,9 +460,9 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print(f"  Best PPL: {phase1_ppl:.2f}")
     print(f"  Time: {phase1_time:.2f}s")
 
-    # ========================================
+    # ==========================================================================
     # Compute Confidence Threshold
-    # ========================================
+    # ==========================================================================
     print(f"\n{'='*60}")
     print(f"Computing Confidence Threshold (target ratio: {CONFIG.hard_example_ratio*100:.0f}%)")
     print(f"{'='*60}\n")
@@ -386,11 +472,11 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     )
 
     print(f"✓ Computed confidence threshold: {confidence_threshold:.4f}")
-    print(f"  Examples with confidence < {confidence_threshold:.4f} will be treated as hard examples")
+    print(f"  Examples with confidence < {confidence_threshold:.4f} will be treated as hard")
 
-    # ========================================
+    # ==========================================================================
     # Collect Hard Examples
-    # ========================================
+    # ==========================================================================
     print(f"\n{'='*60}")
     print("Collecting Hard Examples")
     print(f"{'='*60}\n")
@@ -405,11 +491,12 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
 
     print(f"✓ Collected {num_hard:,} hard examples")
     print(f"  Average confidence: {avg_confidence:.4f}")
-    print(f"  Actual ratio: {num_hard / total_samples * 100:.1f}% (target: {CONFIG.hard_example_ratio*100:.0f}%)")
+    print(f"  Actual ratio: {num_hard / total_samples * 100:.1f}% "
+          f"(target: {CONFIG.hard_example_ratio*100:.0f}%)")
 
-    # ========================================
+    # ==========================================================================
     # Evaluate Phase 1 on Hard Examples
-    # ========================================
+    # ==========================================================================
     print(f"\n{'='*60}")
     print("Evaluating Phase 1 on Hard Examples")
     print(f"{'='*60}\n")
@@ -422,25 +509,24 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print(f"✓ Phase 1 Hard PPL: {phase1_hard_ppl:.2f}")
     print(f"  (vs Overall Val PPL: {phase1_ppl:.2f})")
 
-    # ========================================
-    # Phase 2: Extend to 4 layers + Train on hard examples
-    # ========================================
+    # ==========================================================================
+    # Phase 2: Extend Model and Train on Hard Examples
+    # ==========================================================================
     print(f"\n{'='*60}")
     print("Phase 2: Add 2 layers → Train on hard examples")
     print(f"{'='*60}\n")
 
-    # Create 4-layer model with Early Exit support
-    # Use DeepSupervisionTransformer for Phase 2 (supports Early Exit)
+    # Create extended model with Early Exit support
     model_extended = DeepSupervisionTransformer(
         vocab_size=CONFIG.vocab_size,
         dim=CONFIG.dim,
         num_layers=CONFIG.phase2_layers,
         num_heads=CONFIG.num_heads,
-        exit_layer=CONFIG.phase1_layers,  # Exit at Layer 2
-        routing_threshold=confidence_threshold  # Use auto-computed threshold
+        exit_layer=CONFIG.phase1_layers,
+        routing_threshold=confidence_threshold
     ).to(device)
 
-    # Copy lower layers (1-2) weights from Phase 1 model
+    # Copy weights from Phase 1 model
     model_extended.embedding.load_state_dict(model.embedding.state_dict())
     for i in range(CONFIG.phase1_layers):
         model_extended.layers[i].load_state_dict(model.layers[i].state_dict())
@@ -449,7 +535,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print("✓ Copied weights from 2-layer model")
     print("✓ Layers 3-4 randomly initialized")
 
-    # Freeze lower layers (1-2)
+    # Freeze lower layers
     for param in model_extended.embedding.parameters():
         param.requires_grad = False
     for i in range(CONFIG.phase1_layers):
@@ -470,9 +556,9 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
         filter(lambda p: p.requires_grad, model_extended.parameters()),
         lr=CONFIG.phase2_lr
     )
-
     print(f"  Using learning rate: {CONFIG.phase2_lr:.1e}")
 
+    # Training loop with early stopping
     best_val_ppl = float('inf')
     best_model_state = None
     patience_counter = 0
@@ -485,14 +571,13 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
             CONFIG.vocab_size, device, CONFIG.phase1_layers
         )
 
-        # Evaluate with EASE's built-in Early Exit evaluation
-        # Create temporary trainer with Early Exit config
+        # Evaluate with EASE's Early Exit
         eval_config = TrainingConfig(
             layer_weights={i: 0 for i in range(1, CONFIG.phase2_layers + 1)},
             routing_threshold=confidence_threshold,
             exit_layer=CONFIG.phase1_layers
         )
-        eval_config.layer_weights[CONFIG.phase2_layers] = 1.0  # Set final layer weight
+        eval_config.layer_weights[CONFIG.phase2_layers] = 1.0
 
         eval_trainer = Trainer(eval_config, vocab_size=CONFIG.vocab_size, device=device)
         val_stats = eval_trainer.evaluate(model_extended, val_loader)
@@ -513,7 +598,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
               f"Val Acc: {val_acc*100:.2f}% | "
               f"Hard PPL: {hard_ppl:.2f}")
 
-        # Early stopping based on validation PPL
+        # Early stopping
         if val_ppl < best_val_ppl:
             best_val_ppl = val_ppl
             best_model_state = {k: v.cpu().clone() for k, v in model_extended.state_dict().items()}
@@ -544,23 +629,24 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print("\nPhase 2 Results:")
     print(f"  Best Val PPL: {best_val_ppl:.2f}")
     print(f"  Best Hard PPL: {phase2_hard_ppl:.2f}")
-    print(f"  Hard PPL Improvement: {phase1_hard_ppl - phase2_hard_ppl:+.2f} ({(phase1_hard_ppl - phase2_hard_ppl) / phase1_hard_ppl * 100:+.1f}%)")
+    print(f"  Hard PPL Improvement: {phase1_hard_ppl - phase2_hard_ppl:+.2f} "
+          f"({(phase1_hard_ppl - phase2_hard_ppl) / phase1_hard_ppl * 100:+.1f}%)")
     print(f"  Time: {phase2_time:.2f}s")
 
-    # ========================================
-    # Final Evaluation (Two-Stage Inference with EASE)
-    # ========================================
+    # ==========================================================================
+    # Final Evaluation: Two-Stage Inference with EASE
+    # ==========================================================================
     print(f"\n{'='*60}")
     print("Final Evaluation (Two-Stage Inference)")
     print(f"{'='*60}\n")
 
-    # Use EASE framework's built-in Early Exit evaluation
+    # Use EASE's built-in Early Exit evaluation
     final_config = TrainingConfig(
         layer_weights={i: 0 for i in range(1, CONFIG.phase2_layers + 1)},
         routing_threshold=confidence_threshold,
         exit_layer=CONFIG.phase1_layers
     )
-    final_config.layer_weights[CONFIG.phase2_layers] = 1.0  # Set final layer weight
+    final_config.layer_weights[CONFIG.phase2_layers] = 1.0
 
     final_trainer = Trainer(final_config, vocab_size=CONFIG.vocab_size, device=device)
     stats = final_trainer.evaluate(model_extended, val_loader)
@@ -571,7 +657,9 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print(f"  Deep ratio (Layer 4): {(1-stats['shallow_ratio'])*100:.1f}%")
     print(f"  Compute cost: {stats['compute_cost']:.2%} of full model")
 
-    # Compare with baseline
+    # ==========================================================================
+    # Summary Comparison
+    # ==========================================================================
     print(f"\n{'='*60}")
     print("Comparison")
     print(f"{'='*60}")
@@ -584,7 +672,8 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print("\nHard Examples Performance:")
     print(f"  Phase 1 Hard PPL:        {phase1_hard_ppl:.2f}")
     print(f"  Phase 2 Hard PPL:        {phase2_hard_ppl:.2f}")
-    print(f"  Hard PPL Improvement:    {phase1_hard_ppl - phase2_hard_ppl:+.2f} ({(phase1_hard_ppl - phase2_hard_ppl) / phase1_hard_ppl * 100:+.1f}%)")
+    print(f"  Hard PPL Improvement:    {phase1_hard_ppl - phase2_hard_ppl:+.2f} "
+          f"({(phase1_hard_ppl - phase2_hard_ppl) / phase1_hard_ppl * 100:+.1f}%)")
 
     print("\nEfficiency:")
     print(f"  Shallow ratio (Layer 2): {stats['shallow_ratio']*100:.1f}%")
@@ -608,7 +697,12 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     }
 
 
+# ==============================================================================
+# Main Entry Point
+# ==============================================================================
+
 def main():
+    """Run Hard Example Mining experiment."""
     print("="*60)
     print("Hard Example Mining + Two-Stage Inference")
     print("="*60)
@@ -625,7 +719,7 @@ def main():
 
     device = get_device()
 
-    # Run experiment (Standard Transformer with final layer loss only)
+    # Run experiment with Standard Transformer
     run_experiment(
         "Standard Transformer",
         StandardTransformer,
