@@ -64,7 +64,7 @@ class Config:
     phase2_samples: int = 10000
     phase2_batch: int = 64
     phase2_epochs: int = 50
-    phase2_patience: int = 3  # More patience for fine-tuning new layer
+    phase2_patience: int = 1
 
 CONFIG = Config()
 
