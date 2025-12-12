@@ -182,16 +182,16 @@ class Trainer:
         for x, y in val_batches:
             x, y = x.to(self.device), y.to(self.device)
             output = model(x)
-            loss = F.cross_entropy(output.view(-1, self.vocab_size), y.view(-1))
+            loss = F.cross_entropy(output.view(-1, self.vocab_size), y.view(-1), reduction='sum')
             preds = output.argmax(dim=-1)
 
             total_loss += loss.item()
             total_correct += (preds == y).sum().item()
             total_tokens += y.numel()
 
-        n = len(val_batches)
+        avg_loss = total_loss / total_tokens
         return {
-            'ppl': float(np.exp(total_loss / n)),
+            'ppl': float(np.exp(avg_loss)),
             'acc': total_correct / total_tokens,
             'shallow_ratio': 0.0,
             'compute_cost': 1.0,
@@ -219,7 +219,7 @@ class Trainer:
             mask = (confidence >= threshold).unsqueeze(-1)
             routed_logits = torch.where(mask, shallow_logits, deep_logits)
 
-            loss = F.cross_entropy(routed_logits.view(-1, self.vocab_size), y.view(-1))
+            loss = F.cross_entropy(routed_logits.view(-1, self.vocab_size), y.view(-1), reduction='sum')
             preds = routed_logits.argmax(dim=-1)
 
             total_loss += loss.item()
@@ -236,14 +236,14 @@ class Trainer:
             compute = (shallow_count * exit_layer + deep_count * num_layers) / (total_count * num_layers)
             total_compute += compute
 
-        n = len(val_batches)
         total_all_tokens = sum(x.shape[0] * x.shape[1] for x, _ in val_batches)
+        avg_loss = total_loss / total_tokens
 
         return {
-            'ppl': float(np.exp(total_loss / n)),
+            'ppl': float(np.exp(avg_loss)),
             'acc': total_correct / total_tokens,
             'shallow_ratio': total_shallow / total_all_tokens,
-            'compute_cost': total_compute / n,
+            'compute_cost': total_compute / len(val_batches),
         }
 
     def train_epoch(self, model: nn.Module, train_batches: List[Tuple[torch.Tensor, torch.Tensor]],
