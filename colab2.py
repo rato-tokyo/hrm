@@ -298,8 +298,8 @@ def run_experiment(
     print(f"  Patience: {CONFIG.ashem.phase2_patience}")
     print(f"  Max epochs: {CONFIG.phase2_epochs}")
 
-    # Training loop with early stopping (based on Hard PPL)
-    best_hard_ppl = float('inf')
+    # Training loop with early stopping (based on Val PPL)
+    best_val_ppl = float('inf')
     best_model_state = None
     patience_counter = 0
 
@@ -338,12 +338,12 @@ def run_experiment(
               f"Val Acc: {val_acc*100:.2f}% | "
               f"Hard PPL: {hard_ppl:.2f}")
 
-        # Early stopping based on Hard PPL (ASHEM's primary metric)
-        if hard_ppl < best_hard_ppl:
-            best_hard_ppl = hard_ppl
+        # Early stopping based on Val PPL
+        if val_ppl < best_val_ppl:
+            best_val_ppl = val_ppl
             best_model_state = {k: v.cpu().clone() for k, v in model_extended.state_dict().items()}
             patience_counter = 0
-            print(f"  → New best (hard_ppl: {hard_ppl:.2f})")
+            print(f"  → New best (val_ppl: {val_ppl:.2f})")
         else:
             patience_counter += 1
             print(f"  → No improvement ({patience_counter}/{CONFIG.ashem.phase2_patience})")
