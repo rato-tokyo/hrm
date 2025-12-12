@@ -2,13 +2,18 @@
 
 ## Project Overview
 
-**LASH: Layered Adaptive Supervision Hierarchy**
+**LEGO: Layered Ensemble with Gradual Optimization**
 
-層を組み合わせる柔軟なフレームワーク。2つのコアオプションで全てを制御。
+レゴブロックのようにStage（層グループ）を組み合わせる柔軟な訓練アーキテクチャ。
 
-**ASHEM (Adaptive Supervision via Hard Example Mining)**: Hard examplesに特化した2-Stage訓練戦略（実装完成、動作確認済み、詳細は[docs/ASHEM_STAGE_SPECIFICATION.md](docs/ASHEM_STAGE_SPECIFICATION.md)参照）。
+**コア技術**:
+- **Stage-based Training**: 層をStageというブロックに分割し、柔軟に組み合わせる
+- **ASHEM (Adaptive Supervision via Hard Example Mining)**: Hard examplesに特化した2-Stage訓練戦略
+- **Early Exit**: 推論時の計算効率化
 
-**Staged Deep Supervision (SDS)**: ASHEMをN-Stageに拡張する一般化概念（概念のみ、実装未完成）。
+**実装状況**:
+- ✅ 2-Stage LEGO (ASHEM): 実装完成、動作確認済み ([docs/ASHEM_STAGE_SPECIFICATION.md](docs/ASHEM_STAGE_SPECIFICATION.md))
+- 🔄 N-Stage LEGO: 概念提案済み、実装予定
 
 ---
 
@@ -69,18 +74,18 @@ def collect_hard_examples(model, val_batches, threshold, device):
 
 ---
 
-## フレームワーク概要
+## LEGO アーキテクチャ概要
 
-### コアコンセプト: 層の柔軟な組み合わせ
+### コアコンセプト: レゴブロックのような組み合わせ
 
-**LASH**の2つのコアオプションで全てを制御：
+**LEGO**の2つのコアオプションで全てを制御：
 
 | オプション | 説明 | Reference |
 |-----------|------|-----------|
-| **stages** | どのStage（層グループ）で学習するか | - |
+| **stages** | どのStageブロックで学習するか | - |
 | **routing_threshold** | 推論時Early Exit閾値 | Teerapittayanon et al., 2016 |
 
-**重要**: StandardとDeep Supervisionは単なる設定パターンの違い。Stageベースで統一的に実現可能。
+**重要**: Standard, Deep Supervision, ASHEMは全てLEGOアーキテクチャの異なる組み合わせパターン。
 
 ### 設定例：柔軟な組み合わせ
 
@@ -155,11 +160,11 @@ config = TrainingConfig(
 
 ## コードモジュール構成
 
-### LASHフレームワーク (src/ease/)
+### LEGO フレームワーク (src/ease/)
 
 **コアモジュール**:
 - `models.py` - StandardTransformer, DeepSupervisionTransformer
-- `trainer.py` - TrainingConfig, Trainer (コア訓練フレームワーク)
+- `trainer.py` - StageConfig, TrainingConfig, Trainer (Stage-based訓練フレームワーク)
 - `ashem.py` - ASHEMConfig, ASHEM訓練戦略（Per-token filtering実装）
 - `modules/` - TransformerBlock, Attention, FFN, RMSNorm等
 
@@ -256,48 +261,48 @@ result = trainer.train_with_early_stopping(
 
 ---
 
-## 訓練戦略
+## LEGO 訓練戦略
 
-LASHフレームワークは3つの訓練戦略をサポート：
+LEGOアーキテクチャは3つの訓練戦略をサポート：
 
-### 1. Standard
-最終層のみで学習（従来のLLM訓練）= **1 stage**
+### 1. Standard LEGO
+最終層のみで学習（従来のLLM訓練）= **1つのStageブロック**
 ```python
 config = TrainingConfig(stages=[
-    StageConfig(layers=(3, 3), loss_weight=1.0)  # 最終層のみ
+    StageConfig(layers=(3, 3), loss_weight=1.0)  # 最終層のみの1ブロック
 ])
 ```
 
-### 2. Deep Supervision
-全層で均等に学習 = **全層をstageとして定義**
+### 2. Deep Supervision LEGO
+全層で均等に学習 = **全層を個別Stageブロックとして定義**
 ```python
 config = TrainingConfig(stages=[
-    StageConfig(layers=(1, 1), loss_weight=0.33),
-    StageConfig(layers=(2, 2), loss_weight=0.33),
-    StageConfig(layers=(3, 3), loss_weight=0.33),
+    StageConfig(layers=(1, 1), loss_weight=0.33),  # ブロック1
+    StageConfig(layers=(2, 2), loss_weight=0.33),  # ブロック2
+    StageConfig(layers=(3, 3), loss_weight=0.33),  # ブロック3
 ])
 ```
 
-### 3. ASHEM (Adaptive Supervision via Hard Example Mining)
-Hard examplesに特化した**2-Stage訓練戦略**
+### 3. ASHEM LEGO
+Hard examplesに特化した**2-Stageブロック訓練戦略**
 
 **新規性**: 両サーベイ論文（2024-2025）にEarly ExitとHard Example Miningの組み合わせに関する記述なし
 
 **訓練手順**:
-- **Stage 1 (Phase 1)**: 浅層モデル（2層）で全データ訓練 → Hard example識別
-- **Stage 2 (Phase 2)**: 深層モデル（4層）でHard examplesのみ訓練（Selective Layer Expansion）
-- **推論**: Two-stage routing（Early Exit）で計算効率化
+- **Stage 1 Block**: 浅層ブロック（Layer 1-2）で全データ訓練 → Hard example識別
+- **Stage 2 Block**: 深層ブロック（Layer 3-4）でHard examplesのみ訓練
+- **推論**: 2つのブロックを動的に切り替え（Early Exit）
 
-**Stageベースでの表現**:
+**LEGOブロックの組み合わせ**:
 ```python
-# Stage 1: Layer 1-2で学習
-# Stage 2: Layer 3-4で学習（Hard examplesのみ）
+# ブロック1: Layer 1-2（浅層）
+# ブロック2: Layer 3-4（深層、Hard examplesのみ）
 config = TrainingConfig(
     stages=[
-        StageConfig(layers=(1, 2), loss_weight=1.0),  # Stage 1
-        StageConfig(layers=(3, 4), loss_weight=1.0),  # Stage 2
+        StageConfig(layers=(1, 2), loss_weight=1.0),  # ブロック1
+        StageConfig(layers=(3, 4), loss_weight=1.0),  # ブロック2
     ],
-    routing_threshold=0.15,  # 推論時Early Exit
+    routing_threshold=0.15,  # 推論時ブロック切り替え閾値
     exit_layer=2
 )
 ```
