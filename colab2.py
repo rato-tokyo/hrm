@@ -4,9 +4,10 @@ Hard Example Mining + Two-Stage Inference Experiment
 Experiment Design:
 - Phase 1: Train 2-layer model + collect hard examples (low confidence)
 - Phase 2: Train additional 2 layers on hard examples only
-- Validation: Two-stage inference
-  - High confidence → use Layer 2 output
-  - Low confidence → process through Layer 3-4
+- Validation: Two-stage inference using EASE framework's Early Exit
+
+Key Improvement: Uses EASE's built-in Early Exit functionality instead of
+manual implementation for cleaner, more maintainable code.
 """
 
 import sys
@@ -23,6 +24,7 @@ from ease import (
     StandardTransformer,
     DeepSupervisionTransformer,
     Trainer,
+    TrainingConfig,
     create_standard_config,
 )
 
@@ -71,13 +73,26 @@ class Config:
     phase2_patience: int = 3  # Higher patience for randomly initialized layers
     phase2_lr: float = 1e-4  # Lower LR for fine-tuning
 
+
 CONFIG = Config()
 
 
-def create_dataloaders(num_samples: int, batch_size: int, seq_len: int):
-    """Create train and validation dataloaders."""
-    train_loader, val_loader = create_dataloaders_from_colab(num_samples, batch_size, seq_len)
-    return train_loader, val_loader
+def compute_confidence(model: nn.Module, hidden_state: torch.Tensor) -> torch.Tensor:
+    """
+    Compute confidence (max probability) from hidden state.
+
+    Centralized confidence computation to avoid duplication.
+
+    Args:
+        model: Model with output_head
+        hidden_state: Hidden state tensor (batch_size, seq_len, dim)
+
+    Returns:
+        Confidence values (batch_size, seq_len)
+    """
+    logits = model.output_head(hidden_state)
+    probs = F.softmax(logits, dim=-1)
+    return probs.max(dim=-1).values
 
 
 def compute_confidence_threshold(
@@ -105,16 +120,13 @@ def compute_confidence_threshold(
         for x, y in val_batches:
             x = x.to(device)
 
-            # Get Layer 2 output
+            # Get output from all layers
             h = model.embedding(x)
-            for i in range(model.num_layers):
-                h = model.layers[i](h)
+            for layer in model.layers:
+                h = layer(h)
 
-            # Compute confidence
-            logits = model.output_head(h)
-            probs = F.softmax(logits, dim=-1)
-            confidence = probs.max(dim=-1).values
-
+            # Compute confidence using centralized function
+            confidence = compute_confidence(model, h)
             all_confidences.append(confidence.view(-1))
 
     # Concatenate all confidences
@@ -154,22 +166,19 @@ def collect_hard_examples(
         for x, y in val_batches:
             x, y = x.to(device), y.to(device)
 
-            # Get Layer 2 output
+            # Get output from all layers
             h = model.embedding(x)
-            for i in range(model.num_layers):
-                h = model.layers[i](h)
+            for layer in model.layers:
+                h = layer(h)
 
-            # Compute output and confidence
-            logits = model.output_head(h)
-            probs = F.softmax(logits, dim=-1)
-            confidence, preds = probs.max(dim=-1)
+            # Compute confidence using centralized function
+            confidence = compute_confidence(model, h)
 
             # Collect low-confidence samples
             mask = confidence < threshold
 
             if mask.any():
                 # Flatten batch and sequence dimensions
-                batch_size, seq_len = x.shape
                 x_flat = x.view(-1)
                 h_flat = h.view(-1, h.shape[-1])
                 y_flat = y.view(-1)
@@ -223,7 +232,20 @@ def train_upper_layers(
     device: str,
     num_lower_layers: int = 2
 ) -> float:
-    """Train upper layers (3-4) on hard examples."""
+    """
+    Train upper layers (3-4) on hard examples.
+
+    Args:
+        model: Extended model with upper layers
+        hard_batches: Batches of hard examples (hidden states, targets)
+        optimizer: Optimizer for upper layers
+        vocab_size: Vocabulary size for loss computation
+        device: Device to use
+        num_lower_layers: Number of lower layers (already trained)
+
+    Returns:
+        Average training loss
+    """
     model.train()
     total_loss = 0.0
 
@@ -250,78 +272,6 @@ def train_upper_layers(
     return total_loss / len(hard_batches)
 
 
-def evaluate_two_stage(
-    model: nn.Module,
-    val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-    threshold: float,
-    vocab_size: int,
-    device: str,
-    num_lower_layers: int = 2
-) -> Dict[str, float]:
-    """
-    Two-stage inference evaluation.
-
-    Stage 1: Use Layer 2 output if confidence >= threshold
-    Stage 2: Use Layer 4 output if confidence < threshold
-    """
-    model.eval()
-
-    total_correct = 0
-    total_tokens = 0
-    total_shallow = 0
-    total_deep = 0
-
-    with torch.no_grad():
-        for x, y in val_batches:
-            x, y = x.to(device), y.to(device)
-            batch_size, seq_len = x.shape
-
-            # Stage 1: Process through lower layers (1-2)
-            h = model.embedding(x)
-            for i in range(num_lower_layers):
-                h = model.layers[i](h)
-
-            # Compute confidence
-            logits_shallow = model.output_head(h)
-            probs = F.softmax(logits_shallow, dim=-1)
-            confidence, preds_shallow = probs.max(dim=-1)
-
-            # Stage 2: Process low-confidence samples through upper layers (3-4)
-            mask_deep = confidence < threshold
-
-            if mask_deep.any():
-                h_deep = h.clone()
-                for i in range(num_lower_layers, model.num_layers):
-                    h_deep = model.layers[i](h_deep)
-                logits_deep = model.output_head(h_deep)
-                preds_deep = logits_deep.argmax(dim=-1)
-
-                # Combine predictions
-                preds = torch.where(mask_deep, preds_deep, preds_shallow)
-            else:
-                preds = preds_shallow
-
-            # Compute accuracy
-            correct = int((preds == y).sum().item())
-            total_correct += correct
-            total_tokens += y.numel()
-
-            # Count shallow/deep routing
-            total_shallow += int((~mask_deep).sum().item())
-            total_deep += int(mask_deep.sum().item())
-
-    accuracy = total_correct / total_tokens
-    shallow_ratio = total_shallow / total_tokens
-    compute_cost = (total_shallow * num_lower_layers + total_deep * model.num_layers) / (total_tokens * model.num_layers)
-
-    return {
-        'accuracy': accuracy,
-        'shallow_ratio': shallow_ratio,
-        'deep_ratio': 1 - shallow_ratio,
-        'compute_cost': compute_cost
-    }
-
-
 def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     """Run hard example mining experiment."""
     print(f"\n{'='*60}")
@@ -335,7 +285,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print(f"{'='*60}")
 
     set_seed(42)
-    train_loader, val_loader = create_dataloaders(
+    train_loader, val_loader = create_dataloaders_from_colab(
         CONFIG.phase1_samples, CONFIG.phase1_batch, CONFIG.seq_len
     )
 
@@ -412,7 +362,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print(f"{'='*60}\n")
 
     # Create 4-layer model with Early Exit support
-    # Always use DeepSupervisionTransformer for Phase 2 (two-stage inference)
+    # Use DeepSupervisionTransformer for Phase 2 (supports Early Exit)
     model_extended = DeepSupervisionTransformer(
         vocab_size=CONFIG.vocab_size,
         dim=CONFIG.dim,
@@ -422,7 +372,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
         routing_threshold=confidence_threshold  # Use auto-computed threshold
     ).to(device)
 
-    # Copy lower layers (1-2)
+    # Copy lower layers (1-2) weights from Phase 1 model
     model_extended.embedding.load_state_dict(model.embedding.state_dict())
     for i in range(CONFIG.phase1_layers):
         model_extended.layers[i].load_state_dict(model.layers[i].state_dict())
@@ -431,7 +381,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print("✓ Copied weights from 2-layer model")
     print("✓ Layers 3-4 randomly initialized")
 
-    # Freeze lower layers
+    # Freeze lower layers (1-2)
     for param in model_extended.embedding.parameters():
         param.requires_grad = False
     for i in range(CONFIG.phase1_layers):
@@ -467,13 +417,19 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
             CONFIG.vocab_size, device, CONFIG.phase1_layers
         )
 
-        # Evaluate on validation set with two-stage inference
-        val_stats = evaluate_two_stage(
-            model_extended, val_loader, confidence_threshold,
-            CONFIG.vocab_size, device, CONFIG.phase1_layers
+        # Evaluate with EASE's built-in Early Exit evaluation
+        # Create temporary trainer with Early Exit config
+        eval_config = TrainingConfig(
+            layer_weights={i: 0 for i in range(1, CONFIG.phase2_layers + 1)},
+            routing_threshold=confidence_threshold,
+            exit_layer=CONFIG.phase1_layers
         )
+        eval_config.layer_weights[CONFIG.phase2_layers] = 1.0  # Set final layer weight
 
-        val_acc = val_stats['accuracy']
+        eval_trainer = Trainer(eval_config, vocab_size=CONFIG.vocab_size, device=device)
+        val_stats = eval_trainer.evaluate(model_extended, val_loader)
+
+        val_acc = val_stats['acc']
         train_ppl = torch.exp(torch.tensor(train_loss)).item()
 
         print(f"Epoch {epoch+1}/{CONFIG.phase2_epochs} - "
@@ -507,21 +463,27 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print(f"  Time: {phase2_time:.2f}s")
 
     # ========================================
-    # Final Evaluation (Two-Stage Inference)
+    # Final Evaluation (Two-Stage Inference with EASE)
     # ========================================
     print(f"\n{'='*60}")
     print("Final Evaluation (Two-Stage Inference)")
     print(f"{'='*60}\n")
 
-    stats = evaluate_two_stage(
-        model_extended, val_loader, confidence_threshold,
-        CONFIG.vocab_size, device, CONFIG.phase1_layers
+    # Use EASE framework's built-in Early Exit evaluation
+    final_config = TrainingConfig(
+        layer_weights={i: 0 for i in range(1, CONFIG.phase2_layers + 1)},
+        routing_threshold=confidence_threshold,
+        exit_layer=CONFIG.phase1_layers
     )
+    final_config.layer_weights[CONFIG.phase2_layers] = 1.0  # Set final layer weight
+
+    final_trainer = Trainer(final_config, vocab_size=CONFIG.vocab_size, device=device)
+    stats = final_trainer.evaluate(model_extended, val_loader)
 
     print("Results:")
-    print(f"  Accuracy: {stats['accuracy']*100:.2f}%")
+    print(f"  Accuracy: {stats['acc']*100:.2f}%")
     print(f"  Shallow ratio (Layer 2): {stats['shallow_ratio']*100:.1f}%")
-    print(f"  Deep ratio (Layer 4): {stats['deep_ratio']*100:.1f}%")
+    print(f"  Deep ratio (Layer 4): {(1-stats['shallow_ratio'])*100:.1f}%")
     print(f"  Compute cost: {stats['compute_cost']:.2%} of full model")
 
     # Compare with baseline
@@ -529,8 +491,8 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print("Comparison")
     print(f"{'='*60}")
     print(f"Phase 1 (2-layer only):  {phase1_acc:.2f}%")
-    print(f"Two-stage inference:     {stats['accuracy']*100:.2f}%")
-    print(f"Improvement:             {stats['accuracy']*100 - phase1_acc:+.2f}%")
+    print(f"Two-stage inference:     {stats['acc']*100:.2f}%")
+    print(f"Improvement:             {stats['acc']*100 - phase1_acc:+.2f}%")
     print(f"Compute cost:            {stats['compute_cost']:.2%}")
 
     return {
@@ -539,7 +501,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
         'phase1_time': phase1_time,
         'num_hard_examples': num_hard,
         'phase2_time': phase2_time,
-        'two_stage_acc': stats['accuracy'] * 100,
+        'two_stage_acc': stats['acc'] * 100,
         'shallow_ratio': stats['shallow_ratio'],
         'compute_cost': stats['compute_cost']
     }
@@ -557,7 +519,7 @@ def main():
     print(f"  Phase 1: Train {CONFIG.phase1_layers}-layer model")
     print(f"  Compute: Auto-adjust threshold to collect {CONFIG.hard_example_ratio*100:.0f}% hard examples")
     print(f"  Phase 2: Add {CONFIG.phase2_layers - CONFIG.phase1_layers} layers → Train on hard examples")
-    print("  Eval: Two-stage inference (Layer 2 or Layer 4)")
+    print("  Eval: Two-stage inference (Layer 2 or Layer 4) using EASE's Early Exit")
     print()
 
     device = get_device()
