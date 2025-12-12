@@ -193,7 +193,7 @@ def run_experiment(
     print(f"{'='*60}\n")
 
     confidence_threshold = compute_confidence_threshold(
-        model, val_loader, CONFIG.ashem.hard_example_ratio, device, CONFIG.ashem.phase1_layers
+        model, val_loader, CONFIG.ashem.hard_example_ratio, device
     )
 
     print(f"✓ Computed confidence threshold: {confidence_threshold:.4f}")
@@ -207,7 +207,7 @@ def run_experiment(
     print(f"{'='*60}\n")
 
     hard_examples = collect_hard_examples(
-        model, val_loader, confidence_threshold, device, CONFIG.ashem.phase1_layers
+        model, val_loader, confidence_threshold, device
     )
 
     num_hard = len(hard_examples['targets'])
