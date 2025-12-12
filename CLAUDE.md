@@ -92,14 +92,14 @@ hrm/
 │           └── transformer.py   # TransformerBlock
 ├── experiments/
 │   ├── __init__.py
-│   └── utils.py                 # データ準備、シード設定
+│   └── utils.py                 # データローダー、実験ユーティリティ
 ├── docs/
+│   ├── PAPER_DIRECTION.md       # 論文の方向性
 │   └── experiments/             # 実験結果ドキュメント
 │       ├── hard_example_mining.md
 │       └── progressive_layer_training.md
-├── colab1.py                    # Progressive Layer Training実験
-├── colab2.py                    # ASHEM実験
-└── run_experiments.py           # 実験実行スクリプト
+├── colab2.py                    # ASHEM実験（メインスクリプト）
+└── run_experiments.py           # 基本実験スクリプト
 ```
 
 ---

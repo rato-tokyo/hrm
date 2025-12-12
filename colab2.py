@@ -42,7 +42,8 @@ from ease import (
     collect_hard_examples,
 )
 
-from colab import create_dataloaders as create_dataloaders_from_colab
+sys.path.insert(0, 'experiments')
+from utils import create_wikitext_dataloaders
 
 
 # ==============================================================================
@@ -277,9 +278,10 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str) -> Dict:
     print(f"{'='*60}")
 
     set_seed(42)
-    train_loader, val_loader = create_dataloaders_from_colab(
+    train_loader, val_loader, vocab_size = create_wikitext_dataloaders(
         CONFIG.phase1_samples, CONFIG.phase1_batch, CONFIG.seq_len
     )
+    CONFIG.vocab_size = vocab_size  # Update vocab size from data
 
     # Create shallow model
     model = ModelClass(
