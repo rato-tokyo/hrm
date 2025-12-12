@@ -77,50 +77,58 @@ def collect_hard_examples(model, val_batches, threshold, device):
 
 | オプション | 説明 | Reference |
 |-----------|------|-----------|
-| **layer_weights** | 層ごとの損失重み（どの層で学習するか） | - |
+| **stages** | どのStage（層グループ）で学習するか | - |
 | **routing_threshold** | 推論時Early Exit閾値 | Teerapittayanon et al., 2016 |
 
-**重要**: StandardとDeep Supervisionは単なる設定パターンの違い。同じフレームワークで実現可能。
+**重要**: StandardとDeep Supervisionは単なる設定パターンの違い。Stageベースで統一的に実現可能。
 
 ### 設定例：柔軟な組み合わせ
 
 #### パターン1: Standard Transformer（従来型LLM）
 ```python
+from ease import TrainingConfig, StageConfig
+
 config = TrainingConfig(
-    layer_weights={1: 0, 2: 0, 3: 1}  # 最終層のみ
+    stages=[
+        StageConfig(layers=(3, 3), loss_weight=1.0)  # 最終層のみ（1 stage）
+    ]
 )
 ```
 
 #### パターン2: Deep Supervision（全層均等）
 ```python
 config = TrainingConfig(
-    layer_weights={1: 0.33, 2: 0.33, 3: 0.33}  # 全層で学習
+    stages=[
+        StageConfig(layers=(1, 1), loss_weight=0.33),  # Layer 1
+        StageConfig(layers=(2, 2), loss_weight=0.33),  # Layer 2
+        StageConfig(layers=(3, 3), loss_weight=0.33),  # Layer 3
+    ]
 )
 ```
 
-#### パターン3: Asymmetric + Early Exit（柔軟な設定）
+#### パターン3: ASHEM（2-Stage訓練）
 ```python
-# 6層モデル、Layer 3と6でのみ損失計算 + Early Exit
+# Stage 1: Layer 1-2, Stage 2: Layer 3-4
 config = TrainingConfig(
-    layer_weights={
-        1: 0,    # 学習しない
-        2: 0,    # 学習しない
-        3: 0.5,  # 学習する（Early Exit候補層）
-        4: 0,    # 学習しない
-        5: 0,    # 学習しない
-        6: 0.5   # 学習する（最終層）
-    },
-    routing_threshold=0.95,  # 推論時、Layer 3で95%信頼度あれば終了
-    exit_layer=3
+    stages=[
+        StageConfig(layers=(1, 2), loss_weight=1.0),  # Stage 1: 浅層
+        StageConfig(layers=(3, 4), loss_weight=1.0),  # Stage 2: 深層
+    ],
+    routing_threshold=0.95,  # 推論時Early Exit
+    exit_layer=2
 )
 ```
 
-#### パターン4: 完全カスタム（非対称 + Early Exit）
+#### パターン4: カスタム（非対称重み）
 ```python
+# Layer 1-2に重点、Layer 3は軽め
 config = TrainingConfig(
-    layer_weights={1: 0.7, 2: 0, 3: 0.3, 4: 0, 5: 0, 6: 0},  # Layer 1と3のみ
-    routing_threshold=0.9,  # Layer 1で90%信頼度あれば終了
-    exit_layer=1
+    stages=[
+        StageConfig(layers=(1, 2), loss_weight=0.7),
+        StageConfig(layers=(3, 3), loss_weight=0.3),
+    ],
+    routing_threshold=0.9,
+    exit_layer=2
 )
 ```
 
@@ -171,15 +179,19 @@ config = TrainingConfig(
 import sys
 sys.path.insert(0, 'src')
 
-from ease import DeepSupervisionTransformer, Trainer, TrainingConfig
+from ease import DeepSupervisionTransformer, Trainer, TrainingConfig, StageConfig
 
 # モデル作成
 model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
 
 # 設定: LASHの2つのコアオプションで全てを制御
 config = TrainingConfig(
-    layer_weights={1: 0.7, 2: 0, 3: 0.3},  # 層ごとの損失重み
-    routing_threshold=0.95,                 # Early Exit閾値
+    stages=[
+        StageConfig(layers=(1, 2), loss_weight=0.7),  # Stage 1: Layer 1-2
+        StageConfig(layers=(3, 3), loss_weight=0.3),  # Stage 2: Layer 3
+    ],
+    routing_threshold=0.95,  # Early Exit閾値
+    exit_layer=2
 )
 
 # 訓練
@@ -198,11 +210,11 @@ from ease import create_standard_config, create_deep_supervision_config
 
 # Standard LLM設定（最終層のみ）
 config = create_standard_config(num_layers=3)
-# → layer_weights={1: 0, 2: 0, 3: 1}
+# → stages=[StageConfig(layers=(3, 3), loss_weight=1.0)]
 
 # Deep Supervision設定（全層均等）
 config = create_deep_supervision_config(num_layers=3)
-# → layer_weights={1: 0.33, 2: 0.33, 3: 0.33}
+# → stages=[StageConfig(layers=(1, 1), 0.33), StageConfig(layers=(2, 2), 0.33), StageConfig(layers=(3, 3), 0.33)]
 ```
 
 **注意**: これらはあくまでプリセット。`TrainingConfig`で自由にカスタマイズ可能。
@@ -249,29 +261,49 @@ result = trainer.train_with_early_stopping(
 LASHフレームワークは3つの訓練戦略をサポート：
 
 ### 1. Standard
-最終層のみで学習（従来のLLM訓練）
+最終層のみで学習（従来のLLM訓練）= **1 stage**
 ```python
-config = TrainingConfig(layer_weights={1: 0, 2: 0, 3: 1})
+config = TrainingConfig(stages=[
+    StageConfig(layers=(3, 3), loss_weight=1.0)  # 最終層のみ
+])
 ```
 
 ### 2. Deep Supervision
-全層で均等に学習
+全層で均等に学習 = **全層をstageとして定義**
 ```python
-config = TrainingConfig(layer_weights={1: 0.33, 2: 0.33, 3: 0.33})
+config = TrainingConfig(stages=[
+    StageConfig(layers=(1, 1), loss_weight=0.33),
+    StageConfig(layers=(2, 2), loss_weight=0.33),
+    StageConfig(layers=(3, 3), loss_weight=0.33),
+])
 ```
 
 ### 3. ASHEM (Adaptive Supervision via Hard Example Mining)
-Hard examplesに特化した段階的訓練戦略
+Hard examplesに特化した**2-Stage訓練戦略**
 
 **新規性**: 両サーベイ論文（2024-2025）にEarly ExitとHard Example Miningの組み合わせに関する記述なし
 
 **訓練手順**:
-- **Phase 1**: 浅層モデル（2層）で全データ訓練 → Hard example識別
-- **Phase 2**: 深層モデル（4層）でHard examplesのみ訓練（Selective Layer Expansion）
+- **Stage 1 (Phase 1)**: 浅層モデル（2層）で全データ訓練 → Hard example識別
+- **Stage 2 (Phase 2)**: 深層モデル（4層）でHard examplesのみ訓練（Selective Layer Expansion）
 - **推論**: Two-stage routing（Early Exit）で計算効率化
 
-**実験結果** (WikiText-2, 10K samples, commit fc9b140):
-- Hard PPL: **78%改善** (2763 → 668)
+**Stageベースでの表現**:
+```python
+# Stage 1: Layer 1-2で学習
+# Stage 2: Layer 3-4で学習（Hard examplesのみ）
+config = TrainingConfig(
+    stages=[
+        StageConfig(layers=(1, 2), loss_weight=1.0),  # Stage 1
+        StageConfig(layers=(3, 4), loss_weight=1.0),  # Stage 2
+    ],
+    routing_threshold=0.15,  # 推論時Early Exit
+    exit_layer=2
+)
+```
+
+**実験結果** (WikiText-2, 10K samples):
+- Hard PPL: **75.8%改善** (2763 → 668)
 - 計算コスト: **36%削減** (64.82% of full model)
 - Overall PPL: **15.9%改善** (986 → 830)
 
@@ -280,23 +312,13 @@ Hard examplesに特化した段階的訓練戦略
 from ease import ASHEMConfig
 
 ashem_config = ASHEMConfig(
-    phase1_layers=2,
-    hard_example_ratio=0.5,
-    phase2_layers=4,
+    phase1_layers=2,        # Stage 1の層数
+    hard_example_ratio=0.5, # Hard example収集率
+    phase2_layers=4,        # Stage 2の総層数
 )
 ```
 
 詳細: [docs/experiments/hard_example_mining.md](docs/experiments/hard_example_mining.md)
-
-### 4. Staged Deep Supervision (SDS) - 概念のみ
-
-**核心的洞察**: Deep SupervisionとASHEMを統一する時間軸フレームワーク
-
-```
-Deep Supervision = 1 stage, all layers, all data
-ASHEM = 2 stages, selective layer expansion, filtered data
-SDS = N stages, flexible configuration (一般化)
-```
 
 **ASHEM の詳細仕様**: [docs/ASHEM_STAGE_SPECIFICATION.md](docs/ASHEM_STAGE_SPECIFICATION.md)
 - Stage (ステージ) の正確な定義
