@@ -99,27 +99,43 @@ class Trainer:
         self.device = device
 
     def compute_loss(self, model: nn.Module, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Compute weighted loss across layers."""
+        """
+        Compute weighted loss across layers (optimized).
+
+        Optimization: Use fast path (forward()) when only final layer is needed.
+        Maintains full compatibility with all three options:
+        - layer_weights: Determines which layers to compute
+        - layer_lr_scales: Independent (handled in optimizer)
+        - routing_threshold: Independent (used in evaluation only)
+        """
+        # Determine which layers need loss computation
+        num_layers = model.num_layers if hasattr(model, 'num_layers') else len(model.layers)
+        active_layers = [(idx, weight) for idx, weight in self.config.layer_weights.items()
+                        if weight > 0 and idx <= num_layers]
+
+        # Fast path: Only final layer needed (Standard Transformer pattern)
+        if len(active_layers) == 1 and active_layers[0][0] == num_layers:
+            output = model(x)  # Use forward() instead of forward_all_layers()
+            weight = active_layers[0][1]
+            loss = F.cross_entropy(output.view(-1, self.vocab_size), y.view(-1))
+            return weight * loss if weight != 1.0 else loss
+
+        # Fallback: No active layers, use final layer
+        if not active_layers:
+            output = model(x)
+            return F.cross_entropy(output.view(-1, self.vocab_size), y.view(-1))
+
+        # General path: Multiple layers or non-final layer (Deep Supervision pattern)
         all_outputs = model.forward_all_layers(x)
-        num_layers = len(all_outputs)
-
         total_loss: torch.Tensor = torch.tensor(0.0, device=x.device)
-        active_weights = 0.0
 
-        for layer_idx, weight in self.config.layer_weights.items():
-            if weight > 0 and layer_idx <= num_layers:
-                output = all_outputs[layer_idx - 1]
-                layer_loss = F.cross_entropy(
-                    output.view(-1, self.vocab_size),
-                    y.view(-1)
-                )
-                total_loss = total_loss + weight * layer_loss
-                active_weights += weight
-
-        # Fallback to final layer if no weights
-        if active_weights == 0:
-            output = all_outputs[-1]
-            total_loss = F.cross_entropy(output.view(-1, self.vocab_size), y.view(-1))
+        for layer_idx, weight in active_layers:
+            output = all_outputs[layer_idx - 1]
+            layer_loss = F.cross_entropy(
+                output.view(-1, self.vocab_size),
+                y.view(-1)
+            )
+            total_loss = total_loss + weight * layer_loss
 
         return total_loss
 
