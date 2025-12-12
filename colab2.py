@@ -224,6 +224,59 @@ def create_hard_example_loader(
     return batches
 
 
+def evaluate_on_hard_examples(
+    model: nn.Module,
+    hard_examples: Dict[str, torch.Tensor],
+    vocab_size: int,
+    device: str,
+    batch_size: int = 64,
+    num_lower_layers: int = 2
+) -> float:
+    """
+    Evaluate model on hard examples only (measure PPL on hard examples).
+
+    Args:
+        model: Model to evaluate (can be 2-layer or 4-layer)
+        hard_examples: Dictionary with 'hidden_states' and 'targets'
+        vocab_size: Vocabulary size for loss computation
+        device: Device to use
+        batch_size: Batch size for evaluation
+        num_lower_layers: Number of lower layers (if 4-layer model, process through layers 3-4)
+
+    Returns:
+        Perplexity on hard examples
+    """
+    model.eval()
+    total_loss = 0.0
+    total_samples = 0
+
+    hidden_states = hard_examples['hidden_states']
+    targets = hard_examples['targets']
+    num_samples = len(targets)
+
+    with torch.no_grad():
+        for i in range(0, num_samples, batch_size):
+            # Get batch
+            h_batch = hidden_states[i:i + batch_size].unsqueeze(1).to(device)  # (batch_size, 1, dim)
+            y_batch = targets[i:i + batch_size].to(device)
+
+            # If 4-layer model, process through upper layers (3-4)
+            if hasattr(model, 'num_layers') and model.num_layers > num_lower_layers:
+                for layer_idx in range(num_lower_layers, model.num_layers):
+                    h_batch = model.layers[layer_idx](h_batch)
+
+            # Compute loss
+            logits = model.output_head(h_batch).squeeze(1)  # (batch_size, vocab_size)
+            loss = F.cross_entropy(logits, y_batch, reduction='sum')
+
+            total_loss += loss.item()
+            total_samples += len(y_batch)
+
+    avg_loss = total_loss / total_samples
+    ppl = torch.exp(torch.tensor(avg_loss)).item()
+    return ppl
+
+
 def train_upper_layers(
     model: nn.Module,
     hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
@@ -355,6 +408,21 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print(f"  Actual ratio: {num_hard / total_samples * 100:.1f}% (target: {CONFIG.hard_example_ratio*100:.0f}%)")
 
     # ========================================
+    # Evaluate Phase 1 on Hard Examples
+    # ========================================
+    print(f"\n{'='*60}")
+    print("Evaluating Phase 1 on Hard Examples")
+    print(f"{'='*60}\n")
+
+    phase1_hard_ppl = evaluate_on_hard_examples(
+        model, hard_examples, CONFIG.vocab_size, device,
+        batch_size=CONFIG.phase2_batch, num_lower_layers=CONFIG.phase1_layers
+    )
+
+    print(f"✓ Phase 1 Hard PPL: {phase1_hard_ppl:.2f}")
+    print(f"  (vs Overall Val PPL: {phase1_ppl:.2f})")
+
+    # ========================================
     # Phase 2: Extend to 4 layers + Train on hard examples
     # ========================================
     print(f"\n{'='*60}")
@@ -405,7 +473,7 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
 
     print(f"  Using learning rate: {CONFIG.phase2_lr:.1e}")
 
-    best_val_acc = 0.0
+    best_val_ppl = float('inf')
     best_model_state = None
     patience_counter = 0
 
@@ -430,18 +498,27 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
         val_stats = eval_trainer.evaluate(model_extended, val_loader)
 
         val_acc = val_stats['acc']
+        val_ppl = val_stats['ppl']
         train_ppl = torch.exp(torch.tensor(train_loss)).item()
+
+        # Evaluate on hard examples
+        hard_ppl = evaluate_on_hard_examples(
+            model_extended, hard_examples, CONFIG.vocab_size, device,
+            batch_size=CONFIG.phase2_batch, num_lower_layers=CONFIG.phase1_layers
+        )
 
         print(f"Epoch {epoch+1}/{CONFIG.phase2_epochs} - "
               f"Train PPL: {train_ppl:.4f} | "
-              f"Val Acc: {val_acc*100:.2f}%")
+              f"Val PPL: {val_ppl:.2f} | "
+              f"Val Acc: {val_acc*100:.2f}% | "
+              f"Hard PPL: {hard_ppl:.2f}")
 
-        # Early stopping based on validation accuracy
-        if val_acc > best_val_acc:
-            best_val_acc = val_acc
+        # Early stopping based on validation PPL
+        if val_ppl < best_val_ppl:
+            best_val_ppl = val_ppl
             best_model_state = {k: v.cpu().clone() for k, v in model_extended.state_dict().items()}
             patience_counter = 0
-            print(f"  → New best (val_acc: {val_acc*100:.2f}%)")
+            print(f"  → New best (val_ppl: {val_ppl:.2f})")
         else:
             patience_counter += 1
             print(f"  → No improvement ({patience_counter}/{CONFIG.phase2_patience})")
@@ -458,8 +535,16 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
         model_extended.load_state_dict({k: v.to(device) for k, v in best_model_state.items()})
         print("\nRestored best model from Phase 2")
 
+    # Evaluate best model on hard examples
+    phase2_hard_ppl = evaluate_on_hard_examples(
+        model_extended, hard_examples, CONFIG.vocab_size, device,
+        batch_size=CONFIG.phase2_batch, num_lower_layers=CONFIG.phase1_layers
+    )
+
     print("\nPhase 2 Results:")
-    print(f"  Best Val Acc: {best_val_acc*100:.2f}%")
+    print(f"  Best Val PPL: {best_val_ppl:.2f}")
+    print(f"  Best Hard PPL: {phase2_hard_ppl:.2f}")
+    print(f"  Hard PPL Improvement: {phase1_hard_ppl - phase2_hard_ppl:+.2f} ({(phase1_hard_ppl - phase2_hard_ppl) / phase1_hard_ppl * 100:+.1f}%)")
     print(f"  Time: {phase2_time:.2f}s")
 
     # ========================================
@@ -490,18 +575,34 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str):
     print(f"\n{'='*60}")
     print("Comparison")
     print(f"{'='*60}")
-    print(f"Phase 1 (2-layer only):  {phase1_acc:.2f}%")
-    print(f"Two-stage inference:     {stats['acc']*100:.2f}%")
-    print(f"Improvement:             {stats['acc']*100 - phase1_acc:+.2f}%")
-    print(f"Compute cost:            {stats['compute_cost']:.2%}")
+    print("\nOverall Performance:")
+    print(f"  Phase 1 (2-layer only):  Acc {phase1_acc:.2f}% | PPL {phase1_ppl:.2f}")
+    print(f"  Two-stage inference:     Acc {stats['acc']*100:.2f}% | PPL {stats['ppl']:.2f}")
+    print(f"  Accuracy change:         {stats['acc']*100 - phase1_acc:+.2f}%")
+    print(f"  PPL change:              {stats['ppl'] - phase1_ppl:+.2f}")
+
+    print("\nHard Examples Performance:")
+    print(f"  Phase 1 Hard PPL:        {phase1_hard_ppl:.2f}")
+    print(f"  Phase 2 Hard PPL:        {phase2_hard_ppl:.2f}")
+    print(f"  Hard PPL Improvement:    {phase1_hard_ppl - phase2_hard_ppl:+.2f} ({(phase1_hard_ppl - phase2_hard_ppl) / phase1_hard_ppl * 100:+.1f}%)")
+
+    print("\nEfficiency:")
+    print(f"  Shallow ratio (Layer 2): {stats['shallow_ratio']*100:.1f}%")
+    print(f"  Deep ratio (Layer 4):    {(1-stats['shallow_ratio'])*100:.1f}%")
+    print(f"  Compute cost:            {stats['compute_cost']:.2%} of full model")
 
     return {
         'model_name': model_name,
         'phase1_acc': phase1_acc,
+        'phase1_ppl': phase1_ppl,
+        'phase1_hard_ppl': phase1_hard_ppl,
         'phase1_time': phase1_time,
         'num_hard_examples': num_hard,
+        'phase2_hard_ppl': phase2_hard_ppl,
         'phase2_time': phase2_time,
         'two_stage_acc': stats['acc'] * 100,
+        'two_stage_ppl': stats['ppl'],
+        'hard_ppl_improvement': phase1_hard_ppl - phase2_hard_ppl,
         'shallow_ratio': stats['shallow_ratio'],
         'compute_cost': stats['compute_cost']
     }
