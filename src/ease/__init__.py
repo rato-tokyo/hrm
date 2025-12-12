@@ -58,6 +58,8 @@ from .trainer import (
     Trainer,
     create_standard_config,
     create_deep_supervision_config,
+)
+from .ashem import (
     ASHEMConfig,
     compute_confidence,
     compute_confidence_threshold,
