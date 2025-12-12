@@ -243,7 +243,8 @@ def main():
 
     NUM_SAMPLES_SMALL = 1000
     BATCH_SIZE_SMALL = 32
-    NUM_EPOCHS_SMALL = 5
+    NUM_EPOCHS_SMALL = 20  # Early Stoppingで自動終了
+    PATIENCE_SMALL = 3
 
     train_loader_small, val_loader_small = prepare_dataloaders(
         num_samples=NUM_SAMPLES_SMALL,
@@ -270,7 +271,9 @@ def main():
         val_loader=val_loader_small,
         num_epochs=NUM_EPOCHS_SMALL,
         base_lr=BASE_LR,
-        device=device
+        device=device,
+        use_early_stopping=True,
+        patience=PATIENCE_SMALL
     )
 
     # Deep Supervision Model
@@ -292,7 +295,9 @@ def main():
         val_loader=val_loader_small,
         num_epochs=NUM_EPOCHS_SMALL,
         base_lr=BASE_LR,
-        device=device
+        device=device,
+        use_early_stopping=True,
+        patience=PATIENCE_SMALL
     )
 
     # Phase 1結果可視化
@@ -308,7 +313,8 @@ def main():
 
     NUM_SAMPLES_MEDIUM = 10000
     BATCH_SIZE_MEDIUM = 64
-    NUM_EPOCHS_MEDIUM = 20
+    NUM_EPOCHS_MEDIUM = 50  # Early Stoppingで自動終了
+    PATIENCE_MEDIUM = 5
 
     train_loader_medium, val_loader_medium = prepare_dataloaders(
         num_samples=NUM_SAMPLES_MEDIUM,
@@ -334,7 +340,9 @@ def main():
         val_loader=val_loader_medium,
         num_epochs=NUM_EPOCHS_MEDIUM,
         base_lr=BASE_LR,
-        device=device
+        device=device,
+        use_early_stopping=True,
+        patience=PATIENCE_MEDIUM
     )
 
     # Deep Supervision Model
@@ -355,7 +363,9 @@ def main():
         val_loader=val_loader_medium,
         num_epochs=NUM_EPOCHS_MEDIUM,
         base_lr=BASE_LR,
-        device=device
+        device=device,
+        use_early_stopping=True,
+        patience=PATIENCE_MEDIUM
     )
 
     # Phase 2結果可視化
