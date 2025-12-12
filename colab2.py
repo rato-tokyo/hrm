@@ -265,8 +265,6 @@ def run_experiment(model_name: str, ModelClass, config_fn, device: str) -> Dict:
     print("  Layer 4: 100% LR (full updates)")
 
     # Configure training with layer-wise learning rates
-    from ease import TrainingConfig, Trainer
-
     phase2_config = TrainingConfig(
         layer_weights={1: 0, 2: 0, 3: 0, 4: 1},  # Final layer only for loss
         layer_lr_scales={
