@@ -357,6 +357,100 @@ if torch.cuda.is_available():
 
 ---
 
+## 論文投稿方針
+
+### 投稿先
+
+**確定**: arXiv（統一フレームワーク論文として投稿）
+
+### 論文タイトル案
+
+**メイン**: LASH: Layered Adaptive Supervision Hierarchy for Efficient Transformer Training
+
+**サブタイトル**: A Unified Framework Supporting Multiple Training Strategies
+
+### 新規性（Novelty）の主張
+
+#### 1. 統一フレームワークとしての新規性
+
+**既存研究の問題点**:
+- Deep Supervision、Discriminative Fine-Tuning、Early Exitは個別に提案された
+- これらを組み合わせるには別々の実装が必要
+- 柔軟な戦略カスタマイズが困難
+
+**LASHの貢献**:
+- 3つのコアオプション（`layer_weights`, `layer_lr_scales`, `routing_threshold`）で全ての戦略を統一的に実現
+- 単一フレームワークで4つ以上の訓練戦略をサポート
+- 無限の戦略カスタマイズが可能
+
+**Claim**: "LASH is the first unified framework that enables flexible combination of layer-wise supervision, discriminative learning rates, and early exit through a single configuration interface."
+
+#### 2. ASHEM訓練戦略の新規性
+
+**既存研究との差別化**:
+- HAM/HSM: セキュリティ分野のHard example mining（CV/NLP分野とは異なる）
+- PLD: Progressive layer addition（Hard example miningとの統合なし）
+
+**ASHEMの独自性**:
+- Hard Example Mining + Progressive Layering の統合
+- Two-Stage Inference（Early Exit）との組み合わせ
+- 言語モデリングへの適用（既存研究は主にCV分野）
+
+**Claim**: "ASHEM is the first training strategy that combines hard example mining with progressive layer addition and two-stage inference for efficient language model training."
+
+#### 3. 自動最適化の新規性
+
+**LASHの貢献**:
+- `layer_weights`を解析し、最適な実行パスを自動選択
+- 最終層のみの場合、8.4%の訓練速度向上
+- フレームワークの柔軟性を損なわない最適化
+
+**Claim**: "LASH automatically optimizes execution paths based on layer weight configuration, achieving 8.4% speedup while maintaining full flexibility."
+
+#### 4. 実験結果の新規性
+
+**WikiText-2での検証結果**:
+- Hard PPL: 78%改善（2763 → 668）
+- 計算コスト: 36%削減（64.82% of full model）
+- Overall PPL: 15.9%改善（986 → 830）
+
+**既存研究との差別化**:
+- Deep Supervision: 全層で計算コスト高
+- Early Exit: 訓練戦略は従来型のまま
+- ASHEM: 訓練と推論の両方を最適化
+
+### 論文構成案
+
+1. **Introduction**: 統一フレームワークの必要性
+2. **Related Work**: Deep Supervision, Discriminative FT, Early Exit, Hard Example Mining
+3. **LASH Framework**: 3つのコアオプションとアーキテクチャ
+4. **ASHEM Training Strategy**: Hard example miningを活用した新しい訓練戦略
+5. **Experiments**: WikiText-2/103でのベースライン比較
+6. **Analysis**: Ablation study, scalability, computational efficiency
+7. **Conclusion**: 統一フレームワークの意義と将来展望
+
+### 今後の実験計画
+
+#### Tier 1（必須実験）
+
+- [ ] WikiText-103での検証（スケーラビリティ）
+- [ ] ベースライン比較（Standard, Deep Supervision, Discriminative FT, Early Exit）
+- [ ] 中規模モデル（dim=128, layers=4→6）での検証
+
+#### Tier 2（強く推奨）
+
+- [ ] Ablation Study（ASHEMの各コンポーネント）
+- [ ] Threshold感度分析（0.7, 0.8, 0.9, 0.95, 0.99）
+- [ ] 計算効率分析（FLOPs, wall-clock time）
+
+#### Tier 3（可能であれば）
+
+- [ ] 実際のLLM（Llama等）での検証
+- [ ] 他のタスク（分類、要約等）への適用
+- [ ] 大規模データセット（C4, The Pile等）での検証
+
+---
+
 ## 今後のタスク
 
 - [ ] より大規模なモデルでの検証実験（dim=128, layers=6）
