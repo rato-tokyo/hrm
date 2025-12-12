@@ -4,7 +4,7 @@
 
 **LASH** (Layered Adaptive Supervision Hierarchy) は、統一的な学習フレームワークです。
 
-2つの基本モデルと3つのコアオプションで構成されています。
+2つの基本モデルと2つのコアオプションで構成されています。
 
 **注**: パッケージ名は現在`ease`ですが、将来的に`lash`へ移行予定です。
 
@@ -19,12 +19,11 @@
 
 ---
 
-## Options
+## Core Options
 
 | オプション | 説明 | Reference |
 |-----------|------|-----------|
 | `layer_weights` | 層ごとの損失重み | - |
-| `layer_lr_scales` | 層ごとの学習率 | Howard & Ruder, 2018 |
 | `routing_threshold` | 推論時Early Exit | Teerapittayanon et al., 2016 |
 
 ---
@@ -49,7 +48,6 @@ model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
 # 設定
 config = TrainingConfig(
     layer_weights={1: 0.7, 2: 0, 3: 0.3},  # 層ごとの損失重み
-    layer_lr_scales={1: 1.0, 2: 0.5, 3: 0.1},  # 層ごとの学習率
     routing_threshold=0.95,  # Early Exit閾値
 )
 

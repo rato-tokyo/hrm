@@ -1,11 +1,15 @@
 # Universal Framework の限界
 
+**⚠️ HISTORICAL DOCUMENT**: This document describes the older framework design. The current LASH framework (v0.2.0) has been simplified to **2 core options** (`layer_weights` and `routing_threshold`). `layer_lr_scales` has been removed from the core framework. See [CLAUDE.md](../../CLAUDE.md) for the latest specification.
+
+---
+
 ## 概要
 
 Universal Training Framework は多くのモデルを統一的に表現できますが、
 いくつかの構造的な制約があります。
 
-**Note**: v2.0 で Discriminative Fine-Tuning と Learning Rate Curriculum を実装しました。
+**Note**: This document describes historical experiments with layer-wise learning rates.
 
 ---
 
