@@ -311,11 +311,9 @@ def run_experiment(
             CONFIG.vocab_size, device, CONFIG.ashem.phase1_layers
         )
 
-        # Evaluate with LASH's Early Exit
+        # Evaluate WITHOUT Early Exit (use full 4-layer model)
         eval_config = TrainingConfig(
-            layer_weights={i: 0 for i in range(1, CONFIG.ashem.phase2_layers + 1)},
-            routing_threshold=confidence_threshold,
-            exit_layer=CONFIG.ashem.phase1_layers
+            layer_weights={i: 0 for i in range(1, CONFIG.ashem.phase2_layers + 1)}
         )
         eval_config.layer_weights[CONFIG.ashem.phase2_layers] = 1.0
 
