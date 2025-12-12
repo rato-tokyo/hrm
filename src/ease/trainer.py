@@ -335,8 +335,9 @@ class Trainer:
             val_accs.append(val_acc)
 
             if verbose:
+                train_ppl = np.exp(train_loss)
                 print(f"Epoch {epoch+1}/{max_epochs} - "
-                      f"Train Loss: {train_loss:.4f} | "
+                      f"Train PPL: {train_ppl:.4f} | "
                       f"Val PPL: {val_ppl:.4f} | "
                       f"Val Acc: {val_acc*100:.2f}%")
 
