@@ -63,41 +63,49 @@ CONFIG = Config()
 # ================================================================================
 
 def load_wikitext_data(seq_len: int = 32, seed: int = 42):
-    """WikiText-2データをロード"""
+    """WikiText-2データをロード（Hugging Face datasets使用）"""
     try:
-        from torchtext.datasets import WikiText2
-        from torchtext.data.utils import get_tokenizer
-        from torchtext.vocab import build_vocab_from_iterator
+        from datasets import load_dataset
     except ImportError:
-        print("torchtext not found. Installing...")
+        print("datasets not found. Installing...")
         import subprocess
-        subprocess.check_call(['pip', 'install', 'torchtext', 'portalocker'])
-        from torchtext.datasets import WikiText2
-        from torchtext.data.utils import get_tokenizer
-        from torchtext.vocab import build_vocab_from_iterator
+        subprocess.check_call(['pip', 'install', 'datasets'])
+        from datasets import load_dataset
 
     torch.manual_seed(seed)
 
-    # Tokenizerとデータセット
-    tokenizer = get_tokenizer('basic_english')
-    train_iter = WikiText2(split='train')
+    # Hugging Face datasetsからWikiText-2をロード
+    dataset = load_dataset('wikitext', 'wikitext-2-raw-v1')
+
+    # 簡易的なトークナイザー（空白で分割）
+    def simple_tokenize(text):
+        return text.lower().split()
 
     # Vocabulary構築
-    def yield_tokens(data_iter):
-        for text in data_iter:
-            yield tokenizer(text)
-
-    vocab = build_vocab_from_iterator(yield_tokens(train_iter), specials=['<unk>'])
-    vocab.set_default_index(vocab['<unk>'])
+    vocab = {'<unk>': 0, '<pad>': 1}
+    for split in ['train', 'validation']:
+        for item in dataset[split]:
+            text = item['text'].strip()
+            if text:
+                for word in simple_tokenize(text):
+                    if word not in vocab:
+                        vocab[word] = len(vocab)
 
     # データをトークン化
-    def data_process(raw_text_iter):
-        data = [torch.tensor(vocab(tokenizer(item)), dtype=torch.long) for item in raw_text_iter]
-        return torch.cat(tuple(filter(lambda t: t.numel() > 0, data)))
+    def data_process(split):
+        data = []
+        for item in dataset[split]:
+            text = item['text'].strip()
+            if text:
+                tokens = [vocab.get(word, vocab['<unk>']) for word in simple_tokenize(text)]
+                if tokens:
+                    data.extend(tokens)
+        return torch.tensor(data, dtype=torch.long)
 
-    train_iter, val_iter = WikiText2(split=('train', 'valid'))
-    train_data = data_process(train_iter)
-    val_data = data_process(val_iter)
+    train_data = data_process('train')
+    val_data = data_process('validation')
+
+    print(f"Loaded WikiText-2: {len(train_data)} train tokens, {len(val_data)} val tokens")
 
     return train_data, val_data, len(vocab)
 
