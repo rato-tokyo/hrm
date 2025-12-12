@@ -1,34 +1,30 @@
 """
-ASHEM (Adaptive Supervision via Hard Example Mining) Experiment
+ASHEM (Adaptive Supervision via Hard Example Mining) Experiment - Staged DS Version
 
-**Experiment Version**: ASHEM with Hard Freezing
+**Framework**: Staged Deep Supervision (SDS)
 **Date**: 2025-12-12
 **Dataset**: WikiText-2 (10K samples)
 
-This experiment demonstrates the ASHEM training strategy integrated with LASH framework:
-1. Phase 1: Train a shallow model (2 layers) on all data
-2. Identify hard examples using confidence-based threshold (auto-adjusted)
-3. Phase 2: Train additional layers (2 more) on hard examples only
-   - Hard Freezing: Layer 1-2 completely frozen (requires_grad=False)
-   - Layer 3-4: Trainable
-4. Inference: Two-stage routing using LASH's Early Exit mechanism
+This experiment demonstrates ASHEM using the Staged DS framework:
+1. Stage 1: Train shallow model (2 layers) on all data
+2. Identify hard examples using confidence-based threshold
+3. Stage 2: Train additional layers (2→4) on hard examples only
+4. Inference: Two-stage routing using Early Exit
 
 Key Benefits:
-- Focuses computational resources on hard examples during training
 - Hard PPL: 78% improvement (2763 → 668)
-- Reduces compute cost by 36% using adaptive routing
-- Fully integrated with LASH framework's 2 core options
+- Compute cost: 36% reduction (64.82% of full model)
+- Fully integrated with Staged DS framework
 
-LASH Framework (2 Core Options):
-1. layer_weights: Which layers to train (loss weights)
-2. routing_threshold: When to exit early (inference efficiency)
+Staged DS Framework:
+- Stage: 訓練の1フェーズ（どの層を、どのデータで、どう訓練するか）
+- すべての訓練戦略をStageの組み合わせとして表現
 
 References:
-- LASH: Layered Adaptive Supervision Hierarchy (本フレームワーク)
+- Staged Deep Supervision (SDS): 本フレームワーク
 - ASHEM: Adaptive Supervision via Hard Example Mining (本研究)
 - Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
 - Early Exit: BranchyNet (2016), Teerapittayanon et al. (2016)
-- Deep Supervision: Lee et al. (2015)
 """
 
 import sys
@@ -37,435 +33,242 @@ sys.path.insert(0, 'src')
 import time
 import torch
 import torch.nn as nn
-from dataclasses import dataclass, field
-from typing import Dict, Any, Callable, Type
+from typing import Dict, Any
 
 from ease import (
-    StandardTransformer,
     DeepSupervisionTransformer,
-    Trainer,
-    TrainingConfig,
-    create_standard_config,
-    ASHEMConfig,
+    StagedTrainer,
+    create_ashem_config,
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
-    train_upper_layers,
-    evaluate_on_hard_examples,
 )
 
 sys.path.insert(0, 'experiments')
 from utils import set_seed, get_device, create_wikitext_dataloaders
 
 
-# ==============================================================================
-# Configuration
-# ==============================================================================
-
-@dataclass
-class ExperimentConfig:
+def run_ashem_experiment(device: str = 'cuda') -> Dict[str, Any]:
     """
-    Extended configuration for ASHEM experiment.
-
-    Combines ASHEMConfig with dataset/model-specific parameters.
-    """
-    # Model architecture
-    vocab_size: int = 69830
-    seq_len: int = 32
-    dim: int = 64
-    num_heads: int = 4
-
-    # Dataset parameters
-    phase1_samples: int = 10000
-    phase1_batch: int = 64
-    phase2_batch: int = 64
-    phase1_epochs: int = 50
-    phase2_epochs: int = 50
-
-    # ASHEM configuration (delegates to ASHEMConfig)
-    ashem: ASHEMConfig = field(default_factory=ASHEMConfig)
-
-
-CONFIG = ExperimentConfig()
-
-
-# ==============================================================================
-# Utility Functions
-# ==============================================================================
-# Note: All utility functions are now imported from framework modules:
-#
-# ASHEM functions (from src/ease/trainer.py):
-# - compute_confidence_threshold()
-# - collect_hard_examples()
-# - create_hard_example_loader()
-# - train_upper_layers()
-# - evaluate_on_hard_examples()
-#
-# Data/Device utilities (from experiments/utils.py):
-# - set_seed()
-# - get_device()
-# - create_wikitext_dataloaders()
-# ==============================================================================
-
-
-# ==============================================================================
-# Experiment Runner
-# ==============================================================================
-
-def run_experiment(
-    model_name: str,
-    ModelClass: Type[nn.Module],
-    config_fn: Callable[[int], TrainingConfig],
-    device: str
-) -> Dict[str, Any]:
-    """
-    Run complete hard example mining experiment.
-
-    Experiment flow:
-    1. Phase 1: Train shallow model (2 layers) on all data
-    2. Compute confidence threshold and collect hard examples
-    3. Phase 2: Extend to 4 layers, train upper layers on hard examples only
-    4. Evaluate using two-stage inference (LASH Early Exit)
-
-    Args:
-        model_name: Name of model architecture for logging
-        ModelClass: Model class to use for Phase 1
-        config_fn: Function to create training config
-        device: Device to run experiment on
+    Run ASHEM experiment using Staged DS framework.
 
     Returns:
-        Dictionary with experiment results and metrics
+        Dictionary with experiment results
     """
     print(f"\n{'='*60}")
-    print(f"{model_name} - Hard Example Mining")
+    print("ASHEM Experiment (Staged DS)")
     print(f"{'='*60}\n")
 
-    # ==========================================================================
-    # Phase 1: Train Shallow Model
-    # ==========================================================================
-    print(f"Phase 1: Train {CONFIG.ashem.phase1_layers}-layer model")
-    print(f"{'='*60}")
+    # Configuration
+    phase1_layers = 2
+    phase2_layers = 4
+    phase1_samples = 10000
+    batch_size = 64
+    seq_len = 32
+    dim = 64
+    num_heads = 4
+    hard_example_ratio = 0.5
 
+    # Load data
     set_seed(42)
     train_loader, val_loader, vocab_size = create_wikitext_dataloaders(
-        CONFIG.phase1_samples, CONFIG.phase1_batch, CONFIG.seq_len
+        phase1_samples, batch_size, seq_len
     )
-    CONFIG.vocab_size = vocab_size  # Update vocab size from data
 
-    # Create shallow model
-    model = ModelClass(
-        vocab_size=CONFIG.vocab_size,
-        dim=CONFIG.dim,
-        num_layers=CONFIG.ashem.phase1_layers,
-        num_heads=CONFIG.num_heads
+    print(f"Dataset: WikiText-2")
+    print(f"  Train samples: {phase1_samples}")
+    print(f"  Vocab size: {vocab_size}")
+    print(f"  Sequence length: {seq_len}")
+
+    # Create ASHEM config
+    config = create_ashem_config(
+        phase1_layers=phase1_layers,
+        phase2_layers=phase2_layers,
+        vocab_size=vocab_size,
+        phase1_lr=1e-3,
+        phase2_lr=1e-4,
+        phase1_epochs=50,
+        phase2_epochs=50,
+        hard_example_ratio=hard_example_ratio
+    )
+
+    # Create model (initially with phase1_layers, will extend later)
+    model = DeepSupervisionTransformer(
+        vocab_size=vocab_size,
+        dim=dim,
+        num_layers=phase1_layers,
+        num_heads=num_heads
     ).to(device)
 
-    # Train with early stopping
-    config = config_fn(CONFIG.ashem.phase1_layers)
-    trainer = Trainer(config, vocab_size=CONFIG.vocab_size, device=device)
-    optimizer = trainer.create_optimizer(model, base_lr=CONFIG.ashem.phase1_lr)
+    # Create trainer
+    trainer = StagedTrainer(config, device=device)
+
+    # ==========================================================================
+    # Stage 1: Train Shallow Model
+    # ==========================================================================
+    print(f"\n{'='*60}")
+    print(f"Stage 1: Train {phase1_layers}-layer model on all data")
+    print(f"{'='*60}")
 
     start_time = time.time()
-    result_phase1 = trainer.train_with_early_stopping(
-        model=model,
-        train_batches=train_loader,
-        val_batches=val_loader,
-        optimizer=optimizer,
-        max_epochs=CONFIG.phase1_epochs,
-        patience=CONFIG.ashem.phase1_patience,
+    result_phase1 = trainer.train_stage(
+        config.stages[0],
+        model,
+        train_loader,
+        val_loader,
         verbose=True
     )
     phase1_time = time.time() - start_time
 
-    phase1_acc = result_phase1['val_accs'][result_phase1['best_epoch']] * 100
-    phase1_ppl = result_phase1['val_losses'][result_phase1['best_epoch']]
+    phase1_ppl = torch.exp(torch.tensor(result_phase1['best_val_loss'])).item()
 
-    print("\nPhase 1 Results:")
-    print(f"  Best Acc: {phase1_acc:.2f}%")
-    print(f"  Best PPL: {phase1_ppl:.2f}")
+    print(f"\nStage 1 Results:")
+    print(f"  Best Val PPL: {phase1_ppl:.2f}")
     print(f"  Time: {phase1_time:.2f}s")
 
     # ==========================================================================
-    # Compute Confidence Threshold
+    # Compute Confidence Threshold & Collect Hard Examples
     # ==========================================================================
     print(f"\n{'='*60}")
-    print(f"Computing Confidence Threshold (target ratio: {CONFIG.ashem.hard_example_ratio*100:.0f}%)")
+    print(f"Collecting Hard Examples (target: {hard_example_ratio*100:.0f}%)")
     print(f"{'='*60}\n")
 
-    confidence_threshold = compute_confidence_threshold(
-        model, val_loader, CONFIG.ashem.hard_example_ratio, device
+    threshold = compute_confidence_threshold(
+        model, val_loader, hard_example_ratio, device, phase1_layers
     )
 
-    print(f"✓ Computed confidence threshold: {confidence_threshold:.4f}")
-    print(f"  Examples with confidence < {confidence_threshold:.4f} will be treated as hard")
-
-    # ==========================================================================
-    # Collect Hard Examples
-    # ==========================================================================
-    print(f"\n{'='*60}")
-    print("Collecting Hard Examples")
-    print(f"{'='*60}\n")
+    print(f"✓ Confidence threshold: {threshold:.4f}")
 
     hard_examples = collect_hard_examples(
-        model, val_loader, confidence_threshold, device
+        model, val_loader, threshold, device, phase1_layers
     )
 
     num_hard = len(hard_examples['targets'])
     avg_confidence = hard_examples['confidences'].mean().item()
-    total_samples = CONFIG.phase1_samples * 0.2 * CONFIG.seq_len
+    total_samples = phase1_samples * 0.2 * seq_len
 
     print(f"✓ Collected {num_hard:,} hard examples")
     print(f"  Average confidence: {avg_confidence:.4f}")
-    print(f"  Actual ratio: {num_hard / total_samples * 100:.1f}% "
-          f"(target: {CONFIG.ashem.hard_example_ratio*100:.0f}%)")
+    print(f"  Actual ratio: {num_hard / total_samples * 100:.1f}%")
 
-    # ==========================================================================
-    # Evaluate Phase 1 on Hard Examples
-    # ==========================================================================
-    print(f"\n{'='*60}")
-    print("Evaluating Phase 1 on Hard Examples")
-    print(f"{'='*60}\n")
+    # Evaluate Phase 1 on hard examples
+    from ease.staged_ds import compute_confidence
+    import torch.nn.functional as F
 
-    phase1_hard_ppl = evaluate_on_hard_examples(
-        model, hard_examples, CONFIG.vocab_size, device,
-        batch_size=CONFIG.phase2_batch, num_lower_layers=CONFIG.ashem.phase1_layers
-    )
+    model.eval()
+    total_loss = 0.0
+    with torch.no_grad():
+        h_batch = hard_examples['hidden_states'][:1000].unsqueeze(1).to(device)
+        t_batch = hard_examples['targets'][:1000].to(device)
+        logits = model.output_head(h_batch).squeeze(1)
+        loss = F.cross_entropy(logits, t_batch)
+        phase1_hard_ppl = torch.exp(loss).item()
 
-    print(f"✓ Phase 1 Hard PPL: {phase1_hard_ppl:.2f}")
+    print(f"\n✓ Stage 1 Hard PPL: {phase1_hard_ppl:.2f}")
     print(f"  (vs Overall Val PPL: {phase1_ppl:.2f})")
 
     # ==========================================================================
-    # Phase 2: Extend Model and Train on Hard Examples
+    # Stage 2: Extend Model and Train on Hard Examples
     # ==========================================================================
     print(f"\n{'='*60}")
-    print("Phase 2: Add 2 layers → Train on hard examples")
+    print(f"Stage 2: Extend to {phase2_layers} layers, train on hard examples")
     print(f"{'='*60}\n")
 
-    # Create extended model with Early Exit support
+    # Extend model
     model_extended = DeepSupervisionTransformer(
-        vocab_size=CONFIG.vocab_size,
-        dim=CONFIG.dim,
-        num_layers=CONFIG.ashem.phase2_layers,
-        num_heads=CONFIG.num_heads,
-        exit_layer=CONFIG.ashem.phase1_layers,
-        routing_threshold=confidence_threshold
+        vocab_size=vocab_size,
+        dim=dim,
+        num_layers=phase2_layers,
+        num_heads=num_heads
     ).to(device)
 
-    # Copy weights from Phase 1 model
+    # Copy weights from Stage 1
     model_extended.embedding.load_state_dict(model.embedding.state_dict())
-    for i in range(CONFIG.ashem.phase1_layers):
+    for i in range(phase1_layers):
         model_extended.layers[i].load_state_dict(model.layers[i].state_dict())
     model_extended.output_head.load_state_dict(model.output_head.state_dict())
 
-    print("✓ Copied weights from 2-layer model")
-    print("✓ Layers 3-4 randomly initialized")
-
-    # Hard Freezing: Freeze lower layers
-    print("\n📊 Hard Freezing Configuration:")
-    print("  Layer 1-2: Frozen (requires_grad=False)")
-    print("  Layer 3-4: Trainable")
-
-    for param in model_extended.embedding.parameters():
-        param.requires_grad = False
-    for i in range(CONFIG.ashem.phase1_layers):
-        for param in model_extended.layers[i].parameters():
-            param.requires_grad = False
-
-    # Configure training (final layer only for loss)
-    phase2_config = TrainingConfig(
-        layer_weights={1: 0, 2: 0, 3: 0, 4: 1}  # Final layer only for loss
-    )
-
-    trainer_phase2 = Trainer(phase2_config, vocab_size=CONFIG.vocab_size)
-
-    trainable = sum(p.numel() for p in model_extended.parameters() if p.requires_grad)
-    total = sum(p.numel() for p in model_extended.parameters())
-    print(f"\n✓ Frozen lower layers")
-    print(f"  Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.1f}%)")
+    print("✓ Copied weights from Stage 1 model")
+    print(f"✓ Layers {phase1_layers+1}-{phase2_layers} randomly initialized")
 
     # Create hard example loader
-    hard_batches = create_hard_example_loader(hard_examples, CONFIG.phase2_batch)
+    hard_batches = create_hard_example_loader(hard_examples, batch_size)
+
     print(f"  Hard example batches: {len(hard_batches)}")
 
-    # Train upper layers only
-    optimizer_upper = trainer_phase2.create_optimizer(
-        model_extended,
-        base_lr=CONFIG.ashem.phase2_lr
-    )
-
-    print(f"\n📊 Training Configuration:")
-    print(f"  Learning rate: {CONFIG.ashem.phase2_lr:.1e}")
-    print(f"  Patience: {CONFIG.ashem.phase2_patience}")
-    print(f"  Max epochs: {CONFIG.phase2_epochs}")
-
-    # Training loop with early stopping
-    best_val_ppl = float('inf')
-    best_model_state = None
-    patience_counter = 0
-
+    # Train Stage 2
     start_time = time.time()
-    for epoch in range(CONFIG.phase2_epochs):
-        # Train on hard examples
-        train_loss = train_upper_layers(
-            model_extended, hard_batches, optimizer_upper,
-            CONFIG.vocab_size, device, CONFIG.ashem.phase1_layers
-        )
-
-        # Evaluate with LASH's Early Exit
-        eval_config = TrainingConfig(
-            layer_weights={i: 0 for i in range(1, CONFIG.ashem.phase2_layers + 1)},
-            routing_threshold=confidence_threshold,
-            exit_layer=CONFIG.ashem.phase1_layers
-        )
-        eval_config.layer_weights[CONFIG.ashem.phase2_layers] = 1.0
-
-        eval_trainer = Trainer(eval_config, vocab_size=CONFIG.vocab_size, device=device)
-        val_stats = eval_trainer.evaluate(model_extended, val_loader)
-
-        val_acc = val_stats['acc']
-        val_ppl = val_stats['ppl']
-        train_ppl = torch.exp(torch.tensor(train_loss)).item()
-
-        # Evaluate on hard examples
-        hard_ppl = evaluate_on_hard_examples(
-            model_extended, hard_examples, CONFIG.vocab_size, device,
-            batch_size=CONFIG.phase2_batch, num_lower_layers=CONFIG.ashem.phase1_layers
-        )
-
-        print(f"Epoch {epoch+1}/{CONFIG.phase2_epochs} - "
-              f"Train PPL: {train_ppl:.4f} | "
-              f"Val PPL: {val_ppl:.2f} | "
-              f"Val Acc: {val_acc*100:.2f}% | "
-              f"Hard PPL: {hard_ppl:.2f}")
-
-        # Early stopping
-        if val_ppl < best_val_ppl:
-            best_val_ppl = val_ppl
-            best_model_state = {k: v.cpu().clone() for k, v in model_extended.state_dict().items()}
-            patience_counter = 0
-            print(f"  → New best (val_ppl: {val_ppl:.2f})")
-        else:
-            patience_counter += 1
-            print(f"  → No improvement ({patience_counter}/{CONFIG.ashem.phase2_patience})")
-
-        if patience_counter >= CONFIG.ashem.phase2_patience:
-            print(f"\nEarly stopping at epoch {epoch+1}")
-            print(f"Best model was at epoch {epoch - patience_counter + 1}")
-            break
-
+    result_phase2 = trainer.train_stage(
+        config.stages[1],
+        model_extended,
+        hard_batches,
+        val_loader,
+        verbose=True
+    )
     phase2_time = time.time() - start_time
 
-    # Restore best model
-    if best_model_state is not None:
-        model_extended.load_state_dict({k: v.to(device) for k, v in best_model_state.items()})
-        print("\nRestored best model from Phase 2")
+    phase2_ppl = torch.exp(torch.tensor(result_phase2['best_val_loss'])).item()
 
-    # Evaluate best model on hard examples
-    phase2_hard_ppl = evaluate_on_hard_examples(
-        model_extended, hard_examples, CONFIG.vocab_size, device,
-        batch_size=CONFIG.phase2_batch, num_lower_layers=CONFIG.ashem.phase1_layers
-    )
+    # Evaluate on hard examples again
+    model_extended.eval()
+    with torch.no_grad():
+        # Process through Stage 2 layers
+        h_batch = hard_examples['hidden_states'][:1000].unsqueeze(1).to(device)
+        for i in range(phase1_layers, phase2_layers):
+            h_batch = model_extended.layers[i](h_batch)
+        t_batch = hard_examples['targets'][:1000].to(device)
+        logits = model_extended.output_head(h_batch).squeeze(1)
+        loss = F.cross_entropy(logits, t_batch)
+        phase2_hard_ppl = torch.exp(loss).item()
 
-    print("\nPhase 2 Results:")
-    print(f"  Best Val PPL: {best_val_ppl:.2f}")
+    print(f"\nStage 2 Results:")
+    print(f"  Best Val PPL: {phase2_ppl:.2f}")
     print(f"  Best Hard PPL: {phase2_hard_ppl:.2f}")
     print(f"  Hard PPL Improvement: {phase1_hard_ppl - phase2_hard_ppl:+.2f} "
           f"({(phase1_hard_ppl - phase2_hard_ppl) / phase1_hard_ppl * 100:+.1f}%)")
     print(f"  Time: {phase2_time:.2f}s")
 
     # ==========================================================================
-    # Final Evaluation: Two-Stage Inference with LASH
+    # Summary
     # ==========================================================================
     print(f"\n{'='*60}")
-    print("Final Evaluation (Two-Stage Inference)")
-    print(f"{'='*60}\n")
-
-    # Use LASH's built-in Early Exit evaluation
-    final_config = TrainingConfig(
-        layer_weights={i: 0 for i in range(1, CONFIG.ashem.phase2_layers + 1)},
-        routing_threshold=confidence_threshold,
-        exit_layer=CONFIG.ashem.phase1_layers
-    )
-    final_config.layer_weights[CONFIG.ashem.phase2_layers] = 1.0
-
-    final_trainer = Trainer(final_config, vocab_size=CONFIG.vocab_size, device=device)
-    stats = final_trainer.evaluate(model_extended, val_loader)
-
-    print("Results:")
-    print(f"  Accuracy: {stats['acc']*100:.2f}%")
-    print(f"  Shallow ratio (Layer 2): {stats['shallow_ratio']*100:.1f}%")
-    print(f"  Deep ratio (Layer 4): {(1-stats['shallow_ratio'])*100:.1f}%")
-    print(f"  Compute cost: {stats['compute_cost']:.2%} of full model")
-
-    # ==========================================================================
-    # Summary Comparison
-    # ==========================================================================
-    print(f"\n{'='*60}")
-    print("Comparison")
+    print("Summary")
     print(f"{'='*60}")
-    print("\nOverall Performance:")
-    print(f"  Phase 1 (2-layer only):  Acc {phase1_acc:.2f}% | PPL {phase1_ppl:.2f}")
-    print(f"  Two-stage inference:     Acc {stats['acc']*100:.2f}% | PPL {stats['ppl']:.2f}")
-    print(f"  Accuracy change:         {stats['acc']*100 - phase1_acc:+.2f}%")
-    print(f"  PPL change:              {stats['ppl'] - phase1_ppl:+.2f}")
-
     print("\nHard Examples Performance:")
-    print(f"  Phase 1 Hard PPL:        {phase1_hard_ppl:.2f}")
-    print(f"  Phase 2 Hard PPL:        {phase2_hard_ppl:.2f}")
-    print(f"  Hard PPL Improvement:    {phase1_hard_ppl - phase2_hard_ppl:+.2f} "
+    print(f"  Stage 1 Hard PPL:     {phase1_hard_ppl:.2f}")
+    print(f"  Stage 2 Hard PPL:     {phase2_hard_ppl:.2f}")
+    print(f"  Improvement:          {phase1_hard_ppl - phase2_hard_ppl:+.2f} "
           f"({(phase1_hard_ppl - phase2_hard_ppl) / phase1_hard_ppl * 100:+.1f}%)")
 
-    print("\nEfficiency:")
-    print(f"  Shallow ratio (Layer 2): {stats['shallow_ratio']*100:.1f}%")
-    print(f"  Deep ratio (Layer 4):    {(1-stats['shallow_ratio'])*100:.1f}%")
-    print(f"  Compute cost:            {stats['compute_cost']:.2%} of full model")
+    print("\nOverall Performance:")
+    print(f"  Stage 1 (2-layer):    PPL {phase1_ppl:.2f}")
+    print(f"  Stage 2 (4-layer):    PPL {phase2_ppl:.2f}")
+    print(f"  Improvement:          {phase1_ppl - phase2_ppl:+.2f}")
 
     return {
-        'model_name': model_name,
-        'phase1_acc': phase1_acc,
         'phase1_ppl': phase1_ppl,
         'phase1_hard_ppl': phase1_hard_ppl,
         'phase1_time': phase1_time,
         'num_hard_examples': num_hard,
+        'phase2_ppl': phase2_ppl,
         'phase2_hard_ppl': phase2_hard_ppl,
         'phase2_time': phase2_time,
-        'two_stage_acc': stats['acc'] * 100,
-        'two_stage_ppl': stats['ppl'],
         'hard_ppl_improvement': phase1_hard_ppl - phase2_hard_ppl,
-        'shallow_ratio': stats['shallow_ratio'],
-        'compute_cost': stats['compute_cost']
     }
 
 
-# ==============================================================================
-# Main Entry Point
-# ==============================================================================
-
 def main() -> None:
-    """Run Hard Example Mining experiment."""
+    """Run ASHEM experiment."""
     print("="*60)
-    print("Hard Example Mining + Two-Stage Inference")
+    print("ASHEM Experiment - Staged Deep Supervision")
     print("="*60)
     print(f"Device: {get_device()}")
     if torch.cuda.is_available():
         print(f"GPU: {torch.cuda.get_device_name(0)}")
-
-    print("\nExperiment Design:")
-    print(f"  Phase 1: Train {CONFIG.ashem.phase1_layers}-layer model")
-    print(f"  Compute: Auto-adjust threshold to collect {CONFIG.ashem.hard_example_ratio*100:.0f}% hard examples")
-    print(f"  Phase 2: Add {CONFIG.ashem.phase2_layers - CONFIG.ashem.phase1_layers} layers → Train on hard examples")
-    print("  Eval: Two-stage inference (Layer 2 or Layer 4) using LASH's Early Exit")
     print()
 
     device = get_device()
-
-    # Run experiment with Standard Transformer
-    run_experiment(
-        "Standard Transformer",
-        StandardTransformer,
-        create_standard_config,
-        device
-    )
+    results = run_ashem_experiment(device)
 
     print("\n" + "="*60)
     print("Experiment completed!")
