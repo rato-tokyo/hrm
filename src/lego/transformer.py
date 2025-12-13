@@ -135,8 +135,8 @@ class LEGOTransformer(nn.Module):
         Forward pass with TRUE token-level early exit.
 
         Each token independently exits at the first block where its confidence
-        exceeds the threshold. Tokens that exit early do not pass through
-        subsequent blocks.
+        exceeds the threshold. Tokens that exit early do NOT pass through
+        subsequent blocks (TRUE early exit).
 
         Args:
             x: Input token ids (batch_size, seq_len)
@@ -148,42 +148,59 @@ class LEGOTransformer(nn.Module):
         batch_size, seq_len = x.shape
         device = x.device
 
+        # Flatten to (batch_size * seq_len, dim) for easier indexing
         h = self.embedding(x)
+        h_flat = h.view(-1, self.dim)
+        total_tokens = batch_size * seq_len
 
-        # Track which tokens have exited and their final logits
-        # Shape: (batch_size, seq_len, vocab_size)
-        final_logits = torch.zeros(
-            batch_size, seq_len, self.vocab_size, device=device
-        )
-        # Track exit block for each token: (batch_size, seq_len)
-        exit_blocks = torch.full(
-            (batch_size, seq_len), len(self.blocks) - 1, device=device
-        )
-        # Track which tokens are still active (not yet exited)
-        active_mask = torch.ones(batch_size, seq_len, dtype=torch.bool, device=device)
+        # Track final logits and exit block for each token
+        final_logits = torch.zeros(total_tokens, self.vocab_size, device=device)
+        exit_blocks = torch.full((total_tokens,), len(self.blocks) - 1, device=device)
+
+        # Track which tokens are still active (indices)
+        active_indices = torch.arange(total_tokens, device=device)
 
         for block_idx, block in enumerate(self.blocks):
+            if len(active_indices) == 0:
+                break
+
             is_last_block = (block_idx == len(self.blocks) - 1)
 
-            # Process all tokens through this block
-            h = block(h)
-            logits, confidence = block.compute_confidence(h)
+            # Get active hidden states
+            h_active = h_flat[active_indices].unsqueeze(1)  # (num_active, 1, dim)
+
+            # Process through block
+            h_active = block(h_active)
+
+            # Compute confidence
+            logits_active, confidence_active = block.compute_confidence(h_active)
+            logits_active = logits_active.squeeze(1)  # (num_active, vocab_size)
+            confidence_active = confidence_active.squeeze(1)  # (num_active,)
 
             if not is_last_block:
-                # Determine which active tokens should exit at this block
-                should_exit_here = active_mask & (confidence >= block.threshold)
+                # Determine which tokens should exit at this block
+                exit_mask = confidence_active >= block.threshold
 
-                # Store logits for exiting tokens
-                final_logits[should_exit_here] = logits[should_exit_here]
-                exit_blocks[should_exit_here] = block_idx
+                # Store logits and exit block for exiting tokens
+                exiting_indices = active_indices[exit_mask]
+                final_logits[exiting_indices] = logits_active[exit_mask]
+                exit_blocks[exiting_indices] = block_idx
 
-                # Update active mask
-                active_mask = active_mask & ~should_exit_here
+                # Update h_flat for tokens that continue
+                continuing_mask = ~exit_mask
+                h_flat[active_indices[continuing_mask]] = h_active.squeeze(1)[continuing_mask]
+
+                # Update active indices to only those continuing
+                active_indices = active_indices[continuing_mask]
             else:
                 # Last block: all remaining active tokens exit here
-                final_logits[active_mask] = logits[active_mask]
+                final_logits[active_indices] = logits_active
+                # exit_blocks already initialized to last block index
 
-        # Compute statistics using shared method
+        # Reshape final_logits back to (batch_size, seq_len, vocab_size)
+        final_logits = final_logits.view(batch_size, seq_len, self.vocab_size)
+
+        # Compute statistics
         exit_counts = [
             int((exit_blocks == i).sum().item()) for i in range(len(self.blocks))
         ]

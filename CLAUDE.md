@@ -101,7 +101,7 @@ result = trainer.train_block(
 
 ```python
 generated, stats = model.generate(prompt, max_new_tokens=32)
-# stats: {exit_counts: [block0_exits, block1_exits, ...], actual_compute_cost, shallow_ratio}
+# stats: {exit_counts: [block0_exits, block1_exits, ...], compute_cost, shallow_ratio}
 ```
 
 ---
@@ -176,6 +176,57 @@ src/lego/
 4. **デフォルト引数値禁止** - block_idx等のブロック指定引数にはデフォルト値を設定しない
 5. **Block訓練の独立性** - Phase 2以降の各Blockはtrain/valともにHard Examples内で完結。全データのval_batchesは使用しない
 6. **トークン単位のEarly Exit** - すべての処理（訓練、評価、生成）でearly exitはトークン単位。バッチ単位ではない
+
+---
+
+## 過去の設計ミスと教訓
+
+### `forward_with_routing`の誤実装と修正
+
+**問題：**
+評価時の`forward_with_routing`で、全トークンを全Blockに通してからマスクで統計を取る実装をしていた。
+
+```python
+# 誤った実装
+for block in self.blocks:
+    h = block(h)  # 全トークンが全Blockを通過
+# 後からマスクで「どこでexitしたか」を記録するだけ
+```
+
+これではearly exitによる計算量削減が実現できていない。
+
+**原因：**
+1. 「評価時はリアルタイム判断が必要」と思い込んだ
+2. 訓練時と評価時で異なるロジックを実装してしまった
+3. 実装の簡易さを優先し、コードの一貫性を軽視した
+
+**正しい実装：**
+訓練・評価・生成すべてで同じロジック：
+
+```python
+# Block 1実行
+h = block1(h)
+logits1, confidence = block1.compute_confidence(h)
+
+# easy/hard分離
+easy_mask = confidence >= threshold
+hard_mask = ~easy_mask
+
+# easy tokenのlogitsを保存
+final_logits[easy_mask] = logits1[easy_mask]
+
+# hard tokenだけBlock 2へ
+if hard_mask.any():
+    h_hard = h[hard_mask]
+    h_hard = block2(h_hard)
+    logits2 = output_head(h_hard)
+    final_logits[hard_mask] = logits2
+```
+
+**教訓：**
+- 訓練時に正しく実装できているロジックは、評価時も同じ方法で実装できる
+- 「複雑になる」と思い込む前に、既存の正しい実装を参考にする
+- TRUE early exitを謳うなら、実際に計算をスキップしなければ意味がない
 
 ---
 
