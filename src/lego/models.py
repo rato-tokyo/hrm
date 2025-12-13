@@ -171,22 +171,19 @@ class LEGOTransformer(nn.Module):
 
         return output, stats
 
-    @classmethod
-    def extend_from(
-        cls,
-        source_model: 'LEGOTransformer',
+    def extend(
+        self,
         num_layers: int,
         routing_threshold: float,
         freeze_lower: bool = True,
     ) -> 'LEGOTransformer':
         """
-        Create an extended model from a shallow model.
+        Create an extended model from this model.
 
-        Copies weights from source_model and optionally freezes lower layers.
+        Copies weights and optionally freezes lower layers.
         Upper layers are randomly initialized.
 
         Args:
-            source_model: Trained shallow model to extend from
             num_layers: Total number of layers for extended model
             routing_threshold: Confidence threshold for early exit
             freeze_lower: Whether to freeze lower layers (default: True)
@@ -194,29 +191,29 @@ class LEGOTransformer(nn.Module):
         Returns:
             Extended LEGOTransformer with copied weights
         """
-        exit_layer = source_model.num_layers
+        exit_layer = self.num_layers
 
         # Create extended model
-        extended = cls(
-            vocab_size=source_model.vocab_size,
-            dim=source_model.dim,
+        extended = LEGOTransformer(
+            vocab_size=self.vocab_size,
+            dim=self.dim,
             num_layers=num_layers,
-            num_heads=source_model.layers[0].attn.num_heads,
+            num_heads=self.layers[0].attn.num_heads,
             exit_layer=exit_layer,
             routing_threshold=routing_threshold,
         )
 
-        # Copy weights from source model
-        extended.embedding.load_state_dict(source_model.embedding.state_dict())
-        for i in range(source_model.num_layers):
-            extended.layers[i].load_state_dict(source_model.layers[i].state_dict())
-        extended.output_head.load_state_dict(source_model.output_head.state_dict())
+        # Copy weights from this model
+        extended.embedding.load_state_dict(self.embedding.state_dict())
+        for i in range(self.num_layers):
+            extended.layers[i].load_state_dict(self.layers[i].state_dict())
+        extended.output_head.load_state_dict(self.output_head.state_dict())
 
         # Freeze lower layers if requested
         if freeze_lower:
             for param in extended.embedding.parameters():
                 param.requires_grad = False
-            for i in range(source_model.num_layers):
+            for i in range(self.num_layers):
                 for param in extended.layers[i].parameters():
                     param.requires_grad = False
 

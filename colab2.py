@@ -41,7 +41,6 @@ from typing import Dict, Any
 from lego import (
     LEGOTransformer,
     Trainer,
-    TrainingConfig,
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
@@ -152,8 +151,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     ).to(device)
 
     # Train with early stopping
-    training_config = TrainingConfig()
-    trainer = Trainer(training_config, vocab_size=vocab_size, device=device)
+    trainer = Trainer(vocab_size=vocab_size, device=device)
     optimizer = trainer.create_optimizer(model, base_lr=config.phase1_lr)
 
     start_time = time.time()
@@ -233,8 +231,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"{'='*60}\n")
 
     # Create extended model with Early Exit support
-    model_extended = LEGOTransformer.extend_from(
-        source_model=model,
+    model_extended = model.extend(
         num_layers=config.phase2_layers,
         routing_threshold=confidence_threshold,
         freeze_lower=True
@@ -246,13 +243,8 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print("  Layer 1-2: Frozen (requires_grad=False)")
     print("  Layer 3-4: Trainable")
 
-    # Configure training for Phase 2 (with routing for evaluation)
-    phase2_config = TrainingConfig(
-        routing_threshold=confidence_threshold,
-        exit_layer=config.phase1_layers
-    )
-
-    trainer_phase2 = Trainer(phase2_config, vocab_size=vocab_size, device=device)
+    # Trainer for Phase 2
+    trainer_phase2 = Trainer(vocab_size=vocab_size, device=device)
 
     trainable = sum(p.numel() for p in model_extended.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model_extended.parameters())
@@ -283,6 +275,8 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
         hard_examples=hard_examples,
         optimizer=optimizer_upper,
         num_lower_layers=config.phase1_layers,
+        routing_threshold=confidence_threshold,
+        exit_layer=config.phase1_layers,
         max_epochs=config.phase2_epochs,
         patience=config.phase2_patience,
         verbose=True
@@ -291,7 +285,11 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
 
     # Get Phase 2 metrics from result
     phase2_hard_ppl = result_phase2['hard_ppls'][result_phase2['best_epoch']]
-    final_val_stats = trainer_phase2.evaluate(model_extended, val_loader)
+    final_val_stats = trainer_phase2.evaluate(
+        model_extended, val_loader,
+        routing_threshold=confidence_threshold,
+        exit_layer=config.phase1_layers
+    )
 
     print("\nPhase 2 Results:")
     print(f"  Best Val PPL: {final_val_stats['ppl']:.2f}")
@@ -307,8 +305,12 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print("Final Evaluation (Two-Stage Inference)")
     print(f"{'='*60}\n")
 
-    # Reuse trainer_phase2 (same config with routing)
-    stats = trainer_phase2.evaluate(model_extended, val_loader)
+    # Evaluate with routing
+    stats = trainer_phase2.evaluate(
+        model_extended, val_loader,
+        routing_threshold=confidence_threshold,
+        exit_layer=config.phase1_layers
+    )
 
     print("Results:")
     print(f"  Accuracy: {stats['acc']*100:.2f}%")

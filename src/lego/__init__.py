@@ -5,10 +5,7 @@ Two-phase training with hard example mining and early exit inference.
 """
 
 from .models import LEGOTransformer
-from .trainer import (
-    TrainingConfig,
-    Trainer,
-)
+from .trainer import Trainer
 from .utils import (
     set_seed,
     get_device,
@@ -33,7 +30,6 @@ __all__ = [
     # Models
     'LEGOTransformer',
     # Trainer
-    'TrainingConfig',
     'Trainer',
     # Utilities
     'set_seed',

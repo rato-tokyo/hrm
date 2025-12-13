@@ -19,7 +19,8 @@ import torch
 from lego import (
     LEGOTransformer,
     Trainer,
-    TrainingConfig,
+    set_seed,
+    create_synthetic_data,
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
@@ -27,29 +28,7 @@ from lego import (
     evaluate_on_hard_examples,
 )
 
-from helpers import set_seed, create_synthetic_data, assert_close
-
-
-# ==============================================================================
-# Test: TrainingConfig
-# ==============================================================================
-
-def test_training_config():
-    """Test TrainingConfig."""
-    print("\n[TEST] TrainingConfig")
-
-    # Standard config (no routing)
-    std_config = TrainingConfig()
-    assert not std_config.has_routing
-    print("  Standard config: OK")
-
-    # Routing config
-    routing_config = TrainingConfig(
-        routing_threshold=0.15,
-        exit_layer=2
-    )
-    assert routing_config.has_routing
-    print("  Routing config: OK")
+from helpers import assert_close
 
 
 # ==============================================================================
@@ -267,10 +246,9 @@ def test_train_upper_layers():
     threshold = 0.0710195750
     hard_examples = collect_hard_examples(model_phase1, val_batches, threshold, device='cpu')
 
-    # Create extended model using extend_from
+    # Create extended model using extend
     set_seed(42)
-    model_extended = LEGOTransformer.extend_from(
-        source_model=model_phase1,
+    model_extended = model_phase1.extend(
         num_layers=4,
         routing_threshold=threshold,
         freeze_lower=True
@@ -337,9 +315,8 @@ def test_trainer_compute_loss():
     x = torch.randint(0, 100, (2, 8))
     y = torch.randint(0, 100, (2, 8))
 
-    # Standard config (final layer only)
-    config = TrainingConfig()
-    trainer_std = Trainer(config, vocab_size=100)
+    # Standard trainer (no config needed)
+    trainer_std = Trainer(vocab_size=100)
     loss_std = trainer_std.compute_loss(model, x, y)
 
     expected_loss_std = 5.0274624825
@@ -358,8 +335,7 @@ def test_trainer_evaluate_standard():
     model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
     val_batches = create_synthetic_data(num_batches=4, batch_size=8, seq_len=16, vocab_size=100)
 
-    config = TrainingConfig()
-    trainer = Trainer(config, vocab_size=100)
+    trainer = Trainer(vocab_size=100)
 
     stats = trainer.evaluate(model, val_batches)
 
@@ -392,13 +368,9 @@ def test_trainer_evaluate_routing():
     )
     val_batches = create_synthetic_data(num_batches=4, batch_size=8, seq_len=16, vocab_size=100)
 
-    config = TrainingConfig(
-        routing_threshold=0.02,
-        exit_layer=2
-    )
-    trainer = Trainer(config, vocab_size=100)
+    trainer = Trainer(vocab_size=100)
 
-    stats = trainer.evaluate(model, val_batches)
+    stats = trainer.evaluate(model, val_batches, routing_threshold=0.02, exit_layer=2)
 
     expected_ppl = 164.9025456048
     expected_shallow_ratio = 1.0000000000
@@ -441,10 +413,9 @@ def test_lego_integration_mini():
     expected_phase1_hard_ppl = 160.6869812012
     assert_close(phase1_hard_ppl, expected_phase1_hard_ppl, "phase1_hard_ppl")
 
-    # Phase 2: Create extended model using extend_from
+    # Phase 2: Create extended model using extend
     set_seed(42)
-    model_extended = LEGOTransformer.extend_from(
-        source_model=model_phase1,
+    model_extended = model_phase1.extend(
         num_layers=4,
         routing_threshold=threshold,
         freeze_lower=True
@@ -475,12 +446,8 @@ def test_lego_integration_mini():
     assert_close(phase2_hard_ppl, expected_phase2_hard_ppl, "phase2_hard_ppl")
 
     # Final evaluation with routing
-    config = TrainingConfig(
-        routing_threshold=threshold,
-        exit_layer=2
-    )
-    trainer = Trainer(config, vocab_size=100)
-    stats = trainer.evaluate(model_extended, val_batches)
+    trainer = Trainer(vocab_size=100)
+    stats = trainer.evaluate(model_extended, val_batches, routing_threshold=threshold, exit_layer=2)
 
     expected_final_ppl = 149.0614695912
     expected_shallow_ratio = 0.5000000000
@@ -504,7 +471,6 @@ def main():
     print("=" * 60)
 
     tests = [
-        test_training_config,
         test_lego_transformer_standard,
         test_lego_transformer_early_exit,
         test_compute_confidence,
