@@ -227,7 +227,7 @@ class Trainer:
         val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
         hard_examples: Dict[str, torch.Tensor],
         optimizer: torch.optim.Optimizer,
-        start_layer: int,
+        start_block_idx: int,
         use_routing: bool = False,
         max_epochs: int = 50,
         patience: int = 3,
@@ -241,7 +241,7 @@ class Trainer:
             val_batches: Validation data batches
             hard_examples: Dictionary with hidden_states and targets
             optimizer: Optimizer for trainable parameters
-            start_layer: Index of first layer in new block (Block 1 end_layer)
+            start_block_idx: Index of the new block to train
             use_routing: If True, use routing for validation evaluation
             max_epochs: Maximum training epochs
             patience: Early stopping patience
@@ -252,13 +252,13 @@ class Trainer:
         def train_fn() -> float:
             return train_new_block(
                 model, hard_batches, optimizer,
-                self.device, start_layer
+                self.device, start_block_idx
             )
 
         def extra_eval_fn() -> float:
             return evaluate_on_hard_examples(
                 model, hard_examples, self.device,
-                batch_size=64, start_layer=start_layer
+                batch_size=64, start_block_idx=start_block_idx
             )
 
         return self._early_stopping_loop(

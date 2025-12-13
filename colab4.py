@@ -44,7 +44,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
         config.phase1_samples, config.phase1_batch, config.seq_len
     )
 
-    model = LEGOTransformer(
+    model = LEGOTransformer.create(
         vocab_size=vocab_size,
         dim=config.dim,
         num_layers=config.phase1_layers,
@@ -88,11 +88,10 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"Collected {num_hard:,} hard examples ({num_hard / total_samples * 100:.1f}%)")
 
     # Evaluate Phase 1 on Hard Examples
-    # start_layer = Block 1's end_layer (where Block 2 starts)
-    start_layer = config.phase1_layers
+    # start_block_idx=1 means the new block (Block 2)
     phase1_hard_ppl = evaluate_on_hard_examples(
         model, hard_examples, device,
-        batch_size=config.phase2_batch, start_layer=start_layer
+        batch_size=config.phase2_batch, start_block_idx=1
     )
     print(f"Phase 1 Hard PPL: {phase1_hard_ppl:.2f}")
 
@@ -111,6 +110,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     trainable = sum(p.numel() for p in model_extended.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model_extended.parameters())
     print(f"Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.1f}%)")
+    print(f"Blocks: {len(model_extended.blocks)} (layers per block: {[b.num_layers for b in model_extended.blocks]})")
 
     hard_batches = create_hard_example_loader(hard_examples, config.phase2_batch)
     optimizer_block2 = torch.optim.AdamW(model_extended.parameters(), lr=config.phase2_lr)
@@ -122,7 +122,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
         val_batches=val_loader,
         hard_examples=hard_examples,
         optimizer=optimizer_block2,
-        start_layer=start_layer,
+        start_block_idx=1,  # Train Block 2 (index 1)
         use_routing=True,
         max_epochs=config.phase2_epochs,
         patience=config.phase2_patience,
@@ -158,7 +158,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
 
     print(f"Prompt length: {prompt_batch.shape[1]} tokens")
     print(f"Generating: {max_new_tokens} new tokens")
-    print(f"Blocks: {len(model_extended.blocks)} (layers: {[b.end_layer for b in model_extended.blocks]})")
+    print(f"Blocks: {len(model_extended.blocks)} (layers: {[b.num_layers for b in model_extended.blocks]})")
     print(f"Block 1 threshold: {model_extended.blocks[0].threshold:.4f}")
 
     # Generate with TRUE early exit
