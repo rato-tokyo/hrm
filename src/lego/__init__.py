@@ -15,9 +15,8 @@ from .utils import (
     create_synthetic_data,
     compute_confidence_threshold,
     collect_hard_examples,
+    split_hard_examples,
     create_hard_example_loader,
-    train_new_block,
-    evaluate_on_hard_examples,
 )
 from .modules import (
     RMSNorm,
@@ -45,9 +44,8 @@ __all__ = [
     'create_synthetic_data',
     'compute_confidence_threshold',
     'collect_hard_examples',
+    'split_hard_examples',
     'create_hard_example_loader',
-    'train_new_block',
-    'evaluate_on_hard_examples',
     # Modules
     'RMSNorm',
     'RotaryPositionalEmbedding',

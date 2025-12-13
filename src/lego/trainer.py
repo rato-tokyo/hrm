@@ -77,19 +77,15 @@ class Trainer:
         max_epochs: int,
         train_ppl: float,
         val_ppl: float,
-        val_acc: float,
-        hard_ppl: Optional[float],
+        val_acc: Optional[float],
         is_best: bool,
         patience_counter: int,
         patience: int
     ) -> None:
         """Log training progress for one epoch."""
-        msg = (f"Epoch {epoch+1}/{max_epochs} - "
-               f"Train PPL: {train_ppl:.4f} | "
-               f"Val PPL: {val_ppl:.2f} | "
-               f"Val Acc: {val_acc*100:.2f}%")
-        if hard_ppl is not None:
-            msg += f" | Hard PPL: {hard_ppl:.2f}"
+        msg = f"Epoch {epoch+1}/{max_epochs} - Train PPL: {train_ppl:.4f} | Val PPL: {val_ppl:.2f}"
+        if val_acc is not None:
+            msg += f" | Val Acc: {val_acc*100:.2f}%"
         print(msg)
 
         if is_best:
@@ -102,14 +98,13 @@ class Trainer:
         train_ppls: List[float],
         val_ppls: List[float],
         val_accs: List[float],
-        hard_ppls: List[float],
         best_epoch: int,
         best_val_ppl: float,
         total_epochs: int,
         stopped_early: bool
     ) -> Dict[str, Any]:
         """Build training result dictionary."""
-        result: Dict[str, Any] = {
+        return {
             'train_ppls': train_ppls,
             'val_ppls': val_ppls,
             'val_accs': val_accs,
@@ -118,23 +113,23 @@ class Trainer:
             'total_epochs': total_epochs,
             'stopped_early': stopped_early
         }
-        if hard_ppls:
-            result['hard_ppls'] = hard_ppls
-        return result
 
     def _early_stopping_loop(
         self,
         model: nn.Module,
-        val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
         train_fn: Callable[[], float],
+        val_fn: Callable[[], Tuple[float, Optional[float]]],
         max_epochs: int,
         patience: int,
-        verbose: bool,
-        use_routing: bool = False,
-        extra_eval_fn: Optional[Callable[[], float]] = None
+        verbose: bool
     ) -> Dict[str, Any]:
-        """Core early stopping loop shared by training methods."""
-        best_val_ppl = float('inf')
+        """Core early stopping loop shared by training methods.
+
+        Args:
+            train_fn: Returns average training loss
+            val_fn: Returns (val_ppl, val_acc or None)
+        """
+        best_ppl = float('inf')
         best_model_state = None
         patience_counter = 0
         best_epoch = 0
@@ -142,26 +137,22 @@ class Trainer:
         train_ppls: List[float] = []
         val_ppls: List[float] = []
         val_accs: List[float] = []
-        hard_ppls: List[float] = []
 
         for epoch in range(max_epochs):
-            # Train and evaluate
+            # Train
             train_ppl = float(np.exp(train_fn()))
             train_ppls.append(train_ppl)
 
-            val_stats = self.evaluate(model, val_batches, use_routing)
-            val_ppl, val_acc = val_stats['ppl'], val_stats['acc']
+            # Validate
+            val_ppl, val_acc = val_fn()
             val_ppls.append(val_ppl)
-            val_accs.append(val_acc)
-
-            hard_ppl = extra_eval_fn() if extra_eval_fn else None
-            if hard_ppl is not None:
-                hard_ppls.append(hard_ppl)
+            if val_acc is not None:
+                val_accs.append(val_acc)
 
             # Check for improvement
-            is_best = val_ppl < best_val_ppl
+            is_best = val_ppl < best_ppl
             if is_best:
-                best_val_ppl = val_ppl
+                best_ppl = val_ppl
                 best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 patience_counter = 0
                 best_epoch = epoch
@@ -170,7 +161,7 @@ class Trainer:
 
             if verbose:
                 self._log_epoch(epoch, max_epochs, train_ppl, val_ppl, val_acc,
-                               hard_ppl, is_best, patience_counter, patience)
+                               is_best, patience_counter, patience)
 
             # Early stopping check
             if patience_counter >= patience:
@@ -186,8 +177,8 @@ class Trainer:
                 print(f"\nRestored best model from epoch {best_epoch+1}")
 
         return self._build_training_result(
-            train_ppls, val_ppls, val_accs, hard_ppls,
-            best_epoch, best_val_ppl, epoch + 1, patience_counter >= patience
+            train_ppls, val_ppls, val_accs,
+            best_epoch, best_ppl, epoch + 1, patience_counter >= patience
         )
 
     def train_with_early_stopping(
@@ -201,7 +192,7 @@ class Trainer:
         grad_clip: float = 1.0,
         verbose: bool = True
     ) -> Dict[str, Any]:
-        """Train with early stopping."""
+        """Phase 1: Train model on full data with early stopping."""
         def train_fn() -> float:
             model.train()
             total_loss = 0.0
@@ -216,52 +207,78 @@ class Trainer:
                 total_loss += loss.item()
             return total_loss / len(train_batches)
 
+        def val_fn() -> Tuple[float, Optional[float]]:
+            stats = self.evaluate(model, val_batches)
+            return stats['ppl'], stats['acc']
+
         return self._early_stopping_loop(
-            model, val_batches, train_fn, max_epochs, patience, verbose
+            model, train_fn, val_fn, max_epochs, patience, verbose
         )
 
-    def train_new_block_with_early_stopping(
+    def train_block(
         self,
         model: nn.Module,
-        hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-        val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-        hard_examples: Dict[str, torch.Tensor],
+        hard_train: Dict[str, torch.Tensor],
+        hard_val: Dict[str, torch.Tensor],
         optimizer: torch.optim.Optimizer,
         start_block_idx: int,
-        use_routing: bool = False,
+        batch_size: int = 64,
         max_epochs: int = 50,
         patience: int = 3,
+        grad_clip: float = 1.0,
         verbose: bool = True
     ) -> Dict[str, Any]:
-        """Train new block on hard examples with early stopping.
+        """Phase 2+: Train new block on hard examples only.
+
+        Both training and validation are done within hard examples.
+        This ensures each block's training is independent.
 
         Args:
             model: Extended model with new block
-            hard_batches: Batches of hard examples
-            val_batches: Validation data batches
-            hard_examples: Dictionary with hidden_states and targets
+            hard_train: Hard examples for training (hidden_states, targets)
+            hard_val: Hard examples for validation (hidden_states, targets)
             optimizer: Optimizer for trainable parameters
             start_block_idx: Index of the new block to train
-            use_routing: If True, use routing for validation evaluation
+            batch_size: Batch size for training/validation
             max_epochs: Maximum training epochs
             patience: Early stopping patience
+            grad_clip: Gradient clipping value
             verbose: Print progress
         """
-        from .utils import train_new_block, evaluate_on_hard_examples
+        from .utils import create_hard_example_loader
+
+        train_batches = create_hard_example_loader(hard_train, batch_size)
 
         def train_fn() -> float:
-            return train_new_block(
-                model, hard_batches, optimizer,
-                self.device, start_block_idx
-            )
+            model.train()
+            total_loss = 0.0
+            for h, y in train_batches:
+                h, y = h.to(self.device), y.to(self.device)
+                optimizer.zero_grad()
+                logits = model.forward_from_block(h, start_block_idx).squeeze(1)
+                loss = F.cross_entropy(logits, y)
+                loss.backward()  # type: ignore[no-untyped-call]
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
+                total_loss += loss.item()
+            return total_loss / len(train_batches)
 
-        def extra_eval_fn() -> float:
-            return evaluate_on_hard_examples(
-                model, hard_examples, self.device,
-                batch_size=64, start_block_idx=start_block_idx
-            )
+        def val_fn() -> Tuple[float, Optional[float]]:
+            model.eval()
+            total_loss = 0.0
+            total_samples = 0
+            val_batches = create_hard_example_loader(hard_val, batch_size)
+            with torch.no_grad():
+                for h, y in val_batches:
+                    h, y = h.to(self.device), y.to(self.device)
+                    logits = model.forward_from_block(h, start_block_idx).squeeze(1)
+                    loss = F.cross_entropy(logits, y, reduction='sum')
+                    total_loss += loss.item()
+                    total_samples += len(y)
+            avg_loss = total_loss / total_samples
+            ppl = float(np.exp(avg_loss))
+            return ppl, None  # No accuracy for hard example training
 
         return self._early_stopping_loop(
-            model, val_batches, train_fn, max_epochs, patience, verbose,
-            use_routing, extra_eval_fn
+            model, train_fn, val_fn, max_epochs, patience, verbose
         )

@@ -22,8 +22,7 @@ from lego import (
     get_device,
     compute_confidence_threshold,
     collect_hard_examples,
-    create_hard_example_loader,
-    evaluate_on_hard_examples,
+    split_hard_examples,
     create_wikitext_dataloaders,
     ExperimentConfig,
 )
@@ -81,19 +80,15 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     )
     print(f"Threshold: {confidence_threshold:.4f}")
 
-    # Collect Hard Examples
+    # Collect Hard Examples and split into train/val
     hard_examples = collect_hard_examples(model, val_loader, confidence_threshold, device, block_idx=0)
     num_hard = len(hard_examples['targets'])
     total_samples = config.phase1_samples * 0.2 * config.seq_len
     print(f"Collected {num_hard:,} hard examples ({num_hard / total_samples * 100:.1f}%)")
 
-    # Evaluate Phase 1 on Hard Examples
-    # start_block_idx=1 means the new block (Block 2)
-    phase1_hard_ppl = evaluate_on_hard_examples(
-        model, hard_examples, device,
-        batch_size=config.phase2_batch, start_block_idx=1
-    )
-    print(f"Phase 1 Hard PPL: {phase1_hard_ppl:.2f}")
+    # Split hard examples for independent train/val
+    hard_train, hard_val = split_hard_examples(hard_examples, train_ratio=0.8)
+    print(f"Hard train: {len(hard_train['targets']):,} | Hard val: {len(hard_val['targets']):,}")
 
     # Phase 2: Extend Model with Block 2
     num_new_layers = config.phase2_layers - config.phase1_layers
@@ -112,28 +107,24 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.1f}%)")
     print(f"Blocks: {len(model_extended.blocks)} (layers per block: {[b.num_layers for b in model_extended.blocks]})")
 
-    hard_batches = create_hard_example_loader(hard_examples, config.phase2_batch)
     optimizer_block2 = torch.optim.AdamW(model_extended.parameters(), lr=config.phase2_lr)
 
     start_time = time.time()
-    result_phase2 = trainer.train_new_block_with_early_stopping(
+    result_phase2 = trainer.train_block(
         model=model_extended,
-        hard_batches=hard_batches,
-        val_batches=val_loader,
-        hard_examples=hard_examples,
+        hard_train=hard_train,
+        hard_val=hard_val,
         optimizer=optimizer_block2,
         start_block_idx=1,  # Train Block 2 (index 1)
-        use_routing=True,
+        batch_size=config.phase2_batch,
         max_epochs=config.phase2_epochs,
         patience=config.phase2_patience,
         verbose=True
     )
     phase2_time = time.time() - start_time
 
-    phase2_hard_ppl = result_phase2['hard_ppls'][result_phase2['best_epoch']]
-    print(f"\nPhase 2 Results: Hard PPL {phase2_hard_ppl:.2f} | Time {phase2_time:.2f}s")
-    print(f"Hard PPL Improvement: {phase1_hard_ppl - phase2_hard_ppl:+.2f} "
-          f"({(phase1_hard_ppl - phase2_hard_ppl) / phase1_hard_ppl * 100:+.1f}%)")
+    phase2_val_ppl = result_phase2['val_ppls'][result_phase2['best_epoch']]
+    print(f"\nPhase 2 Results: Val PPL (hard) {phase2_val_ppl:.2f} | Time {phase2_time:.2f}s")
 
     # Final Evaluation with routing (uses block thresholds)
     print(f"\n{'='*60}")
@@ -182,8 +173,8 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print("Summary")
     print(f"{'='*60}")
     print(f"Phase 1: Acc {phase1_acc:.2f}% | PPL {phase1_ppl:.2f}")
-    print(f"Phase 2: Acc {stats_routing['acc']*100:.2f}% | PPL {stats_routing['ppl']:.2f}")
-    print(f"Hard PPL: {phase1_hard_ppl:.2f} -> {phase2_hard_ppl:.2f}")
+    print(f"Phase 2 (hard val): PPL {phase2_val_ppl:.2f}")
+    print(f"Final (full val): Acc {stats_routing['acc']*100:.2f}% | PPL {stats_routing['ppl']:.2f}")
     print(f"\nTRUE Early Exit Stats:")
     print(f"  Shallow ratio: {early_exit_stats['shallow_ratio']:.1%}")
     print(f"  ACTUAL compute cost: {early_exit_stats['actual_compute_cost']:.1%}")
@@ -192,8 +183,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     return {
         'phase1_acc': phase1_acc,
         'phase1_ppl': phase1_ppl,
-        'phase1_hard_ppl': phase1_hard_ppl,
-        'phase2_hard_ppl': phase2_hard_ppl,
+        'phase2_val_ppl': phase2_val_ppl,
         'two_stage_acc': stats_routing['acc'] * 100,
         'two_stage_ppl': stats_routing['ppl'],
         'routing_shallow_ratio': stats_routing['shallow_ratio'],

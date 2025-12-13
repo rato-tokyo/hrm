@@ -72,13 +72,16 @@ trainer = Trainer(vocab_size=vocab_size, device=device)
 result = trainer.train_with_early_stopping(model, train_data, val_data, optimizer)
 ```
 
-### Hard Token収集
+### Hard Token収集とtrain/val分割
 
 ```python
 # block_idx=0 でBlock 1の信頼度から閾値を計算
 threshold = compute_confidence_threshold(model, val_data, target_ratio=0.5, device, block_idx=0)
 # block_idx=0 でBlock 1のhidden statesを収集
-hard_tokens = collect_hard_examples(model, val_data, threshold, device, block_idx=0)
+hard_examples = collect_hard_examples(model, val_data, threshold, device, block_idx=0)
+
+# Hard Examplesをtrain/valに分割（Phase 2以降の訓練用）
+hard_train, hard_val = split_hard_examples(hard_examples, train_ratio=0.8)
 ```
 
 ### Block 2 追加・訓練
@@ -88,9 +91,10 @@ hard_tokens = collect_hard_examples(model, val_data, threshold, device, block_id
 model_extended = model.extend(num_new_layers=2, threshold=threshold)
 # blocks = [LEGOBlock(2層, threshold), LEGOBlock(2層, 1.0)]
 
+# Hard Examples内でtrain/valが完結
 # start_block_idx=1 は新しいBlock（Block 2）
-result = trainer.train_new_block_with_early_stopping(
-    model_extended, hard_batches, val_data, hard_tokens, optimizer,
+result = trainer.train_block(
+    model_extended, hard_train, hard_val, optimizer,
     start_block_idx=1
 )
 ```
@@ -133,8 +137,8 @@ generated, stats = model.generate(prompt, max_new_tokens=32)
 
 | メソッド | 用途 |
 |---------|------|
-| `train_with_early_stopping(...)` | Block訓練 |
-| `train_new_block_with_early_stopping(..., start_block_idx)` | 新Block訓練 |
+| `train_with_early_stopping(...)` | Phase 1: 全データでBlock訓練 |
+| `train_block(hard_train, hard_val, ..., start_block_idx)` | Phase 2+: Hard Examples内で完結する訓練 |
 | `evaluate(model, val_batches, use_routing=False)` | 評価 |
 
 ### ユーティリティ
@@ -143,9 +147,8 @@ generated, stats = model.generate(prompt, max_new_tokens=32)
 |------|------|
 | `compute_confidence_threshold(..., block_idx)` | 閾値自動計算（block_idx必須） |
 | `collect_hard_examples(..., block_idx)` | Hard Token収集（block_idx必須） |
+| `split_hard_examples(hard_examples, train_ratio)` | Hard Examplesをtrain/valに分割 |
 | `create_hard_example_loader()` | バッチ化 |
-| `train_new_block(..., start_block_idx)` | 新Block訓練（1エポック） |
-| `evaluate_on_hard_examples(..., start_block_idx)` | Hard例評価 |
 
 ---
 
@@ -175,6 +178,7 @@ src/lego/
 2. **LEGOTransformerは橋渡し役** - Block間のルーティングと管理
 3. **start_block_idx / block_idx** - 常に明示的に指定（0-indexed）
 4. **デフォルト引数値禁止** - block_idx等のブロック指定引数にはデフォルト値を設定しない
+5. **Block訓練の独立性** - Phase 2以降の各Blockはtrain/valともにHard Examples内で完結。全データのval_batchesは使用しない
 
 ---
 

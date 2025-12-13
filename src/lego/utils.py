@@ -16,7 +16,6 @@ import random
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import Dict, List, Tuple
 
 
@@ -151,6 +150,43 @@ def collect_hard_examples(
     }
 
 
+def split_hard_examples(
+    hard_examples: Dict[str, torch.Tensor],
+    train_ratio: float
+) -> Tuple[Dict[str, torch.Tensor], Dict[str, torch.Tensor]]:
+    """
+    Split hard examples into train and validation sets.
+
+    Args:
+        hard_examples: Dictionary with 'hidden_states' and 'targets'
+        train_ratio: Ratio of data to use for training (e.g., 0.8 for 80%)
+
+    Returns:
+        Tuple of (train_examples, val_examples) dictionaries
+    """
+    hidden_states = hard_examples['hidden_states']
+    targets = hard_examples['targets']
+
+    num_samples = len(targets)
+    num_train = int(num_samples * train_ratio)
+
+    # Shuffle indices
+    indices = torch.randperm(num_samples)
+    train_indices = indices[:num_train]
+    val_indices = indices[num_train:]
+
+    train_examples = {
+        'hidden_states': hidden_states[train_indices],
+        'targets': targets[train_indices],
+    }
+    val_examples = {
+        'hidden_states': hidden_states[val_indices],
+        'targets': targets[val_indices],
+    }
+
+    return train_examples, val_examples
+
+
 def create_hard_example_loader(
     hard_examples: Dict[str, torch.Tensor],
     batch_size: int
@@ -182,121 +218,3 @@ def create_hard_example_loader(
     return batches
 
 
-def _forward_on_hard_batch(
-    model: nn.Module,
-    h_batch: torch.Tensor,
-    start_block_idx: int,
-    device: str
-) -> torch.Tensor:
-    """Forward through blocks starting from start_block_idx on a hard example batch.
-
-    Args:
-        model: Model with forward_from_block method
-        h_batch: Hidden states (batch_size, 1, dim)
-        start_block_idx: Index of first block to process
-        device: Device to run on
-
-    Returns:
-        Logits (batch_size, vocab_size)
-    """
-    h_batch = h_batch.to(device)
-    return model.forward_from_block(h_batch, start_block_idx).squeeze(1)
-
-
-def train_new_block(
-    model: nn.Module,
-    hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-    optimizer: torch.optim.Optimizer,
-    device: str,
-    start_block_idx: int
-) -> float:
-    """
-    Train new block on hard examples only.
-
-    Previous blocks are frozen. Only the new block is trained.
-
-    Args:
-        model: Extended model with new block
-        hard_batches: Batches of (hidden_state, target) pairs
-        optimizer: Optimizer for trainable parameters
-        device: Device to run training on
-        start_block_idx: Index of the new block to train
-
-    Returns:
-        Average training loss for this epoch
-    """
-    model.train()
-    total_loss = 0.0
-
-    for h, y in hard_batches:
-        y = y.to(device)
-        optimizer.zero_grad()
-
-        logits = _forward_on_hard_batch(model, h, start_block_idx, device)
-        loss = F.cross_entropy(logits, y)
-
-        loss.backward()  # type: ignore[no-untyped-call]
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-        optimizer.step()
-
-        total_loss += loss.item()
-
-    return total_loss / len(hard_batches)
-
-
-def _iterate_hard_batches(
-    hard_examples: Dict[str, torch.Tensor],
-    batch_size: int
-) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-    """Create sequential batches from hard examples (no shuffling)."""
-    hidden_states = hard_examples['hidden_states']
-    targets = hard_examples['targets']
-    num_samples = len(targets)
-
-    batches = []
-    for i in range(0, num_samples, batch_size):
-        h_batch = hidden_states[i:i + batch_size].unsqueeze(1)
-        t_batch = targets[i:i + batch_size]
-        batches.append((h_batch, t_batch))
-
-    return batches
-
-
-def evaluate_on_hard_examples(
-    model: nn.Module,
-    hard_examples: Dict[str, torch.Tensor],
-    device: str,
-    batch_size: int = 64,
-    start_block_idx: int = 1
-) -> float:
-    """
-    Evaluate model performance on hard examples only.
-
-    Args:
-        model: Model to evaluate
-        hard_examples: Dictionary with 'hidden_states' and 'targets'
-        device: Device to run evaluation on
-        batch_size: Batch size for evaluation
-        start_block_idx: Index of block to start processing from
-
-    Returns:
-        Perplexity on hard examples
-    """
-    model.eval()
-    total_loss = 0.0
-    total_samples = 0
-
-    batches = _iterate_hard_batches(hard_examples, batch_size)
-
-    with torch.no_grad():
-        for h_batch, y_batch in batches:
-            y_batch = y_batch.to(device)
-            logits = _forward_on_hard_batch(model, h_batch, start_block_idx, device)
-            loss = F.cross_entropy(logits, y_batch, reduction='sum')
-
-            total_loss += loss.item()
-            total_samples += len(y_batch)
-
-    avg_loss = total_loss / total_samples
-    ppl = torch.exp(torch.tensor(avg_loss)).item()
-    return ppl
