@@ -4,29 +4,25 @@ LEGO: Layered Ensemble with Gradual Optimization
 A modular training framework with 2 core options.
 
 Model:
-- LEGOTransformer: Unified model supporting standard, deep supervision, and early exit
+- LEGOTransformer: Unified model supporting standard and early exit
 
 Core Options (via TrainingConfig):
-- stages: Stage-based training configuration
+- output_layer: Which layer to compute loss
 - routing_threshold: Early exit at inference
 
 Training Strategies:
-1. Standard: Final layer only (1 stage)
-2. Deep Supervision: All layers equally (all stages)
-3. Hard Example Mining: 2-stage training with hard example focus
+1. Standard: Final layer only
+2. Hard Example Mining: 2-phase training with hard example focus
 
 Usage:
-    from lego import LEGOTransformer, Trainer, TrainingConfig, StageConfig
+    from lego import LEGOTransformer, Trainer, TrainingConfig
 
     # Create model
     model = LEGOTransformer(vocab_size=1000, dim=64, num_layers=3)
 
-    # Configure training (2 core options)
+    # Configure training
     config = TrainingConfig(
-        stages=[
-            StageConfig(layers=(1, 2), loss_weight=0.7),
-            StageConfig(layers=(3, 3), loss_weight=0.3),
-        ],
+        output_layer=3,
         routing_threshold=0.95,
     )
 
@@ -42,18 +38,15 @@ Usage:
 
 References:
 - LEGO: Layered Ensemble with Gradual Optimization
-- Deep Supervision: Lee et al., 2015
 - Early Exit: Teerapittayanon et al., 2016
 - Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
 """
 
 from .models import LEGOTransformer
 from .trainer import (
-    StageConfig,
     TrainingConfig,
     Trainer,
     create_standard_config,
-    create_deep_supervision_config,
 )
 from .utils import (
     LEGOConfig,
@@ -78,11 +71,9 @@ __all__ = [
     # Models
     'LEGOTransformer',
     # Trainer
-    'StageConfig',
     'TrainingConfig',
     'Trainer',
     'create_standard_config',
-    'create_deep_supervision_config',
     # LEGO Config
     'LEGOConfig',
     'compute_confidence',

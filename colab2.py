@@ -42,7 +42,6 @@ from lego import (
     LEGOTransformer,
     Trainer,
     TrainingConfig,
-    StageConfig,
     create_standard_config,
     LEGOConfig,
     compute_confidence_threshold,
@@ -243,7 +242,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
 
     # Configure training for Phase 2 (with routing for evaluation)
     phase2_config = TrainingConfig(
-        stages=[StageConfig(layers=(config.lego.phase2_layers, config.lego.phase2_layers), loss_weight=1.0)],
+        output_layer=config.lego.phase2_layers,
         routing_threshold=confidence_threshold,
         exit_layer=config.lego.phase1_layers
     )

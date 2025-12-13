@@ -2,17 +2,15 @@
 LEGO Framework - Training Configuration
 
 Training Strategies:
-1. Standard: Final layer loss only (1 stage)
-2. Deep Supervision: Loss at all layers (all stages)
-3. Hard Example Mining: 2-stage training with hard example focus
+1. Standard: Final layer loss only
+2. Hard Example Mining: 2-phase training with hard example focus
 
 Core Options:
-- stages: Which stages to train (stage-based configuration)
+- output_layer: Which layer to compute loss (default: final layer)
 - routing_threshold: Early Exit at inference
 
 References:
 - LEGO: Layered Ensemble with Gradual Optimization
-- Deep Supervision: Lee et al., 2015
 - Early Exit: Teerapittayanon et al., 2016
 - Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
 """
@@ -22,40 +20,24 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from typing import Dict, List, Tuple, Any
-from dataclasses import dataclass, field
-
-
-@dataclass
-class StageConfig:
-    """
-    Configuration for a single stage.
-
-    A stage represents a contiguous group of layers that are trained together.
-
-    Args:
-        layers: Tuple of (start_layer, end_layer) inclusive, 1-indexed.
-               e.g., (1, 2) means layers 1 and 2
-        loss_weight: Loss weight for this stage (default: 1.0)
-    """
-    layers: Tuple[int, int]
-    loss_weight: float = 1.0
+from dataclasses import dataclass
 
 
 @dataclass
 class TrainingConfig:
     """
-    Stage-based training configuration for LEGO framework.
+    Training configuration for LEGO framework.
 
     2 core options:
-    1. stages: Which stages to train (stage-based configuration)
+    1. output_layer: Which layer to compute loss (0 = final layer)
     2. routing_threshold: When to exit early (inference efficiency)
 
     Args:
-        stages: List of StageConfig defining which layer groups to train
+        output_layer: Layer index for loss computation (0 or negative = final layer)
         routing_threshold: Confidence threshold for early exit (0 = disabled)
         exit_layer: Which layer to use for early exit (1-indexed)
     """
-    stages: List[StageConfig] = field(default_factory=list)
+    output_layer: int = 0  # 0 = final layer
     routing_threshold: float = 0.0
     exit_layer: int = 1
 
@@ -64,42 +46,12 @@ class TrainingConfig:
         """Returns True if early exit is enabled."""
         return self.routing_threshold > 0
 
-    def describe(self) -> str:
-        """Human-readable description."""
-        stages_str = ", ".join([
-            f"L{s.layers[0]}-{s.layers[1]}:{s.loss_weight:.2f}"
-            for s in self.stages
-        ])
-        desc = f"Stages: [{stages_str}]"
-
-        if self.has_routing:
-            desc += f", Early Exit: threshold={self.routing_threshold}"
-
-        return desc
-
 
 def create_standard_config(num_layers: int = 3) -> TrainingConfig:
     """
     Create Standard LLM config (final layer loss only).
-
-    Standard = 1 stage containing only the final layer.
     """
-    return TrainingConfig(stages=[
-        StageConfig(layers=(num_layers, num_layers), loss_weight=1.0)
-    ])
-
-
-def create_deep_supervision_config(num_layers: int = 3) -> TrainingConfig:
-    """
-    Create Deep Supervision config (equal loss on all layers).
-
-    Deep Supervision = num_layers stages, each containing one layer.
-    """
-    weight = 1.0 / num_layers
-    return TrainingConfig(stages=[
-        StageConfig(layers=(i, i), loss_weight=weight)
-        for i in range(1, num_layers + 1)
-    ])
+    return TrainingConfig(output_layer=num_layers)
 
 
 class Trainer:
@@ -107,7 +59,7 @@ class Trainer:
     Trainer for LEGO models.
 
     Supports 2 core options:
-    - stages: Stage-based training configuration
+    - output_layer: Which layer to compute loss
     - routing_threshold: Early exit evaluation
     """
 
@@ -118,52 +70,12 @@ class Trainer:
 
     def compute_loss(self, model: nn.Module, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
         """
-        Compute weighted loss across stages (optimized).
+        Compute loss at the specified output layer.
 
-        Optimization: Use fast path (forward()) when only final layer is needed.
-        Maintains full compatibility with both core options:
-        - stages: Determines which stages to compute
-        - routing_threshold: Independent (used in evaluation only)
+        Uses forward() for final layer (fast path).
         """
-        # Determine which layers need loss computation from stages
-        num_layers = model.num_layers if hasattr(model, 'num_layers') else len(model.layers)
-
-        # Convert stages to layer-weight pairs
-        layer_weights: Dict[int, float] = {}
-        for stage in self.config.stages:
-            start, end = stage.layers
-            for layer_idx in range(start, end + 1):
-                if layer_idx <= num_layers:
-                    # Accumulate weights if multiple stages cover same layer
-                    layer_weights[layer_idx] = layer_weights.get(layer_idx, 0.0) + stage.loss_weight
-
-        active_layers = [(idx, weight) for idx, weight in layer_weights.items() if weight > 0]
-
-        # Fast path: Only final layer needed (Standard Transformer pattern)
-        if len(active_layers) == 1 and active_layers[0][0] == num_layers:
-            output = model(x)  # Use forward() instead of forward_all_layers()
-            weight = active_layers[0][1]
-            loss = F.cross_entropy(output.view(-1, self.vocab_size), y.view(-1))
-            return weight * loss if weight != 1.0 else loss
-
-        # Fallback: No active layers, use final layer
-        if not active_layers:
-            output = model(x)
-            return F.cross_entropy(output.view(-1, self.vocab_size), y.view(-1))
-
-        # General path: Multiple layers or non-final layer (Deep Supervision pattern)
-        all_outputs = model.forward_all_layers(x)
-        total_loss: torch.Tensor = torch.tensor(0.0, device=x.device)
-
-        for layer_idx, weight in active_layers:
-            output = all_outputs[layer_idx - 1]
-            layer_loss = F.cross_entropy(
-                output.view(-1, self.vocab_size),
-                y.view(-1)
-            )
-            total_loss = total_loss + weight * layer_loss
-
-        return total_loss
+        output = model(x)
+        return F.cross_entropy(output.view(-1, self.vocab_size), y.view(-1))
 
     def create_optimizer(self, model: nn.Module, base_lr: float) -> torch.optim.Optimizer:
         """Create optimizer with uniform learning rate."""

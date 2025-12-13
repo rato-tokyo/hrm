@@ -20,7 +20,6 @@ from lego import (
     LEGOTransformer,
     Trainer,
     TrainingConfig,
-    StageConfig,
     LEGOConfig,
     compute_confidence,
     compute_confidence_threshold,
@@ -29,7 +28,6 @@ from lego import (
     train_upper_layers,
     evaluate_on_hard_examples,
     create_standard_config,
-    create_deep_supervision_config,
 )
 
 from helpers import set_seed, create_synthetic_data, assert_close
@@ -66,23 +64,13 @@ def test_training_config():
 
     # Standard config
     std_config = create_standard_config(num_layers=3)
-    assert len(std_config.stages) == 1
-    assert std_config.stages[0].layers == (3, 3)
-    assert std_config.stages[0].loss_weight == 1.0
+    assert std_config.output_layer == 3
     assert std_config.has_routing == False
     print("  Standard config: OK")
 
-    # Deep supervision config
-    ds_config = create_deep_supervision_config(num_layers=3)
-    assert len(ds_config.stages) == 3
-    for i, stage in enumerate(ds_config.stages):
-        assert stage.layers == (i+1, i+1)
-        assert_close(stage.loss_weight, 1.0/3, f"stage{i+1}.loss_weight")
-    print("  Deep supervision config: OK")
-
     # Routing config
     routing_config = TrainingConfig(
-        stages=[StageConfig(layers=(4, 4), loss_weight=1.0)],
+        output_layer=4,
         routing_threshold=0.15,
         exit_layer=2
     )
@@ -365,7 +353,7 @@ def test_evaluate_on_hard_examples():
 # ==============================================================================
 
 def test_trainer_compute_loss():
-    """Test Trainer.compute_loss with different configs."""
+    """Test Trainer.compute_loss."""
     print("\n[TEST] Trainer.compute_loss")
 
     set_seed(42)
@@ -382,14 +370,6 @@ def test_trainer_compute_loss():
 
     expected_loss_std = 5.0274624825
     assert_close(loss_std.item(), expected_loss_std, "standard loss")
-
-    # Deep supervision config
-    ds_config = create_deep_supervision_config(num_layers=2)
-    trainer_ds = Trainer(ds_config, vocab_size=100)
-    loss_ds = trainer_ds.compute_loss(model, x, y)
-
-    expected_loss_ds = 4.9431886673
-    assert_close(loss_ds.item(), expected_loss_ds, "deep supervision loss")
 
 
 # ==============================================================================
@@ -439,7 +419,7 @@ def test_trainer_evaluate_routing():
     val_batches = create_synthetic_data(num_batches=4, batch_size=8, seq_len=16, vocab_size=100)
 
     config = TrainingConfig(
-        stages=[StageConfig(layers=(4, 4), loss_weight=1.0)],
+        output_layer=4,
         routing_threshold=0.02,
         exit_layer=2
     )
@@ -523,7 +503,7 @@ def test_lego_integration_mini():
 
     # Final evaluation with routing
     config = TrainingConfig(
-        stages=[StageConfig(layers=(4, 4), loss_weight=1.0)],
+        output_layer=4,
         routing_threshold=threshold,
         exit_layer=2
     )
