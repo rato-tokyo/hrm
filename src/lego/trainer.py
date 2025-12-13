@@ -67,85 +67,51 @@ class Trainer:
 
     @torch.no_grad()
     def evaluate(self, model: nn.Module, val_batches: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, float]:
-        """Evaluate model with optional early exit."""
+        """Evaluate model with optional early exit routing."""
         model.eval()
 
-        if not self.config.has_routing:
-            return self._evaluate_standard(model, val_batches)
-        else:
-            return self._evaluate_routing(model, val_batches)
-
-    def _evaluate_standard(self, model: nn.Module, val_batches: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, float]:
-        """Standard evaluation using final layer output."""
-        total_loss = 0.0
-        total_correct = 0
-        total_tokens = 0
-
-        for x, y in val_batches:
-            x, y = x.to(self.device), y.to(self.device)
-            output = model(x)
-            loss = F.cross_entropy(output.view(-1, self.vocab_size), y.view(-1), reduction='sum')
-            preds = output.argmax(dim=-1)
-
-            total_loss += loss.item()
-            total_correct += (preds == y).sum().item()
-            total_tokens += y.numel()
-
-        avg_loss = total_loss / total_tokens
-        return {
-            'ppl': float(np.exp(avg_loss)),
-            'acc': total_correct / total_tokens,
-            'shallow_ratio': 0.0,
-            'compute_cost': 1.0,
-        }
-
-    def _evaluate_routing(self, model: nn.Module, val_batches: List[Tuple[torch.Tensor, torch.Tensor]]) -> Dict[str, float]:
-        """Evaluation with early exit routing."""
         total_loss = 0.0
         total_correct = 0
         total_tokens = 0
         total_shallow = 0.0
         total_compute = 0.0
 
+        use_routing = self.config.has_routing
         threshold = self.config.routing_threshold
         exit_layer = self.config.exit_layer
 
         for x, y in val_batches:
             x, y = x.to(self.device), y.to(self.device)
 
-            outputs = model.forward_train(x)
-            shallow_logits = outputs['shallow_logits']
-            deep_logits = outputs['deep_logits']
-            confidence = outputs['confidence']
+            if use_routing:
+                outputs = model.forward_train(x)
+                confidence = outputs['confidence']
+                mask = (confidence >= threshold).unsqueeze(-1)
+                logits = torch.where(mask, outputs['shallow_logits'], outputs['deep_logits'])
 
-            mask = (confidence >= threshold).unsqueeze(-1)
-            routed_logits = torch.where(mask, shallow_logits, deep_logits)
+                batch_size, seq_len = x.shape
+                total_count = batch_size * seq_len
+                shallow_count = mask.sum().item()
+                total_shallow += shallow_count
+                deep_count = total_count - shallow_count
+                num_layers = model.num_layers
+                total_compute += (shallow_count * exit_layer + deep_count * num_layers) / (total_count * num_layers)
+            else:
+                logits = model(x)
 
-            loss = F.cross_entropy(routed_logits.view(-1, self.vocab_size), y.view(-1), reduction='sum')
-            preds = routed_logits.argmax(dim=-1)
-
+            loss = F.cross_entropy(logits.view(-1, self.vocab_size), y.view(-1), reduction='sum')
             total_loss += loss.item()
-            total_correct += int((preds == y).sum().item())
+            total_correct += (logits.argmax(dim=-1) == y).sum().item()
             total_tokens += y.numel()
 
-            batch_size, seq_len = x.shape
-            total_count = batch_size * seq_len
-            shallow_count = mask.sum().item()
-            deep_count = total_count - shallow_count
-
-            total_shallow += shallow_count
-            num_layers = model.num_layers
-            compute = (shallow_count * exit_layer + deep_count * num_layers) / (total_count * num_layers)
-            total_compute += compute
-
-        total_all_tokens = sum(x.shape[0] * x.shape[1] for x, _ in val_batches)
         avg_loss = total_loss / total_tokens
+        total_all_tokens = sum(x.shape[0] * x.shape[1] for x, _ in val_batches)
 
         return {
             'ppl': float(np.exp(avg_loss)),
             'acc': total_correct / total_tokens,
-            'shallow_ratio': total_shallow / total_all_tokens,
-            'compute_cost': total_compute / len(val_batches),
+            'shallow_ratio': total_shallow / total_all_tokens if use_routing else 0.0,
+            'compute_cost': total_compute / len(val_batches) if use_routing else 1.0,
         }
 
     def train_epoch(self, model: nn.Module, train_batches: List[Tuple[torch.Tensor, torch.Tensor]],

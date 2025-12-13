@@ -10,12 +10,7 @@ sys.path.insert(0, 'src')
 import torch
 from typing import List, Tuple
 
-from lego import set_seed  # Re-export from lego
-
-
-def get_device() -> str:
-    """Get available compute device (CUDA if available, otherwise CPU)."""
-    return 'cuda' if torch.cuda.is_available() else 'cpu'
+from lego import set_seed, get_device  # Re-export from lego
 
 
 def create_wikitext_dataloaders(

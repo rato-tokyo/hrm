@@ -7,26 +7,7 @@ Provides deterministic test utilities for reproducible testing.
 import sys
 sys.path.insert(0, 'src')
 
-import torch
-from typing import List, Tuple
-
-from lego import set_seed  # Re-export from lego
-
-
-def create_synthetic_data(
-    num_batches: int = 4,
-    batch_size: int = 8,
-    seq_len: int = 16,
-    vocab_size: int = 100
-) -> List[Tuple[torch.Tensor, torch.Tensor]]:
-    """Create deterministic synthetic data."""
-    batches = []
-    for i in range(num_batches):
-        torch.manual_seed(42 + i)  # Deterministic per batch
-        x = torch.randint(0, vocab_size, (batch_size, seq_len))
-        y = torch.randint(0, vocab_size, (batch_size, seq_len))
-        batches.append((x, y))
-    return batches
+from lego import set_seed, create_synthetic_data  # Re-export from lego
 
 
 def assert_close(actual: float, expected: float, name: str, rtol: float = 1e-4) -> None:
