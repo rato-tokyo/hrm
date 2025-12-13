@@ -1,3 +1,6 @@
+From https://github.com/rato-tokyo/hrm
+ * branch            main       -> FETCH_HEAD
+Already up to date.
 ============================================================
 Hard Example Mining + Two-Stage Inference
 ============================================================
@@ -8,11 +11,11 @@ Experiment Design:
   Phase 1: Train 2-layer model
   Compute: Auto-adjust threshold to collect 50% hard examples
   Phase 2: Add 2 layers → Train on hard examples
-  Eval: Two-stage inference (Layer 2 or Layer 4) using LEGO's Early Exit
+  Eval: Two-stage inference (Layer 2 or Layer 4) using Early Exit
 
 
 ============================================================
-Standard Transformer - Hard Example Mining
+LEGOTransformer - Hard Example Mining
 ============================================================
 
 Phase 1: Train 2-layer model
@@ -34,7 +37,7 @@ Restored best model from epoch 3
 Phase 1 Results:
   Best Acc: 16.03%
   Best PPL: 986.43
-  Time: 22.41s
+  Time: 22.42s
 
 ============================================================
 Computing Confidence Threshold (target ratio: 50%)
@@ -77,21 +80,21 @@ Phase 2: Add 2 layers → Train on hard examples
   Learning rate: 1.0e-04
   Patience: 3
   Max epochs: 50
-Epoch 1/50 - Train PPL: 2934.9146 | Val PPL: 987.12 | Val Acc: 15.72% | Hard PPL: 1797.55
+Epoch 1/50 - Train PPL: 2934.9144 | Val PPL: 987.12 | Val Acc: 15.72% | Hard PPL: 1797.55
   → New best (val_ppl: 987.12)
-Epoch 2/50 - Train PPL: 1541.0128 | Val PPL: 883.26 | Val Acc: 15.82% | Hard PPL: 1274.81
+Epoch 2/50 - Train PPL: 1541.0129 | Val PPL: 883.26 | Val Acc: 15.82% | Hard PPL: 1274.81
   → New best (val_ppl: 883.26)
-Epoch 3/50 - Train PPL: 1175.0933 | Val PPL: 844.55 | Val Acc: 15.85% | Hard PPL: 1032.28
+Epoch 3/50 - Train PPL: 1175.0932 | Val PPL: 844.55 | Val Acc: 15.85% | Hard PPL: 1032.28
   → New best (val_ppl: 844.55)
-Epoch 4/50 - Train PPL: 987.6181 | Val PPL: 832.64 | Val Acc: 15.78% | Hard PPL: 893.20
+Epoch 4/50 - Train PPL: 987.6182 | Val PPL: 832.64 | Val Acc: 15.78% | Hard PPL: 893.20
   → New best (val_ppl: 832.64)
-Epoch 5/50 - Train PPL: 870.6470 | Val PPL: 829.80 | Val Acc: 15.76% | Hard PPL: 798.39
+Epoch 5/50 - Train PPL: 870.6471 | Val PPL: 829.80 | Val Acc: 15.76% | Hard PPL: 798.39
   → New best (val_ppl: 829.80)
-Epoch 6/50 - Train PPL: 786.4368 | Val PPL: 829.89 | Val Acc: 15.78% | Hard PPL: 726.42
+Epoch 6/50 - Train PPL: 786.4367 | Val PPL: 829.89 | Val Acc: 15.78% | Hard PPL: 726.42
   → No improvement (1/3)
-Epoch 7/50 - Train PPL: 720.2858 | Val PPL: 829.78 | Val Acc: 15.77% | Hard PPL: 668.08
+Epoch 7/50 - Train PPL: 720.2856 | Val PPL: 829.78 | Val Acc: 15.77% | Hard PPL: 668.08
   → New best (val_ppl: 829.78)
-Epoch 8/50 - Train PPL: 665.4617 | Val PPL: 830.82 | Val Acc: 15.76% | Hard PPL: 618.80
+Epoch 8/50 - Train PPL: 665.4618 | Val PPL: 830.82 | Val Acc: 15.76% | Hard PPL: 618.80
   → No improvement (1/3)
 Epoch 9/50 - Train PPL: 618.4207 | Val PPL: 832.58 | Val Acc: 15.76% | Hard PPL: 575.97
   → No improvement (2/3)
@@ -107,7 +110,7 @@ Phase 2 Results:
   Best Val PPL: 829.78
   Best Hard PPL: 668.08
   Hard PPL Improvement: +2095.60 (+75.8%)
-  Time: 66.58s
+  Time: 67.27s
 
 ============================================================
 Final Evaluation (Two-Stage Inference)

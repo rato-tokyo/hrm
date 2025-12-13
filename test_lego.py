@@ -343,25 +343,14 @@ def test_train_upper_layers():
     threshold = 0.0710195750
     hard_examples = collect_hard_examples(model_phase1, val_batches, threshold, device='cpu')
 
-    # Create extended model
+    # Create extended model using extend_from
     set_seed(42)
-    model_extended = LEGOTransformer(
-        vocab_size=100, dim=32, num_layers=4, num_heads=2,
-        exit_layer=2, routing_threshold=threshold
+    model_extended = LEGOTransformer.extend_from(
+        source_model=model_phase1,
+        num_layers=4,
+        routing_threshold=threshold,
+        freeze_lower=True
     )
-
-    # Copy weights from Phase 1
-    model_extended.embedding.load_state_dict(model_phase1.embedding.state_dict())
-    for i in range(2):
-        model_extended.layers[i].load_state_dict(model_phase1.layers[i].state_dict())
-    model_extended.output_head.load_state_dict(model_phase1.output_head.state_dict())
-
-    # Freeze lower layers
-    for param in model_extended.embedding.parameters():
-        param.requires_grad = False
-    for i in range(2):
-        for param in model_extended.layers[i].parameters():
-            param.requires_grad = False
 
     # Create hard example loader with fixed seed
     set_seed(42)
@@ -537,25 +526,14 @@ def test_lego_integration_mini():
     expected_phase1_hard_ppl = 160.6869812012
     assert_close(phase1_hard_ppl, expected_phase1_hard_ppl, "phase1_hard_ppl")
 
-    # Phase 2: Create extended model
+    # Phase 2: Create extended model using extend_from
     set_seed(42)
-    model_extended = LEGOTransformer(
-        vocab_size=100, dim=32, num_layers=4, num_heads=2,
-        exit_layer=2, routing_threshold=threshold
+    model_extended = LEGOTransformer.extend_from(
+        source_model=model_phase1,
+        num_layers=4,
+        routing_threshold=threshold,
+        freeze_lower=True
     )
-
-    # Copy weights
-    model_extended.embedding.load_state_dict(model_phase1.embedding.state_dict())
-    for i in range(2):
-        model_extended.layers[i].load_state_dict(model_phase1.layers[i].state_dict())
-    model_extended.output_head.load_state_dict(model_phase1.output_head.state_dict())
-
-    # Freeze lower layers
-    for param in model_extended.embedding.parameters():
-        param.requires_grad = False
-    for i in range(2):
-        for param in model_extended.layers[i].parameters():
-            param.requires_grad = False
 
     # Train upper layers
     set_seed(42)
