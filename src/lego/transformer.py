@@ -144,8 +144,6 @@ class LEGOTransformer(nn.Module):
             output: Logits (batch_size, seq_len, vocab_size)
             stats: Dictionary with exit_block, mean_confidence, shallow_ratio, compute_cost
         """
-        batch_size, seq_len = x.shape
-
         h = self.embedding(x)
 
         for block_idx, block in enumerate(self.blocks):

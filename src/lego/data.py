@@ -30,8 +30,8 @@ def create_wikitext_dataloaders(
     """
     try:
         from datasets import load_dataset
-    except ImportError:
-        raise ImportError("Please install datasets: pip install datasets")
+    except ImportError as exc:
+        raise ImportError("Please install datasets: pip install datasets") from exc
 
     torch.manual_seed(seed)
     dataset = load_dataset('wikitext', 'wikitext-2-raw-v1')
