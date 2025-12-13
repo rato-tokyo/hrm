@@ -3,9 +3,8 @@ LEGO: Layered Ensemble with Gradual Optimization
 
 A modular training framework with 2 core options.
 
-Base Models:
-- StandardTransformer: Final layer loss only
-- DeepSupervisionTransformer: Loss at all layers with early exit support
+Model:
+- LEGOTransformer: Unified model supporting standard, deep supervision, and early exit
 
 Core Options (via TrainingConfig):
 - stages: Stage-based training configuration
@@ -17,10 +16,10 @@ Training Strategies:
 3. Hard Example Mining: 2-stage training with hard example focus
 
 Usage:
-    from lego import DeepSupervisionTransformer, Trainer, TrainingConfig, StageConfig
+    from lego import LEGOTransformer, Trainer, TrainingConfig, StageConfig
 
     # Create model
-    model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
+    model = LEGOTransformer(vocab_size=1000, dim=64, num_layers=3)
 
     # Configure training (2 core options)
     config = TrainingConfig(
@@ -49,6 +48,7 @@ References:
 """
 
 from .models import (
+    LEGOTransformer,
     StandardTransformer,
     DeepSupervisionTransformer,
 )
@@ -80,8 +80,9 @@ __version__ = "0.2.0"
 
 __all__ = [
     # Models
-    'StandardTransformer',
-    'DeepSupervisionTransformer',
+    'LEGOTransformer',
+    'StandardTransformer',  # Alias for backward compatibility
+    'DeepSupervisionTransformer',  # Alias for backward compatibility
     # Trainer
     'StageConfig',
     'TrainingConfig',

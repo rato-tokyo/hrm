@@ -18,8 +18,7 @@ import torch.nn.functional as F
 from typing import List, Tuple
 
 from lego import (
-    StandardTransformer,
-    DeepSupervisionTransformer,
+    LEGOTransformer,
     Trainer,
     TrainingConfig,
     StageConfig,
@@ -130,15 +129,15 @@ def test_training_config():
 
 
 # ==============================================================================
-# Test: StandardTransformer
+# Test: LEGOTransformer (standard mode)
 # ==============================================================================
 
-def test_standard_transformer():
-    """Test StandardTransformer forward passes."""
-    print("\n[TEST] StandardTransformer")
+def test_lego_transformer_standard():
+    """Test LEGOTransformer forward passes (standard mode)."""
+    print("\n[TEST] LEGOTransformer (standard)")
 
     set_seed(42)
-    model = StandardTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
+    model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
 
     # Check architecture
     assert model.num_layers == 2
@@ -165,15 +164,15 @@ def test_standard_transformer():
 
 
 # ==============================================================================
-# Test: DeepSupervisionTransformer
+# Test: LEGOTransformer (early exit mode)
 # ==============================================================================
 
-def test_deep_supervision_transformer():
-    """Test DeepSupervisionTransformer forward passes."""
-    print("\n[TEST] DeepSupervisionTransformer")
+def test_lego_transformer_early_exit():
+    """Test LEGOTransformer forward passes (early exit mode)."""
+    print("\n[TEST] LEGOTransformer (early exit)")
 
     set_seed(42)
-    model = DeepSupervisionTransformer(
+    model = LEGOTransformer(
         vocab_size=100, dim=32, num_layers=4, num_heads=2,
         exit_layer=2, routing_threshold=0.5
     )
@@ -225,7 +224,7 @@ def test_compute_confidence():
     print("\n[TEST] compute_confidence")
 
     set_seed(42)
-    model = StandardTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
+    model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
 
     set_seed(42)
     x = torch.randint(0, 100, (2, 8))
@@ -254,7 +253,7 @@ def test_compute_confidence_threshold():
     print("\n[TEST] compute_confidence_threshold")
 
     set_seed(42)
-    model = StandardTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
+    model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
     val_batches = create_synthetic_data(num_batches=4, batch_size=8, seq_len=16, vocab_size=100)
 
     threshold = compute_confidence_threshold(model, val_batches, target_ratio=0.5, device='cpu')
@@ -272,7 +271,7 @@ def test_collect_hard_examples():
     print("\n[TEST] collect_hard_examples")
 
     set_seed(42)
-    model = StandardTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
+    model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
     val_batches = create_synthetic_data(num_batches=4, batch_size=8, seq_len=16, vocab_size=100)
 
     threshold = 0.0710195750  # From previous test
@@ -308,7 +307,7 @@ def test_create_hard_example_loader():
     print("\n[TEST] create_hard_example_loader")
 
     set_seed(42)
-    model = StandardTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
+    model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
     val_batches = create_synthetic_data(num_batches=4, batch_size=8, seq_len=16, vocab_size=100)
 
     threshold = 0.0710195750
@@ -338,7 +337,7 @@ def test_train_upper_layers():
 
     # Create Phase 1 model
     set_seed(42)
-    model_phase1 = StandardTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
+    model_phase1 = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
     val_batches = create_synthetic_data(num_batches=4, batch_size=8, seq_len=16, vocab_size=100)
 
     threshold = 0.0710195750
@@ -346,7 +345,7 @@ def test_train_upper_layers():
 
     # Create extended model
     set_seed(42)
-    model_extended = DeepSupervisionTransformer(
+    model_extended = LEGOTransformer(
         vocab_size=100, dim=32, num_layers=4, num_heads=2,
         exit_layer=2, routing_threshold=threshold
     )
@@ -394,7 +393,7 @@ def test_evaluate_on_hard_examples():
     print("\n[TEST] evaluate_on_hard_examples")
 
     set_seed(42)
-    model = StandardTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
+    model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
     val_batches = create_synthetic_data(num_batches=4, batch_size=8, seq_len=16, vocab_size=100)
 
     threshold = 0.0710195750
@@ -419,7 +418,7 @@ def test_trainer_compute_loss():
     print("\n[TEST] Trainer.compute_loss")
 
     set_seed(42)
-    model = StandardTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
+    model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
 
     set_seed(42)
     x = torch.randint(0, 100, (2, 8))
@@ -451,7 +450,7 @@ def test_trainer_evaluate_standard():
     print("\n[TEST] Trainer.evaluate (standard)")
 
     set_seed(42)
-    model = StandardTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
+    model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
     val_batches = create_synthetic_data(num_batches=4, batch_size=8, seq_len=16, vocab_size=100)
 
     config = create_standard_config(num_layers=2)
@@ -482,7 +481,7 @@ def test_trainer_evaluate_routing():
     print("\n[TEST] Trainer.evaluate (routing)")
 
     set_seed(42)
-    model = DeepSupervisionTransformer(
+    model = LEGOTransformer(
         vocab_size=100, dim=32, num_layers=4, num_heads=2,
         exit_layer=2, routing_threshold=0.02
     )
@@ -516,7 +515,7 @@ def test_lego_integration_mini():
 
     # Phase 1: Create and evaluate shallow model
     set_seed(42)
-    model_phase1 = StandardTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
+    model_phase1 = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
     val_batches = create_synthetic_data(num_batches=4, batch_size=8, seq_len=16, vocab_size=100)
 
     # Compute threshold
@@ -540,7 +539,7 @@ def test_lego_integration_mini():
 
     # Phase 2: Create extended model
     set_seed(42)
-    model_extended = DeepSupervisionTransformer(
+    model_extended = LEGOTransformer(
         vocab_size=100, dim=32, num_layers=4, num_heads=2,
         exit_layer=2, routing_threshold=threshold
     )
@@ -615,8 +614,8 @@ def main():
     tests = [
         test_lego_config,
         test_training_config,
-        test_standard_transformer,
-        test_deep_supervision_transformer,
+        test_lego_transformer_standard,
+        test_lego_transformer_early_exit,
         test_compute_confidence,
         test_compute_confidence_threshold,
         test_collect_hard_examples,

@@ -40,8 +40,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, Callable, Type
 
 from lego import (
-    StandardTransformer,
-    DeepSupervisionTransformer,
+    LEGOTransformer,
     Trainer,
     TrainingConfig,
     StageConfig,
@@ -242,7 +241,7 @@ def run_experiment(
     print(f"{'='*60}\n")
 
     # Create extended model with Early Exit support
-    model_extended = DeepSupervisionTransformer(
+    model_extended = LEGOTransformer(
         vocab_size=CONFIG.vocab_size,
         dim=CONFIG.dim,
         num_layers=CONFIG.lego.phase2_layers,
@@ -466,10 +465,10 @@ def main() -> None:
 
     device = get_device()
 
-    # Run experiment with Standard Transformer
+    # Run experiment with LEGOTransformer
     run_experiment(
-        "Standard Transformer",
-        StandardTransformer,
+        "LEGOTransformer",
+        LEGOTransformer,
         create_standard_config,
         device
     )

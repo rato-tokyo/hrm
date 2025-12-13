@@ -1,16 +1,15 @@
 """
 LEGO Framework - Model Components
 
-Two base models:
-- StandardTransformer: Final layer loss only
-- DeepSupervisionTransformer: Loss at all layers with early exit support
+Single unified model:
+- LEGOTransformer: Supports both standard and early exit modes
 
-Both support 2 core options:
+Supports 2 core options:
 - stages: Stage-based training configuration
 - routing_threshold: Early exit at inference
 """
 
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -19,68 +18,22 @@ import math
 from .modules import TransformerBlock
 
 
-class StandardTransformer(nn.Module):
+class LEGOTransformer(nn.Module):
     """
-    Standard Transformer for language modeling.
+    LEGO Transformer for language modeling.
 
-    Base model with final layer loss only.
-    Supports forward_all_layers() for deep supervision training.
-    """
+    Unified model supporting:
+    - Standard training (final layer loss only)
+    - Deep supervision (loss at all layers)
+    - Early exit inference (confidence-based routing)
 
-    def __init__(
-        self,
-        vocab_size: int,
-        dim: int = 64,
-        num_layers: int = 3,
-        num_heads: int = 4,
-    ):
-        super().__init__()
-        self.vocab_size = vocab_size
-        self.dim = dim
-        self.num_layers = num_layers
-
-        self.embedding = nn.Embedding(vocab_size, dim)
-        self.layers = nn.ModuleList([
-            TransformerBlock(dim, num_heads) for _ in range(num_layers)
-        ])
-        self.output_head = nn.Linear(dim, vocab_size, bias=False)
-
-        self._init_weights()
-
-    def _init_weights(self) -> None:
-        for module in self.modules():
-            if isinstance(module, nn.Linear):
-                nn.init.trunc_normal_(module.weight, std=1.0 / math.sqrt(self.dim))
-            elif isinstance(module, nn.Embedding):
-                nn.init.trunc_normal_(module.weight, std=0.02)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Standard forward: output from final layer."""
-        h = self.embedding(x)
-        for layer in self.layers:
-            h = layer(h)
-        return self.output_head(h)  # type: ignore[no-any-return]
-
-    def forward_all_layers(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """Forward returning output from each layer (for Deep Supervision)."""
-        h = self.embedding(x)
-        outputs = []
-        for layer in self.layers:
-            h = layer(h)
-            outputs.append(self.output_head(h))
-        return outputs
-
-
-class DeepSupervisionTransformer(nn.Module):
-    """
-    Deep Supervision Transformer with Early Exit support.
-
-    Training: Loss at all layers (configurable weights via TrainingConfig).
-    Inference: Optional confidence-based early exit.
-
-    References:
-    - Deep Supervision: Lee et al., 2015
-    - Early Exit: Teerapittayanon et al., 2016
+    Args:
+        vocab_size: Vocabulary size
+        dim: Model dimension
+        num_layers: Number of transformer layers
+        num_heads: Number of attention heads
+        exit_layer: Layer for early exit (None = no early exit)
+        routing_threshold: Confidence threshold for early exit
     """
 
     def __init__(
@@ -89,14 +42,14 @@ class DeepSupervisionTransformer(nn.Module):
         dim: int = 64,
         num_layers: int = 3,
         num_heads: int = 4,
-        exit_layer: int = 1,
+        exit_layer: Optional[int] = None,
         routing_threshold: float = 0.8,
     ):
         super().__init__()
         self.vocab_size = vocab_size
         self.dim = dim
         self.num_layers = num_layers
-        self.exit_layer = exit_layer
+        self.exit_layer = exit_layer if exit_layer is not None else num_layers
         self.routing_threshold = routing_threshold
 
         self.embedding = nn.Embedding(vocab_size, dim)
@@ -122,14 +75,14 @@ class DeepSupervisionTransformer(nn.Module):
         return confidence
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Standard forward (deep path only)."""
+        """Standard forward: output from final layer."""
         h = self.embedding(x)
         for layer in self.layers:
             h = layer(h)
         return self.output_head(h)  # type: ignore[no-any-return]
 
     def forward_all_layers(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """Forward returning output from each layer (for Deep Supervision training)."""
+        """Forward returning output from each layer (for Deep Supervision)."""
         h = self.embedding(x)
         outputs = []
         for layer in self.layers:
@@ -217,3 +170,8 @@ class DeepSupervisionTransformer(nn.Module):
         }
 
         return output, stats
+
+
+# Aliases for backward compatibility
+StandardTransformer = LEGOTransformer
+DeepSupervisionTransformer = LEGOTransformer
