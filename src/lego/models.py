@@ -4,7 +4,7 @@ LEGO Framework - Model Components
 LEGOTransformer: Unified model supporting standard and early exit modes.
 """
 
-from typing import Tuple, Dict, Optional
+from typing import Tuple, Dict, Optional, List, Union
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -77,6 +77,94 @@ class LEGOTransformer(nn.Module):
         """Standard forward: output from final layer."""
         h = self.get_hidden_states(x)
         return self.output_head(h)  # type: ignore[no-any-return]
+
+    def forward_with_cache(
+        self,
+        x: torch.Tensor,
+        past_kv_cache: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+        use_cache: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor]]]]:
+        """
+        Forward pass with optional KV cache for autoregressive generation.
+
+        Args:
+            x: Input token ids (batch_size, seq_len)
+            past_kv_cache: List of (K, V) tuples for each layer
+            use_cache: Whether to return updated cache
+
+        Returns:
+            If use_cache=False: logits (batch_size, seq_len, vocab_size)
+            If use_cache=True: (logits, new_kv_cache)
+        """
+        h = self.embedding(x)
+
+        new_kv_cache: List[Tuple[torch.Tensor, torch.Tensor]] = []
+
+        for i, layer in enumerate(self.layers):
+            layer_cache = past_kv_cache[i] if past_kv_cache else None
+            if use_cache:
+                h, new_cache = layer(h, kv_cache=layer_cache, use_cache=True)
+                new_kv_cache.append(new_cache)
+            else:
+                h = layer(h, kv_cache=layer_cache, use_cache=False)
+
+        logits = self.output_head(h)
+
+        if use_cache:
+            return logits, new_kv_cache
+        return logits  # type: ignore[return-value]
+
+    def generate(
+        self,
+        input_ids: torch.Tensor,
+        max_new_tokens: int,
+        temperature: float = 1.0,
+        top_k: Optional[int] = None,
+    ) -> torch.Tensor:
+        """
+        Autoregressive text generation with KV cache.
+
+        Args:
+            input_ids: Initial token ids (batch_size, seq_len)
+            max_new_tokens: Number of tokens to generate
+            temperature: Sampling temperature (1.0 = no change)
+            top_k: If set, only sample from top k tokens
+
+        Returns:
+            Generated token ids (batch_size, seq_len + max_new_tokens)
+        """
+        self.eval()
+        generated = input_ids.clone()
+        kv_cache: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
+
+        with torch.no_grad():
+            # Process initial prompt
+            logits, kv_cache = self.forward_with_cache(
+                input_ids, past_kv_cache=None, use_cache=True
+            )
+
+            for _ in range(max_new_tokens):
+                # Get logits for last position
+                next_logits = logits[:, -1, :] / temperature
+
+                # Apply top-k filtering
+                if top_k is not None:
+                    v, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
+                    next_logits[next_logits < v[:, [-1]]] = float('-inf')
+
+                # Sample next token
+                probs = F.softmax(next_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+
+                # Append to generated
+                generated = torch.cat([generated, next_token], dim=1)
+
+                # Forward with cache (only new token)
+                logits, kv_cache = self.forward_with_cache(
+                    next_token, past_kv_cache=kv_cache, use_cache=True
+                )
+
+        return generated
 
     def _forward_early_exit(
         self, x: torch.Tensor

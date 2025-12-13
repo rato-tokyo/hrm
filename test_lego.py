@@ -116,6 +116,72 @@ def test_lego_integration():
 
 
 # ==============================================================================
+# Test: KV Cache
+# ==============================================================================
+
+def test_kv_cache():
+    """Test KV cache produces same output as non-cached forward."""
+    print("\n[TEST] KV Cache")
+
+    set_seed(42)
+    model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
+    model.eval()
+
+    # Create test input
+    set_seed(42)
+    input_ids = torch.randint(0, 100, (2, 8))  # batch=2, seq=8
+
+    with torch.no_grad():
+        # Standard forward (no cache)
+        logits_no_cache = model.forward_with_cache(input_ids, use_cache=False)
+
+        # Forward with cache (full sequence)
+        logits_with_cache, kv_cache = model.forward_with_cache(input_ids, use_cache=True)
+
+        # Verify same output
+        diff_full = (logits_no_cache - logits_with_cache).abs().max().item()
+        assert diff_full < 1e-5, f"Full sequence cache mismatch: {diff_full}"
+        print(f"  Full sequence cache: diff={diff_full:.2e} OK")
+
+        # Test incremental decoding
+        # Process first 4 tokens
+        logits_prefix, cache_prefix = model.forward_with_cache(
+            input_ids[:, :4], use_cache=True
+        )
+
+        # Process remaining 4 tokens with cache
+        logits_suffix, _ = model.forward_with_cache(
+            input_ids[:, 4:], past_kv_cache=cache_prefix, use_cache=True
+        )
+
+        # Compare with full forward
+        diff_suffix = (logits_with_cache[:, 4:, :] - logits_suffix).abs().max().item()
+        assert diff_suffix < 1e-5, f"Incremental cache mismatch: {diff_suffix}"
+        print(f"  Incremental cache: diff={diff_suffix:.2e} OK")
+
+    print("  KV Cache test: OK")
+
+
+def test_generate():
+    """Test autoregressive generation with KV cache."""
+    print("\n[TEST] Generate")
+
+    set_seed(42)
+    model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
+
+    # Generate from prompt
+    set_seed(42)
+    prompt = torch.randint(0, 100, (1, 4))  # batch=1, seq=4
+    generated = model.generate(prompt, max_new_tokens=8, temperature=1.0)
+
+    assert generated.shape == (1, 12), f"Expected (1, 12), got {generated.shape}"
+    assert (generated[:, :4] == prompt).all(), "Prompt should be preserved"
+    print(f"  Generated shape: {generated.shape} OK")
+    print(f"  Generated tokens: {generated[0].tolist()}")
+    print("  Generate test: OK")
+
+
+# ==============================================================================
 # Main
 # ==============================================================================
 
@@ -127,6 +193,8 @@ def main():
 
     tests = [
         test_lego_integration,
+        test_kv_cache,
+        test_generate,
     ]
 
     passed = 0

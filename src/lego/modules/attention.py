@@ -5,7 +5,7 @@ LEGO Framework - Attention Mechanisms
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple
+from typing import Tuple, Optional, Union
 
 
 class RotaryPositionalEmbedding(nn.Module):
@@ -17,8 +17,12 @@ class RotaryPositionalEmbedding(nn.Module):
         self.register_buffer('inv_freq', inv_freq)
         self.max_seq_len = max_seq_len
 
-    def forward(self, x: torch.Tensor, seq_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        t = torch.arange(seq_len, device=x.device).type_as(self.inv_freq)
+    def forward(
+        self, x: torch.Tensor, seq_len: int, position_offset: int = 0
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        t = torch.arange(
+            position_offset, position_offset + seq_len, device=x.device
+        ).type_as(self.inv_freq)
         freqs = torch.einsum('i,j->ij', t, self.inv_freq)
         emb = torch.cat([freqs, freqs], dim=-1)
         cos = emb.cos()[None, None, :, :]
@@ -66,24 +70,56 @@ class MultiHeadAttention(nn.Module):
             mask = torch.triu(torch.ones(max_seq_len, max_seq_len), diagonal=1).bool()
             self.register_buffer('causal_mask', mask)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        x: torch.Tensor,
+        kv_cache: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        use_cache: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
         batch_size, seq_len, _ = x.shape
 
+        # Compute Q, K, V for current input
         q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        cos, sin = self.rope(x, seq_len)
+        # Handle KV cache
+        if kv_cache is not None:
+            past_k, past_v = kv_cache
+            past_len = past_k.shape[2]
+        else:
+            past_len = 0
+
+        # Apply RoPE with correct position offset
+        cos, sin = self.rope(x, seq_len, position_offset=past_len)
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
+        # Concatenate with past K, V if available
+        if kv_cache is not None:
+            k = torch.cat([past_k, k], dim=2)
+            v = torch.cat([past_v, v], dim=2)
+
+        # Save new cache if requested
+        new_cache = (k, v) if use_cache else None
+
+        # Compute attention
+        total_len = k.shape[2]
         attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale
 
         # Apply causal mask (prevent attending to future tokens)
         if self.causal:
-            attn = attn.masked_fill(self.causal_mask[:seq_len, :seq_len], float('-inf'))
+            # For incremental decoding, only mask within the query positions
+            attn = attn.masked_fill(
+                self.causal_mask[past_len:past_len + seq_len, :total_len],
+                float('-inf')
+            )
 
         attn = F.softmax(attn, dim=-1)
 
         out = torch.matmul(attn, v)
         out = out.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
-        return self.o_proj(out)  # type: ignore[no-any-return]
+        output = self.o_proj(out)
+
+        if use_cache:
+            return output, new_cache  # type: ignore[return-value]
+        return output  # type: ignore[return-value]
