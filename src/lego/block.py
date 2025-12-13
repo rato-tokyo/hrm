@@ -24,8 +24,8 @@ class LEGOBlock(nn.Module):
 
     Each LEGOBlock:
     - Owns multiple TransformerBlock layers
+    - Has a lightweight exit_classifier for confidence prediction
     - Has a threshold for token-level early exit decision
-    - Can compute confidence for routing decisions
 
     Args:
         dim: Model dimension
@@ -54,6 +54,9 @@ class LEGOBlock(nn.Module):
             TransformerBlock(dim, num_heads) for _ in range(num_layers)
         ])
 
+        # Lightweight exit classifier (dim -> 1)
+        self.exit_classifier = nn.Linear(dim, 1)
+
     def forward(
         self, h: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -75,7 +78,9 @@ class LEGOBlock(nn.Module):
             h = layer(h)
 
         logits = self.output_head(h)
-        confidence = F.softmax(logits, dim=-1).max(dim=-1).values
+
+        # Lightweight confidence from exit_classifier (not softmax over vocab)
+        confidence = torch.sigmoid(self.exit_classifier(h)).squeeze(-1)
         should_exit = confidence >= self.threshold
 
         return h, logits, should_exit
@@ -151,13 +156,27 @@ class LEGOBlock(nn.Module):
 
             for h, y in train_data.to(str(device)).batches(batch_size):
                 optimizer.zero_grad()
-                _, logits, _ = self.forward(h)
+                h_out, logits, _ = self.forward(h)
                 logits = logits.squeeze(1)
-                loss = F.cross_entropy(logits, y)
+
+                # Language modeling loss
+                lm_loss = F.cross_entropy(logits, y)
+
+                # Exit classifier loss: predict if token is correct
+                with torch.no_grad():
+                    predicted = logits.argmax(dim=-1)
+                    is_correct = (predicted == y).float()
+
+                exit_logits = self.exit_classifier(h_out).squeeze(-1).squeeze(-1)
+                exit_loss = F.binary_cross_entropy_with_logits(exit_logits, is_correct)
+
+                # Combined loss
+                loss = lm_loss + exit_loss
+
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
                 optimizer.step()
-                total_loss += loss.item()
+                total_loss += lm_loss.item()
                 num_batches += 1
 
             train_ppl = float(np.exp(total_loss / num_batches))
@@ -253,12 +272,11 @@ class LEGOBlock(nn.Module):
             # Process in batches to avoid OOM
             for h, y in data.to(str(device)).batches(batch_size=256, shuffle=False):
                 # Forward through this block
-                h_out, logits, _ = self.forward(h)
+                h_out, _, _ = self.forward(h)
                 h_out = h_out.squeeze(1)  # (batch_size, dim)
-                logits = logits.squeeze(1)  # (batch_size, vocab_size)
 
-                # Compute confidence
-                confidence = F.softmax(logits, dim=-1).max(dim=-1).values  # (batch_size,)
+                # Compute confidence from exit_classifier
+                confidence = torch.sigmoid(self.exit_classifier(h_out)).squeeze(-1)  # (batch_size,)
 
                 all_hidden_out.append(h_out)
                 all_targets.append(y)

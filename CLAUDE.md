@@ -40,6 +40,20 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 3. `LEGOTransformer.forward()` - TRUE Early Exit推論
 4. `TrainingData` - hidden states + targetsのコンテナ
 
+### 信頼度計算方式（重要：削除禁止）
+
+**軽量線形分類器（exit_classifier）を使用する**：
+
+```python
+# 正しい実装（exit_classifier方式）
+self.exit_classifier = nn.Linear(dim, 1)
+confidence = torch.sigmoid(self.exit_classifier(h)).squeeze(-1)
+```
+
+softmax方式（`F.softmax(logits, dim=-1).max()`）ではない。線形分類器は：
+- 計算コストが大幅に削減（dim→1 vs dim→vocab_size）
+- 「正解を予測できたか」を直接学習
+
 ### Hard Example収集方式（重要：削除禁止）
 
 **ratio方式を使用する**：`hard_ratio=0.5`なら信頼度下位50%のトークンをhard exampleとして収集。
