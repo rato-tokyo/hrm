@@ -1,33 +1,11 @@
 """
-LEGO (Layered Ensemble with Gradual Optimization) Experiment
+LEGO Experiment - Hard Example Mining with Two-Stage Inference
 
-**Experiment Version**: Hard Example Mining with Hard Freezing
-**Date**: 2025-12-12
-**Dataset**: WikiText-2 (10K samples)
-
-This experiment demonstrates the LEGO training strategy:
-1. Phase 1: Train a shallow model (2 layers) on all data
-2. Identify hard examples using confidence-based threshold (auto-adjusted)
-3. Phase 2: Train additional layers (2 more) on hard examples only
-   - Hard Freezing: Layer 1-2 completely frozen (requires_grad=False)
-   - Layer 3-4: Trainable
-4. Inference: Two-stage routing using Early Exit mechanism
-
-Key Benefits:
-- Focuses computational resources on hard examples during training
-- Hard PPL: 78% improvement (2763 → 668)
-- Reduces compute cost by 36% using adaptive routing
-- Fully integrated with LEGO framework's 2 core options
-
-LEGO Framework (2 Core Options):
-1. layer_weights: Which layers to train (loss weights)
-2. routing_threshold: When to exit early (inference efficiency)
-
-References:
-- LEGO: Layered Ensemble with Gradual Optimization
-- Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
-- Early Exit: BranchyNet (2016), Teerapittayanon et al. (2016)
-- Deep Supervision: Lee et al. (2015)
+Workflow:
+1. Phase 1: Train 2-layer model on all data
+2. Collect hard examples (low confidence tokens)
+3. Phase 2: Extend to 4 layers, train upper layers on hard examples only
+4. Inference: Early Exit routing (Layer 2 for easy, Layer 4 for hard)
 """
 
 import sys
@@ -36,7 +14,7 @@ sys.path.insert(0, 'src')
 import time
 import torch
 from dataclasses import dataclass
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple
 
 from lego import (
     LEGOTransformer,
@@ -49,8 +27,69 @@ from lego import (
     evaluate_on_hard_examples,
 )
 
-sys.path.insert(0, 'experiments')
-from utils import create_wikitext_dataloaders
+
+def create_wikitext_dataloaders(
+    num_samples: int,
+    batch_size: int,
+    seq_len: int = 32,
+    seed: int = 42
+) -> Tuple[List[Tuple[torch.Tensor, torch.Tensor]],
+           List[Tuple[torch.Tensor, torch.Tensor]],
+           int]:
+    """Create WikiText-2 dataloaders."""
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError("Please install datasets: pip install datasets")
+
+    torch.manual_seed(seed)
+    dataset = load_dataset('wikitext', 'wikitext-2-raw-v1')
+
+    def simple_tokenize(text: str) -> List[str]:
+        return text.lower().split()
+
+    # Build vocabulary
+    vocab: Dict[str, int] = {'<unk>': 0, '<pad>': 1}
+    for split in ['train', 'validation']:
+        for item in dataset[split]:
+            for token in simple_tokenize(item['text']):
+                if token not in vocab:
+                    vocab[token] = len(vocab)
+
+    vocab_size = len(vocab)
+
+    def tokenize_split(split_name: str) -> torch.Tensor:
+        all_tokens: List[int] = []
+        for item in dataset[split_name]:
+            tokens = simple_tokenize(item['text'])
+            token_ids = [vocab.get(t, vocab['<unk>']) for t in tokens]
+            all_tokens.extend(token_ids)
+        return torch.tensor(all_tokens, dtype=torch.long)
+
+    train_data = tokenize_split('train')
+    val_data = tokenize_split('validation')
+
+    # Limit samples
+    max_tokens_train = num_samples * (seq_len + 1)
+    max_tokens_val = int(num_samples * 0.2) * (seq_len + 1)
+    train_data = train_data[:max_tokens_train]
+    val_data = val_data[:max_tokens_val]
+
+    def batchify(data: torch.Tensor) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+        batches = []
+        num_tokens = len(data)
+        for i in range(0, num_tokens - seq_len - 1, batch_size * seq_len):
+            batch_x, batch_y = [], []
+            for j in range(batch_size):
+                start_idx = i + j * seq_len
+                if start_idx + seq_len + 1 <= num_tokens:
+                    batch_x.append(data[start_idx:start_idx + seq_len])
+                    batch_y.append(data[start_idx + 1:start_idx + seq_len + 1])
+            if len(batch_x) == batch_size:
+                batches.append((torch.stack(batch_x), torch.stack(batch_y)))
+        return batches
+
+    return batchify(train_data), batchify(val_data), vocab_size
 
 
 # ==============================================================================
@@ -87,25 +126,6 @@ class ExperimentConfig:
     phase2_layers: int = 4
     phase2_lr: float = 1e-4
     phase2_patience: int = 3
-
-
-# ==============================================================================
-# Utility Functions
-# ==============================================================================
-# Note: All utility functions are now imported from framework modules:
-#
-# LEGO functions (from src/lego/utils.py):
-# - compute_confidence_threshold()
-# - collect_hard_examples()
-# - create_hard_example_loader()
-# - train_upper_layers()
-# - evaluate_on_hard_examples()
-#
-# Data/Device utilities (from experiments/utils.py):
-# - set_seed()
-# - get_device()
-# - create_wikitext_dataloaders()
-# ==============================================================================
 
 
 # ==============================================================================
@@ -245,9 +265,6 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print("  Layer 1-2: Frozen (requires_grad=False)")
     print("  Layer 3-4: Trainable")
 
-    # Trainer for Phase 2
-    trainer_phase2 = Trainer(vocab_size=vocab_size, device=device)
-
     trainable = sum(p.numel() for p in model_extended.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model_extended.parameters())
     print("\n✓ Frozen lower layers")
@@ -258,7 +275,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"  Hard example batches: {len(hard_batches)}")
 
     # Train upper layers only
-    optimizer_upper = trainer_phase2.create_optimizer(
+    optimizer_upper = trainer.create_optimizer(
         model_extended,
         base_lr=config.phase2_lr
     )
@@ -268,9 +285,9 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"  Patience: {config.phase2_patience}")
     print(f"  Max epochs: {config.phase2_epochs}")
 
-    # Train upper layers with early stopping (simplified)
+    # Train upper layers with early stopping
     start_time = time.time()
-    result_phase2 = trainer_phase2.train_upper_layers_with_early_stopping(
+    result_phase2 = trainer.train_upper_layers_with_early_stopping(
         model=model_extended,
         hard_batches=hard_batches,
         val_batches=val_loader,
@@ -287,7 +304,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
 
     # Get Phase 2 metrics from result
     phase2_hard_ppl = result_phase2['hard_ppls'][result_phase2['best_epoch']]
-    final_val_stats = trainer_phase2.evaluate(
+    final_val_stats = trainer.evaluate(
         model_extended, val_loader,
         routing_threshold=confidence_threshold,
         exit_layer=config.phase1_layers
@@ -308,7 +325,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"{'='*60}\n")
 
     # Evaluate with routing
-    stats = trainer_phase2.evaluate(
+    stats = trainer.evaluate(
         model_extended, val_loader,
         routing_threshold=confidence_threshold,
         exit_layer=config.phase1_layers

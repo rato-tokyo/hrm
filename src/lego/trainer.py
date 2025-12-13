@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Dict, List, Tuple, Any
+from typing import Callable, Dict, List, Optional, Tuple, Any
 
 
 class Trainer:
@@ -41,15 +41,7 @@ class Trainer:
         routing_threshold: float = 0.0,
         exit_layer: int = 1
     ) -> Dict[str, float]:
-        """
-        Evaluate model with optional early exit routing.
-
-        Args:
-            model: Model to evaluate
-            val_batches: Validation data batches
-            routing_threshold: Confidence threshold for early exit (0 = disabled)
-            exit_layer: Layer to use for early exit
-        """
+        """Evaluate model with optional early exit routing."""
         model.eval()
 
         total_loss = 0.0
@@ -123,13 +115,13 @@ class Trainer:
         self,
         model: nn.Module,
         val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-        train_fn: Any,
+        train_fn: Callable[[], float],
         max_epochs: int,
         patience: int,
         verbose: bool,
         routing_threshold: float = 0.0,
         exit_layer: int = 1,
-        extra_eval_fn: Any = None
+        extra_eval_fn: Optional[Callable[[], float]] = None
     ) -> Dict[str, Any]:
         """Core early stopping loop shared by training methods."""
         best_val_ppl = float('inf')

@@ -1,12 +1,7 @@
 """
 LEGO Framework - Model Components
 
-Single unified model:
-- LEGOTransformer: Supports both standard and early exit modes
-
-Supports 2 core options:
-- stages: Stage-based training configuration
-- routing_threshold: Early exit at inference
+LEGOTransformer: Unified model supporting standard and early exit modes.
 """
 
 from typing import Tuple, List, Dict, Optional
