@@ -89,7 +89,6 @@ stats = trainer.evaluate(
 ### モデル
 - `LEGOTransformer` - 統一モデル（standard/early exitの両モード対応）
   - `forward()` - 標準推論
-  - `forward_all_layers()` - 全層出力
   - `forward_train()` - 訓練用（shallow/deep両出力）
   - `forward_inference()` - 推論用（ルーティング付き）
   - `extend()` - 浅いモデルから拡張モデルを作成（インスタンスメソッド）

@@ -4,7 +4,7 @@ LEGO Framework - Model Components
 LEGOTransformer: Unified model supporting standard and early exit modes.
 """
 
-from typing import Tuple, List, Dict, Optional
+from typing import Tuple, Dict, Optional
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -80,15 +80,6 @@ class LEGOTransformer(nn.Module):
         """Standard forward: output from final layer."""
         h = self.get_hidden_states(x)
         return self.output_head(h)  # type: ignore[no-any-return]
-
-    def forward_all_layers(self, x: torch.Tensor) -> List[torch.Tensor]:
-        """Forward returning output from each layer (for Deep Supervision)."""
-        h = self.embedding(x)
-        outputs = []
-        for layer in self.layers:
-            h = layer(h)
-            outputs.append(self.output_head(h))
-        return outputs
 
     def _forward_early_exit(
         self, x: torch.Tensor
