@@ -84,7 +84,7 @@ class LEGOBlock(nn.Module):
         """Set the shared output head reference."""
         self.output_head = output_head
 
-    def train(
+    def fit(
         self,
         data: "TrainingData",
         optimizer: torch.optim.Optimizer,
@@ -93,6 +93,7 @@ class LEGOBlock(nn.Module):
         patience: int = 3,
         grad_clip: float = 1.0,
         val_ratio: float = 0.2,
+        hard_ratio: float = 0.5,
         verbose: bool = True
     ) -> Tuple["TrainingData", Dict[str, Any]]:
         """
@@ -112,6 +113,7 @@ class LEGOBlock(nn.Module):
             patience: Early stopping patience
             grad_clip: Gradient clipping value
             val_ratio: Ratio of data for validation (default: 0.2)
+            hard_ratio: Ratio of tokens to collect as hard examples (default: 0.5)
             verbose: Print training progress
 
         Returns:
@@ -143,7 +145,7 @@ class LEGOBlock(nn.Module):
 
         for epoch in range(max_epochs):
             # Training
-            super().train()
+            self.train()
             total_loss = 0.0
             num_batches = 0
 
@@ -200,8 +202,8 @@ class LEGOBlock(nn.Module):
         if best_state is not None:
             self.load_state_dict({k: v.to(device) for k, v in best_state.items()})
 
-        # Collect hard examples
-        hard_examples = self._collect_hard_examples(data, device)
+        # Collect hard examples (ratio-based: bottom X% by confidence)
+        hard_examples = self._collect_hard_examples(data, device, hard_ratio)
 
         hard_ratio = len(hard_examples) / len(data) if len(data) > 0 else 0.0
         stats: Dict[str, Any] = {
@@ -222,17 +224,19 @@ class LEGOBlock(nn.Module):
     def _collect_hard_examples(
         self,
         data: "TrainingData",
-        device: torch.device
+        device: torch.device,
+        hard_ratio: float
     ) -> "TrainingData":
         """
         Collect hard examples (low confidence tokens) after training.
 
-        Uses the block's threshold to identify hard tokens.
+        Uses ratio-based selection: collects the bottom X% tokens by confidence.
         Returns the output hidden states (after this block) for hard tokens.
 
         Args:
             data: Input TrainingData
             device: Device to run on
+            hard_ratio: Ratio of tokens to collect (0.0-1.0)
 
         Returns:
             TrainingData with hard examples (output hidden states and targets)
@@ -241,29 +245,42 @@ class LEGOBlock(nn.Module):
 
         self.eval()
 
-        hard_hidden_states: List[torch.Tensor] = []
-        hard_targets: List[torch.Tensor] = []
+        all_hidden_out: List[torch.Tensor] = []
+        all_targets: List[torch.Tensor] = []
+        all_confidences: List[torch.Tensor] = []
 
         with torch.no_grad():
             # Process in batches to avoid OOM
             for h, y in data.to(str(device)).batches(batch_size=256, shuffle=False):
                 # Forward through this block
-                h_out, _, should_exit = self.forward(h)
-                should_exit = should_exit.squeeze(1)  # (batch_size,)
+                h_out, logits, _ = self.forward(h)
+                h_out = h_out.squeeze(1)  # (batch_size, dim)
+                logits = logits.squeeze(1)  # (batch_size, vocab_size)
 
-                # Hard tokens are those that should NOT exit (need more processing)
-                hard_mask = ~should_exit
+                # Compute confidence
+                confidence = F.softmax(logits, dim=-1).max(dim=-1).values  # (batch_size,)
 
-                if hard_mask.any():
-                    # Get output hidden states for hard tokens
-                    hard_hidden_states.append(h_out.squeeze(1)[hard_mask])
-                    hard_targets.append(y[hard_mask])
+                all_hidden_out.append(h_out)
+                all_targets.append(y)
+                all_confidences.append(confidence)
 
-        if not hard_hidden_states:
-            # No hard examples found - return empty
+        if not all_hidden_out:
             return TrainingData.empty(self.dim, str(device))
 
+        # Concatenate all
+        all_hidden_out = torch.cat(all_hidden_out)  # (num_tokens, dim)
+        all_targets = torch.cat(all_targets)  # (num_tokens,)
+        all_confidences = torch.cat(all_confidences)  # (num_tokens,)
+
+        # Select bottom X% by confidence (ratio-based)
+        num_hard = int(len(all_confidences) * hard_ratio)
+        if num_hard == 0:
+            return TrainingData.empty(self.dim, str(device))
+
+        # Get indices of tokens with lowest confidence
+        _, hard_indices = torch.topk(all_confidences, num_hard, largest=False)
+
         return TrainingData(
-            torch.cat(hard_hidden_states),
-            torch.cat(hard_targets)
+            all_hidden_out[hard_indices],
+            all_targets[hard_indices]
         )

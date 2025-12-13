@@ -4,7 +4,7 @@ LEGO Framework - Utility Functions
 Basic utilities for LEGO training.
 
 Note: Hard example collection and splitting are now handled by:
-- LEGOBlock.train_block() - Train block and return hard examples
+- LEGOBlock.fit() - Train block and return hard examples
 - TrainingData.split() - Split into train/val
 - TrainingData.batches() - Create batched data
 """

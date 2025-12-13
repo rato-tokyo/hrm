@@ -78,12 +78,13 @@ def main() -> None:
 
     # Train Block 0
     optimizer0 = torch.optim.AdamW(model.blocks[0].parameters(), lr=config.phase1_lr)
-    hard_data, stats0 = model.blocks[0].train(
+    hard_data, stats0 = model.blocks[0].fit(
         data=initial_data,
         optimizer=optimizer0,
         batch_size=config.phase1_batch,
         max_epochs=config.phase1_epochs,
         patience=config.phase1_patience,
+        hard_ratio=config.hard_example_ratio,
         verbose=True
     )
 
@@ -98,7 +99,7 @@ def main() -> None:
 
     if len(hard_data) > 0:
         optimizer1 = torch.optim.AdamW(model.blocks[1].parameters(), lr=config.phase2_lr)
-        _, stats1 = model.blocks[1].train(
+        _, stats1 = model.blocks[1].fit(
             data=hard_data,
             optimizer=optimizer1,
             batch_size=config.phase2_batch,

@@ -36,9 +36,21 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 ## 核心機能（削除禁止）
 
 1. `LEGOBlock.forward()` - レイヤー処理 + exit判定（h, logits, should_exit）
-2. `LEGOBlock.train()` - Block訓練 + hard example収集
+2. `LEGOBlock.fit()` - Block訓練 + hard example収集
 3. `LEGOTransformer.forward()` - TRUE Early Exit推論
 4. `TrainingData` - hidden states + targetsのコンテナ
+
+### Hard Example収集方式（重要：削除禁止）
+
+**ratio方式を使用する**：`hard_ratio=0.5`なら信頼度下位50%のトークンをhard exampleとして収集。
+
+```python
+# 正しい実装（ratio方式）
+num_hard = int(len(all_confidences) * hard_ratio)
+_, hard_indices = torch.topk(all_confidences, num_hard, largest=False)
+```
+
+threshold方式（`confidence < threshold`）ではない。ratio方式は訓練データ量を制御可能にする。
 
 ---
 
