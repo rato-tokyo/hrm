@@ -62,6 +62,13 @@ class LEGOTransformer(nn.Module):
             elif isinstance(module, nn.Embedding):
                 nn.init.trunc_normal_(module.weight, std=0.02)
 
+    def get_hidden_states(self, x: torch.Tensor) -> torch.Tensor:
+        """Get hidden states after all layers (before output head)."""
+        h = self.embedding(x)
+        for layer in self.layers:
+            h = layer(h)
+        return h
+
     def compute_confidence(self, h: torch.Tensor) -> torch.Tensor:
         """Compute confidence (max probability) from hidden state."""
         logits = self.output_head(h)

@@ -84,13 +84,11 @@ def compute_confidence_threshold(
     all_confidences: List[torch.Tensor] = []
 
     with torch.no_grad():
-        for x, y in val_batches:
+        for x, _ in val_batches:
             x = x.to(device)
 
-            # Forward pass through all layers
-            h = model.embedding(x)
-            for layer in model.layers:
-                h = layer(h)
+            # Get hidden states using model method
+            h = model.get_hidden_states(x)
 
             # Compute confidence
             confidence = model.compute_confidence(h)
@@ -140,10 +138,8 @@ def collect_hard_examples(
         for x, y in val_batches:
             x, y = x.to(device), y.to(device)
 
-            # Forward pass through all layers
-            h = model.embedding(x)
-            for layer in model.layers:
-                h = layer(h)
+            # Get hidden states using model method
+            h = model.get_hidden_states(x)
 
             # Compute confidence
             confidence = model.compute_confidence(h)
