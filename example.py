@@ -13,6 +13,7 @@ sys.path.insert(0, 'src')
 
 import torch
 from lego import (
+    LEGOBlock,
     LEGOTransformer,
     TrainingData,
     Trainer,
@@ -43,13 +44,11 @@ def main() -> None:
     # Create model with 2 blocks
     # Block 0: threshold=0.8 (easy tokens exit here)
     # Block 1: threshold=1.0 (all remaining tokens processed)
-    model = LEGOTransformer.create(
-        vocab_size=vocab_size,
-        dim=config.dim,
-        num_heads=config.num_heads,
-        layers_per_block=[config.phase1_layers, config.phase2_layers - config.phase1_layers],
-        thresholds=[0.8, 1.0]
-    ).to(device)
+    blocks = [
+        LEGOBlock(config.dim, config.num_heads, config.phase1_layers, threshold=0.8),
+        LEGOBlock(config.dim, config.num_heads, config.phase2_layers - config.phase1_layers, threshold=1.0),
+    ]
+    model = LEGOTransformer(vocab_size, config.dim, blocks).to(device)
 
     print(f"Blocks: {len(model.blocks)}")
     print(f"Layers per block: {[b.num_layers for b in model.blocks]}")
