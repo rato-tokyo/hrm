@@ -2,12 +2,12 @@ From https://github.com/rato-tokyo/hrm
  * branch            main       -> FETCH_HEAD
 Already up to date.
 ============================================================
-LEGO: Hard Example Mining + KV Cache Generation
+LEGO: TRUE Early Exit Generation
 ============================================================
 Device: cuda
 
 ============================================================
-LEGOTransformer - Hard Example Mining + KV Cache
+LEGOTransformer - TRUE Early Exit
 ============================================================
 
 Phase 1: Train 2-layer model
@@ -67,31 +67,38 @@ Best model was at epoch 7
 
 Restored best model from epoch 7
 
-Phase 2 Results: Hard PPL 668.08 | Time 67.57s
+Phase 2 Results: Hard PPL 668.08 | Time 67.44s
 Hard PPL Improvement: +2095.60 (+75.8%)
 
 ============================================================
-Final Evaluation (Two-Stage Inference)
+Evaluation: Fake Early Exit (both paths computed)
 ============================================================
 
 Accuracy: 15.77%
 PPL: 829.78
 Shallow ratio: 70.4%
-Compute cost: 64.82%
+Compute cost (theoretical): 64.82%
 
 ============================================================
-KV Cache Generation Demo
+TRUE Early Exit Generation Demo
 ============================================================
 
 Prompt length: 8 tokens
 Generating: 32 new tokens
+Routing threshold: 0.1499
+Exit layer: 2 / 4
 
-Generation Time:
-  Without cache: 0.2644s
-  With cache:    0.1789s
-  Speedup:       1.48x
+Generation Results:
+  Time: 0.1443s
+  Shallow exits: 21
+  Deep exits: 11
+  Shallow ratio: 65.6%
+  ACTUAL compute cost: 67.2%
 
-Outputs match: True
+Comparison with Standard Generation:
+  Standard time: 0.1555s
+  Early exit time: 0.1443s
+  Speedup: 1.08x
 
 ============================================================
 Summary
@@ -99,7 +106,11 @@ Summary
 Phase 1: Acc 16.03% | PPL 986.43
 Phase 2: Acc 15.77% | PPL 829.78
 Hard PPL: 2763.69 -> 668.08
-KV Cache Speedup: 1.48x
+
+TRUE Early Exit Stats:
+  Shallow ratio: 65.6%
+  ACTUAL compute cost: 67.2%
+  Compute savings: 32.8%
 
 ============================================================
 Experiment completed!
