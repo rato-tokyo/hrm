@@ -15,12 +15,12 @@ from .modules import TransformerBlock
 
 class LEGOBlock(nn.Module):
     """
-    A block of transformer layers with early exit at the final layer.
+    A block of transformer layers with early exit capability.
 
     Each LEGOBlock:
     - Owns multiple TransformerBlock layers
-    - Has a threshold for early exit decision after processing
-    - Can compute confidence and make routing decisions independently
+    - Has a threshold for token-level early exit decision
+    - Can compute confidence for routing decisions
     - Can be trained independently (for hard example training)
 
     Args:
@@ -110,38 +110,6 @@ class LEGOBlock(nn.Module):
         probs = F.softmax(logits, dim=-1)
         confidence = probs.max(dim=-1).values
         return logits, confidence
-
-    def forward_with_routing(
-        self, h: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, bool]:
-        """
-        Forward pass with routing decision.
-
-        Args:
-            h: Hidden states (batch_size, seq_len, dim)
-
-        Returns:
-            h: Output hidden states
-            logits: Output logits from this block
-            confidence: Confidence scores per token
-            should_exit: True if all tokens meet threshold
-        """
-        h = self.forward(h)
-        logits, confidence = self.compute_confidence(h)
-        should_exit = self.should_exit(confidence)
-        return h, logits, confidence, should_exit
-
-    def should_exit(self, confidence: torch.Tensor) -> bool:
-        """
-        Check if all tokens meet the confidence threshold for early exit.
-
-        Args:
-            confidence: Confidence scores (batch_size, seq_len)
-
-        Returns:
-            True if all tokens can exit early
-        """
-        return bool((confidence >= self.threshold).all().item())
 
     def freeze(self) -> None:
         """Freeze all parameters in this block."""

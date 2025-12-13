@@ -132,42 +132,81 @@ class LEGOTransformer(nn.Module):
         x: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """
-        Forward pass with TRUE early exit and routing statistics.
+        Forward pass with TRUE token-level early exit.
 
-        Processes blocks sequentially. After each block (except the last),
-        checks confidence and exits early if threshold is met.
+        Each token independently exits at the first block where its confidence
+        exceeds the threshold. Tokens that exit early do not pass through
+        subsequent blocks.
 
         Args:
             x: Input token ids (batch_size, seq_len)
 
         Returns:
             output: Logits (batch_size, seq_len, vocab_size)
-            stats: Dictionary with exit_block, mean_confidence, shallow_ratio, compute_cost
+            stats: Dictionary with exit_counts, shallow_ratio, compute_cost
         """
+        batch_size, seq_len = x.shape
+        device = x.device
+
         h = self.embedding(x)
 
+        # Track which tokens have exited and their final logits
+        # Shape: (batch_size, seq_len, vocab_size)
+        final_logits = torch.zeros(
+            batch_size, seq_len, self.vocab_size, device=device
+        )
+        # Track exit block for each token: (batch_size, seq_len)
+        exit_blocks = torch.full(
+            (batch_size, seq_len), len(self.blocks) - 1, device=device
+        )
+        # Track which tokens are still active (not yet exited)
+        active_mask = torch.ones(batch_size, seq_len, dtype=torch.bool, device=device)
+
         for block_idx, block in enumerate(self.blocks):
-            h, logits, confidence, should_exit = block.forward_with_routing(h)
+            is_last_block = (block_idx == len(self.blocks) - 1)
 
-            # Early exit if not last block and all tokens meet threshold
-            if block_idx < len(self.blocks) - 1 and should_exit:
-                layers_used = sum(b.num_layers for b in self.blocks[:block_idx + 1])
-                compute_cost = layers_used / self.num_layers
+            # Process all tokens through this block
+            h = block(h)
+            logits, confidence = block.compute_confidence(h)
 
-                return logits, {
-                    'exit_block': block_idx,
-                    'mean_confidence': confidence.mean().item(),
-                    'shallow_ratio': 1.0,  # All tokens exited early
-                    'compute_cost': compute_cost,
-                }
+            if not is_last_block:
+                # Determine which active tokens should exit at this block
+                should_exit_here = active_mask & (confidence >= block.threshold)
 
-        # Reached last block
-        logits = self.output_head(h)
-        return logits, {
-            'exit_block': len(self.blocks) - 1,
-            'mean_confidence': confidence.mean().item(),
-            'shallow_ratio': 0.0,  # No early exit
-            'compute_cost': 1.0,
+                # Store logits for exiting tokens
+                final_logits[should_exit_here] = logits[should_exit_here]
+                exit_blocks[should_exit_here] = block_idx
+
+                # Update active mask
+                active_mask = active_mask & ~should_exit_here
+            else:
+                # Last block: all remaining active tokens exit here
+                final_logits[active_mask] = logits[active_mask]
+
+        # Compute statistics
+        exit_counts = [
+            int((exit_blocks == i).sum().item()) for i in range(len(self.blocks))
+        ]
+        total_tokens = batch_size * seq_len
+        shallow_exits = sum(exit_counts[:-1])  # All except last block
+        shallow_ratio = shallow_exits / total_tokens if total_tokens > 0 else 0.0
+
+        # Compute weighted layer cost
+        total_layers_computed = 0
+        layers_so_far = 0
+        for block_idx, count in enumerate(exit_counts):
+            layers_so_far += self.blocks[block_idx].num_layers
+            total_layers_computed += count * layers_so_far
+
+        compute_cost = (
+            total_layers_computed / (total_tokens * self.num_layers)
+            if total_tokens > 0 else 1.0
+        )
+
+        return final_logits, {
+            'exit_counts': exit_counts,
+            'shallow_ratio': shallow_ratio,
+            'compute_cost': compute_cost,
         }
 
     def generate(

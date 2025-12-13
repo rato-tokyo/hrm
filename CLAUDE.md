@@ -24,16 +24,14 @@ Block 1 訓練 → Hard Tokens出力 → Block 2 訓練 → Hard Tokens出力 �
 
 ```python
 class LEGOBlock(nn.Module):
-    """複数のTransformerLayerを持つブロック。最終層でEarly Exit判定。"""
+    """複数のTransformerLayerを持つブロック。"""
     def __init__(self, dim: int, num_heads: int, num_layers: int, threshold: float = 1.0):
         self.layers = nn.ModuleList([...])  # TransformerBlockのリスト
         self.threshold = threshold          # Early Exit閾値
 
     def forward(h) -> h                    # 全レイヤー処理
     def forward_with_cache(h, cache) -> (h, cache)  # KVキャッシュ対応
-    def forward_with_routing(h) -> (h, logits, confidence, should_exit)  # ルーティング判定
-    def compute_confidence(h) -> (logits, confidence)  # 信頼度計算
-    def should_exit(confidence) -> bool          # Early Exit判定
+    def compute_confidence(h) -> (logits, confidence)  # 信頼度計算（トークン単位）
     def freeze() / unfreeze()                    # パラメータ凍結
 ```
 
@@ -116,9 +114,7 @@ generated, stats = model.generate(prompt, max_new_tokens=32)
 |---------|------|
 | `forward(h)` | 全レイヤー処理 |
 | `forward_with_cache(h, cache)` | KVキャッシュ対応 |
-| `forward_with_routing(h)` | ルーティング判定付きforward |
-| `compute_confidence(h)` | 信頼度計算（output_head共有） |
-| `should_exit(confidence)` | Early Exit判定 |
+| `compute_confidence(h)` | 信頼度計算（トークン単位） |
 | `freeze()` / `unfreeze()` | パラメータ凍結 |
 
 ### LEGOTransformer
@@ -179,6 +175,7 @@ src/lego/
 3. **start_block_idx / block_idx** - 常に明示的に指定（0-indexed）
 4. **デフォルト引数値禁止** - block_idx等のブロック指定引数にはデフォルト値を設定しない
 5. **Block訓練の独立性** - Phase 2以降の各Blockはtrain/valともにHard Examples内で完結。全データのval_batchesは使用しない
+6. **トークン単位のEarly Exit** - すべての処理（訓練、評価、生成）でearly exitはトークン単位。バッチ単位ではない
 
 ---
 
@@ -198,5 +195,4 @@ src/lego/
 
 1. `collect_hard_examples()` - トークン単位でhidden states収集
 2. `forward_from_block()` - hidden statesから直接Block訓練
-3. `compute_confidence()` - 信頼度計算
-4. `LEGOBlock.should_exit()` - Early Exit判定
+3. `compute_confidence()` - 信頼度計算（トークン単位）
