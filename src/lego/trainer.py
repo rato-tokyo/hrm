@@ -134,173 +134,51 @@ class Trainer:
 
         return total_loss / len(train_batches)
 
-    def train_with_early_stopping(
+    def _early_stopping_loop(
         self,
         model: nn.Module,
-        train_batches: List[Tuple[torch.Tensor, torch.Tensor]],
         val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-        optimizer: torch.optim.Optimizer,
-        max_epochs: int = 100,
-        patience: int = 5,
-        min_delta: float = 0.0,
-        grad_clip: float = 1.0,
-        verbose: bool = True
+        train_fn: Any,  # Callable[[], float]
+        max_epochs: int,
+        patience: int,
+        verbose: bool,
+        extra_eval_fn: Any = None  # Optional[Callable[[], float]]
     ) -> Dict[str, Any]:
-        """
-        Train with early stopping.
-
-        Args:
-            model: Model to train
-            train_batches: Training data batches
-            val_batches: Validation data batches
-            optimizer: Optimizer
-            max_epochs: Maximum number of epochs
-            patience: Number of epochs to wait for improvement
-            min_delta: Minimum change to qualify as improvement
-            grad_clip: Gradient clipping value
-            verbose: Print progress
-
-        Returns:
-            Dictionary containing training history and best model state
-        """
-        best_val_loss = float('inf')
-        best_epoch = 0
-        patience_counter = 0
-        best_model_state = None
-
-        train_losses = []
-        val_losses = []
-        val_accs = []
-
-        for epoch in range(max_epochs):
-            # Training
-            train_loss = self.train_epoch(model, train_batches, optimizer, grad_clip)
-            train_losses.append(train_loss)
-
-            # Validation
-            val_stats = self.evaluate(model, val_batches)
-            val_ppl = val_stats['ppl']
-            val_acc = val_stats['acc']
-            val_loss = np.log(val_ppl)  # Convert PPL back to loss
-
-            val_losses.append(val_ppl)
-            val_accs.append(val_acc)
-
-            if verbose:
-                train_ppl = np.exp(train_loss)
-                print(f"Epoch {epoch+1}/{max_epochs} - "
-                      f"Train PPL: {train_ppl:.4f} | "
-                      f"Val PPL: {val_ppl:.4f} | "
-                      f"Val Acc: {val_acc*100:.2f}%")
-
-            # Early stopping check
-            if val_loss < best_val_loss - min_delta:
-                best_val_loss = val_loss
-                best_epoch = epoch
-                patience_counter = 0
-                best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
-                if verbose:
-                    print(f"  → New best model (val_loss: {val_loss:.4f})")
-            else:
-                patience_counter += 1
-                if verbose and patience_counter > 0:
-                    print(f"  → No improvement ({patience_counter}/{patience})")
-
-            # Check if should stop
-            if patience_counter >= patience:
-                if verbose:
-                    print(f"\nEarly stopping triggered at epoch {epoch+1}")
-                    print(f"Best model was at epoch {best_epoch+1}")
-                break
-
-        # Restore best model
-        if best_model_state is not None:
-            model.load_state_dict(best_model_state)
-            if verbose:
-                print(f"\nRestored best model from epoch {best_epoch+1}")
-
-        return {
-            'train_losses': train_losses,
-            'val_losses': val_losses,
-            'val_accs': val_accs,
-            'best_epoch': best_epoch,
-            'total_epochs': epoch + 1,
-            'stopped_early': patience_counter >= patience
-        }
-
-    def train_upper_layers_with_early_stopping(
-        self,
-        model: nn.Module,
-        hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-        val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-        hard_examples: Dict[str, torch.Tensor],
-        optimizer: torch.optim.Optimizer,
-        num_lower_layers: int,
-        max_epochs: int = 50,
-        patience: int = 3,
-        verbose: bool = True
-    ) -> Dict[str, Any]:
-        """
-        Train upper layers on hard examples with early stopping.
-
-        This method trains newly added layers on hard examples only,
-        while using full validation set for early stopping decisions.
-
-        Args:
-            model: Extended model with frozen lower layers
-            hard_batches: Batches of (hidden_state, target) from hard examples
-            val_batches: Full validation batches for evaluation
-            hard_examples: Raw hard examples for PPL computation
-            optimizer: Optimizer for trainable parameters
-            num_lower_layers: Number of frozen lower layers
-            max_epochs: Maximum training epochs
-            patience: Early stopping patience
-            verbose: Print progress
-
-        Returns:
-            Dictionary containing training history and metrics
-        """
-        from .utils import train_upper_layers, evaluate_on_hard_examples
-
+        """Core early stopping loop shared by training methods."""
         best_val_ppl = float('inf')
         best_model_state = None
         patience_counter = 0
         best_epoch = 0
 
-        train_ppls = []
-        val_ppls = []
-        hard_ppls = []
+        train_ppls: List[float] = []
+        val_ppls: List[float] = []
+        val_accs: List[float] = []
+        hard_ppls: List[float] = []
 
         for epoch in range(max_epochs):
-            # Train on hard examples
-            train_loss = train_upper_layers(
-                model, hard_batches, optimizer,
-                self.vocab_size, self.device, num_lower_layers
-            )
+            train_loss = train_fn()
             train_ppl = float(np.exp(train_loss))
             train_ppls.append(train_ppl)
 
-            # Evaluate on full validation set with routing
             val_stats = self.evaluate(model, val_batches)
             val_ppl = val_stats['ppl']
             val_acc = val_stats['acc']
             val_ppls.append(val_ppl)
+            val_accs.append(val_acc)
 
-            # Evaluate on hard examples
-            hard_ppl = evaluate_on_hard_examples(
-                model, hard_examples, self.vocab_size, self.device,
-                batch_size=64, num_lower_layers=num_lower_layers
-            )
-            hard_ppls.append(hard_ppl)
+            hard_ppl = extra_eval_fn() if extra_eval_fn else None
+            if hard_ppl is not None:
+                hard_ppls.append(hard_ppl)
 
             if verbose:
-                print(f"Epoch {epoch+1}/{max_epochs} - "
-                      f"Train PPL: {train_ppl:.4f} | "
-                      f"Val PPL: {val_ppl:.2f} | "
-                      f"Val Acc: {val_acc*100:.2f}% | "
-                      f"Hard PPL: {hard_ppl:.2f}")
+                msg = (f"Epoch {epoch+1}/{max_epochs} - "
+                       f"Train PPL: {train_ppl:.4f} | "
+                       f"Val PPL: {val_ppl:.2f} | "
+                       f"Val Acc: {val_acc*100:.2f}%")
+                if hard_ppl is not None:
+                    msg += f" | Hard PPL: {hard_ppl:.2f}"
+                print(msg)
 
-            # Early stopping check
             if val_ppl < best_val_ppl:
                 best_val_ppl = val_ppl
                 best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
@@ -319,18 +197,75 @@ class Trainer:
                     print(f"Best model was at epoch {best_epoch+1}")
                 break
 
-        # Restore best model
         if best_model_state is not None:
             model.load_state_dict({k: v.to(self.device) for k, v in best_model_state.items()})
             if verbose:
-                print("\nRestored best model from Phase 2")
+                print(f"\nRestored best model from epoch {best_epoch+1}")
 
-        return {
-            'train_ppls': train_ppls,
-            'val_ppls': val_ppls,
-            'hard_ppls': hard_ppls,
+        result: Dict[str, Any] = {
+            'train_losses': train_ppls,
+            'val_losses': val_ppls,
+            'val_accs': val_accs,
             'best_epoch': best_epoch,
             'best_val_ppl': best_val_ppl,
             'total_epochs': epoch + 1,
             'stopped_early': patience_counter >= patience
         }
+        if hard_ppls:
+            result['hard_ppls'] = hard_ppls
+        return result
+
+    def train_with_early_stopping(
+        self,
+        model: nn.Module,
+        train_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+        val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+        optimizer: torch.optim.Optimizer,
+        max_epochs: int = 100,
+        patience: int = 5,
+        min_delta: float = 0.0,
+        grad_clip: float = 1.0,
+        verbose: bool = True
+    ) -> Dict[str, Any]:
+        """Train with early stopping."""
+        def train_fn() -> float:
+            return self.train_epoch(model, train_batches, optimizer, grad_clip)
+
+        return self._early_stopping_loop(
+            model, val_batches, train_fn, max_epochs, patience, verbose
+        )
+
+    def train_upper_layers_with_early_stopping(
+        self,
+        model: nn.Module,
+        hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+        val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+        hard_examples: Dict[str, torch.Tensor],
+        optimizer: torch.optim.Optimizer,
+        num_lower_layers: int,
+        max_epochs: int = 50,
+        patience: int = 3,
+        verbose: bool = True
+    ) -> Dict[str, Any]:
+        """Train upper layers on hard examples with early stopping."""
+        from .utils import train_upper_layers, evaluate_on_hard_examples
+
+        def train_fn() -> float:
+            return train_upper_layers(
+                model, hard_batches, optimizer,
+                self.vocab_size, self.device, num_lower_layers
+            )
+
+        def extra_eval_fn() -> float:
+            return evaluate_on_hard_examples(
+                model, hard_examples, self.vocab_size, self.device,
+                batch_size=64, num_lower_layers=num_lower_layers
+            )
+
+        result = self._early_stopping_loop(
+            model, val_batches, train_fn, max_epochs, patience, verbose, extra_eval_fn
+        )
+        # Rename for backward compatibility
+        result['train_ppls'] = result.pop('train_losses')
+        result['val_ppls'] = result.pop('val_losses')
+        return result
