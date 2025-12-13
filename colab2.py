@@ -231,34 +231,18 @@ def run_experiment(device: str) -> Dict[str, Any]:
     print(f"{'='*60}\n")
 
     # Create extended model with Early Exit support
-    model_extended = LEGOTransformer(
-        vocab_size=CONFIG.vocab_size,
-        dim=CONFIG.dim,
+    model_extended = LEGOTransformer.extend_from(
+        source_model=model,
         num_layers=CONFIG.lego.phase2_layers,
-        num_heads=CONFIG.num_heads,
-        exit_layer=CONFIG.lego.phase1_layers,
-        routing_threshold=confidence_threshold
+        routing_threshold=confidence_threshold,
+        freeze_lower=True
     ).to(device)
-
-    # Copy weights from Phase 1 model
-    model_extended.embedding.load_state_dict(model.embedding.state_dict())
-    for i in range(CONFIG.lego.phase1_layers):
-        model_extended.layers[i].load_state_dict(model.layers[i].state_dict())
-    model_extended.output_head.load_state_dict(model.output_head.state_dict())
 
     print("✓ Copied weights from 2-layer model")
     print("✓ Layers 3-4 randomly initialized")
-
-    # Hard Freezing: Freeze lower layers
     print("\n📊 Hard Freezing Configuration:")
     print("  Layer 1-2: Frozen (requires_grad=False)")
     print("  Layer 3-4: Trainable")
-
-    for param in model_extended.embedding.parameters():
-        param.requires_grad = False
-    for i in range(CONFIG.lego.phase1_layers):
-        for param in model_extended.layers[i].parameters():
-            param.requires_grad = False
 
     # Configure training for Phase 2 (with routing for evaluation)
     phase2_config = TrainingConfig(

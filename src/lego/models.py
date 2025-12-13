@@ -171,4 +171,54 @@ class LEGOTransformer(nn.Module):
 
         return output, stats
 
+    @classmethod
+    def extend_from(
+        cls,
+        source_model: 'LEGOTransformer',
+        num_layers: int,
+        routing_threshold: float,
+        freeze_lower: bool = True,
+    ) -> 'LEGOTransformer':
+        """
+        Create an extended model from a shallow model.
+
+        Copies weights from source_model and optionally freezes lower layers.
+        Upper layers are randomly initialized.
+
+        Args:
+            source_model: Trained shallow model to extend from
+            num_layers: Total number of layers for extended model
+            routing_threshold: Confidence threshold for early exit
+            freeze_lower: Whether to freeze lower layers (default: True)
+
+        Returns:
+            Extended LEGOTransformer with copied weights
+        """
+        exit_layer = source_model.num_layers
+
+        # Create extended model
+        extended = cls(
+            vocab_size=source_model.vocab_size,
+            dim=source_model.dim,
+            num_layers=num_layers,
+            num_heads=source_model.layers[0].attn.num_heads,
+            exit_layer=exit_layer,
+            routing_threshold=routing_threshold,
+        )
+
+        # Copy weights from source model
+        extended.embedding.load_state_dict(source_model.embedding.state_dict())
+        for i in range(source_model.num_layers):
+            extended.layers[i].load_state_dict(source_model.layers[i].state_dict())
+        extended.output_head.load_state_dict(source_model.output_head.state_dict())
+
+        # Freeze lower layers if requested
+        if freeze_lower:
+            for param in extended.embedding.parameters():
+                param.requires_grad = False
+            for i in range(source_model.num_layers):
+                for param in extended.layers[i].parameters():
+                    param.requires_grad = False
+
+        return extended
 
