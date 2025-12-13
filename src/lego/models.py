@@ -60,12 +60,16 @@ class LEGOTransformer(nn.Module):
             elif isinstance(module, nn.Embedding):
                 nn.init.trunc_normal_(module.weight, std=0.02)
 
+    def _forward_layers(self, h: torch.Tensor, start: int, end: int) -> torch.Tensor:
+        """Process hidden states through layers[start:end]."""
+        for i in range(start, end):
+            h = self.layers[i](h)
+        return h
+
     def get_hidden_states(self, x: torch.Tensor) -> torch.Tensor:
         """Get hidden states after all layers (before output head)."""
         h = self.embedding(x)
-        for layer in self.layers:
-            h = layer(h)
-        return h
+        return self._forward_layers(h, 0, self.num_layers)
 
     def compute_confidence(self, h: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -178,17 +182,17 @@ class LEGOTransformer(nn.Module):
         List[Tuple[torch.Tensor, torch.Tensor]],
         List[Tuple[torch.Tensor, torch.Tensor]]
     ]:
-        """Process initial prompt through all layers, returning logits and KV caches."""
+        """Process initial prompt through all blocks, returning logits and KV caches."""
         h = self.embedding(input_ids)
 
-        # Lower layers
-        h, lower_kv_cache = self._forward_with_cache_partial(h, None, 0, self.exit_layer)
+        # Block 1
+        h, block1_cache = self._forward_with_cache_partial(h, None, 0, self.exit_layer)
 
-        # Upper layers
-        h, upper_kv_cache = self._forward_with_cache_partial(h, None, self.exit_layer, self.num_layers)
+        # Block 2
+        h, block2_cache = self._forward_with_cache_partial(h, None, self.exit_layer, self.num_layers)
 
         logits = self.output_head(h)
-        return logits, lower_kv_cache, upper_kv_cache
+        return logits, block1_cache, block2_cache
 
     def generate(
         self,
@@ -202,10 +206,10 @@ class LEGOTransformer(nn.Module):
         Autoregressive generation with TRUE early exit.
 
         For each token:
-        1. Process through lower layers (0 to exit_layer-1)
+        1. Process through Block 1 (layers 0 to exit_layer-1)
         2. Compute confidence
-        3. If confidence >= threshold: use shallow output, SKIP upper layers
-        4. If confidence < threshold: process through upper layers
+        3. If confidence >= threshold: use Block 1 output, SKIP Block 2
+        4. If confidence < threshold: process through Block 2
 
         Set routing_threshold >= 1.0 to disable early exit (all tokens go deep).
 
@@ -213,7 +217,6 @@ class LEGOTransformer(nn.Module):
             input_ids: Initial token ids (batch_size, seq_len)
             max_new_tokens: Number of tokens to generate
             routing_threshold: Confidence threshold (default: self.routing_threshold)
-                              Use >= 1.0 for standard generation (no early exit)
             temperature: Sampling temperature
             top_k: Top-k filtering
 
@@ -228,57 +231,47 @@ class LEGOTransformer(nn.Module):
         batch_size = input_ids.shape[0]
         generated = input_ids.clone()
 
-        # Statistics
         shallow_count = 0
         deep_count = 0
 
         with torch.no_grad():
-            # Process initial prompt through ALL layers
-            logits, lower_kv_cache, upper_kv_cache = self._process_prompt(input_ids)
+            logits, block1_cache, block2_cache = self._process_prompt(input_ids)
 
-            # Generate new tokens one by one
             for _ in range(max_new_tokens):
                 next_token = self._sample_next_token(logits, temperature, top_k)
                 generated = torch.cat([generated, next_token], dim=1)
 
-                # Process new token through lower layers
+                # Block 1
                 h = self.embedding(next_token)
-                h, lower_kv_cache = self._forward_with_cache_partial(
-                    h, lower_kv_cache, 0, self.exit_layer
+                h, block1_cache = self._forward_with_cache_partial(
+                    h, block1_cache, 0, self.exit_layer
                 )
 
-                # Compute confidence at exit point
+                # Confidence check
                 shallow_logits, confidence = self.compute_confidence(h)
-
-                # Early exit decision (per batch item)
                 use_shallow = (confidence >= routing_threshold).all().item()
 
                 if use_shallow:
-                    # Use shallow output, SKIP upper layers
+                    # Early exit: skip Block 2
                     logits = shallow_logits
                     shallow_count += batch_size
                 else:
-                    # Process through upper layers
-                    h, upper_kv_cache = self._forward_with_cache_partial(
-                        h, upper_kv_cache, self.exit_layer, self.num_layers
+                    # Block 2
+                    h, block2_cache = self._forward_with_cache_partial(
+                        h, block2_cache, self.exit_layer, self.num_layers
                     )
                     logits = self.output_head(h)
                     deep_count += batch_size
 
-        # Compute statistics
         total_tokens = shallow_count + deep_count
-        actual_compute_cost = compute_routing_cost(
-            shallow_count, deep_count, self.exit_layer, self.num_layers
-        )
-
-        stats = {
+        return generated, {
             'shallow_count': shallow_count,
             'deep_count': deep_count,
             'shallow_ratio': shallow_count / max(total_tokens, 1),
-            'actual_compute_cost': actual_compute_cost,
+            'actual_compute_cost': compute_routing_cost(
+                shallow_count, deep_count, self.exit_layer, self.num_layers
+            ),
         }
-
-        return generated, stats
 
     def forward_upper_layers(
         self,
@@ -286,18 +279,64 @@ class LEGOTransformer(nn.Module):
         start_layer: int
     ) -> torch.Tensor:
         """
-        Forward through upper layers only (for Phase 2 training).
+        Forward through layers starting from start_layer (for Block 2+ training).
 
         Args:
-            h: Hidden states from lower layers (batch_size, seq_len, dim)
-            start_layer: Index of first upper layer to process
+            h: Hidden states from previous block (batch_size, seq_len, dim)
+            start_layer: Index of first layer to process
 
         Returns:
-            Logits after processing through upper layers
+            Logits after processing through remaining layers
         """
-        for i in range(start_layer, self.num_layers):
-            h = self.layers[i](h)
+        h = self._forward_layers(h, start_layer, self.num_layers)
         return self.output_head(h)  # type: ignore[no-any-return]
+
+    def forward_with_routing(
+        self,
+        x: torch.Tensor,
+        routing_threshold: float
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """
+        Forward pass with routing statistics (for evaluation).
+
+        Computes both Block 1 and Block 2 outputs, then routes based on confidence.
+        This is for evaluation metrics only - for actual inference with
+        computation savings, use generate().
+
+        Args:
+            x: Input token ids (batch_size, seq_len)
+            routing_threshold: Confidence threshold for routing
+
+        Returns:
+            output: Routed logits (batch_size, seq_len, vocab_size)
+            stats: Dictionary with mean_confidence, shallow_ratio, compute_cost
+        """
+        batch_size, seq_len = x.shape
+
+        # Block 1
+        h = self.embedding(x)
+        h = self._forward_layers(h, 0, self.exit_layer)
+        shallow_logits, confidence = self.compute_confidence(h)
+
+        # Block 2
+        h_deep = self._forward_layers(h, self.exit_layer, self.num_layers)
+        deep_logits = self.output_head(h_deep)
+
+        # Route based on confidence
+        mask = (confidence >= routing_threshold).unsqueeze(-1)
+        output = torch.where(mask, shallow_logits, deep_logits)
+
+        # Statistics
+        shallow_count = int(mask.sum().item())
+        total_count = batch_size * seq_len
+        deep_count = total_count - shallow_count
+        cost = compute_routing_cost(shallow_count, deep_count, self.exit_layer, self.num_layers)
+
+        return output, {
+            'mean_confidence': confidence.mean().item(),
+            'shallow_ratio': shallow_count / total_count,
+            'compute_cost': cost,
+        }
 
     def _freeze_layers(self, num_layers_to_freeze: int) -> None:
         """Freeze embedding and specified number of lower layers."""
@@ -314,18 +353,18 @@ class LEGOTransformer(nn.Module):
         freeze_lower: bool = True,
     ) -> 'LEGOTransformer':
         """
-        Create an extended model from this model.
+        Create an extended model by adding a new block.
 
-        Copies weights and optionally freezes lower layers.
-        Upper layers are randomly initialized.
+        Current model becomes Block 1 (weights copied, optionally frozen).
+        New layers become Block 2 (randomly initialized).
 
         Args:
             num_layers: Total number of layers for extended model
             routing_threshold: Confidence threshold for early exit
-            freeze_lower: Whether to freeze lower layers (default: True)
+            freeze_lower: Whether to freeze Block 1 (default: True)
 
         Returns:
-            Extended LEGOTransformer with copied weights
+            Extended LEGOTransformer
         """
         exit_layer = self.num_layers
 

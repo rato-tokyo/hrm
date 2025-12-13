@@ -2,127 +2,90 @@
 
 ## コア概念
 
-LEGOは、2フェーズ訓練と**TRUE Early Exit**推論を組み合わせた効率的なTransformer訓練フレームワークです。
+LEGOは、**Block単位の段階的訓練**と**TRUE Early Exit**推論を組み合わせた効率的なTransformer訓練フレームワークです。
 
-### 基本アイデア
+### 基本アイデア（Block-based設計）
 
-1. **Phase 1**: 浅いモデル（2層）を全データで訓練
-2. **Hard Example収集**: 信頼度の低いトークンを特定
-3. **Phase 2**: 深いモデル（4層）の上位層のみをHard Examplesで訓練
-4. **推論**: TRUE Early Exitで高信頼度トークンは上位層を**実際にスキップ**
+```
+Block 1 訓練 → Hard Tokens出力 → Block 2 訓練 → Hard Tokens出力 → ...
+```
 
-### TRUE Early Exit vs Fake Early Exit
+1. **Block 1**: 最初のブロックを全データで訓練
+2. **Hard Token収集**: 訓練後、信頼度の低いトークンを自動出力
+3. **Block 2**: 次のブロックをHard Tokensのみで訓練
+4. **繰り返し**: 必要に応じてBlock 3, 4...と拡張可能
+5. **推論**: TRUE Early Exitで高信頼度トークンは後続Blockを**実際にスキップ**
+
+### TRUE Early Exit
 
 | 方式 | 動作 | 計算削減 |
 |------|------|----------|
-| **Fake** (旧設計) | 両パス計算→選択 | なし |
-| **TRUE** (新設計) | 高信頼度→上位層スキップ | **実際に削減** |
-
-実験結果: TRUE Early Exitで**32.8%の実計算削減**達成
+| **Fake** | 全Block計算→選択 | なし |
+| **TRUE** | 高信頼度→後続Blockスキップ | **実際に削減** |
 
 ---
 
-## アーキテクチャ
+## 設計原則
 
-### KVキャッシュ分離戦略
+### 1. シンプルなBlock構造
 
-```python
-# 下位層キャッシュ（常に更新）
-lower_kv_cache: List[Tuple[torch.Tensor, torch.Tensor]]  # len = exit_layer
+- 各Blockは独立した層の集合
+- Block間の境界で信頼度を評価
+- 信頼度が高ければ後続Blockをスキップ
 
-# 上位層キャッシュ（deepパス時のみ更新）
-upper_kv_cache: List[Tuple[torch.Tensor, torch.Tensor]]  # len = num_layers - exit_layer
-```
+### 2. 責務の分離
 
-### Early Exit判定フロー
+| コンポーネント | 責務 |
+|---------------|------|
+| **Model** | 推論（forward, generate）、信頼度計算、ルーティング |
+| **Trainer** | 訓練ループ、評価（Modelのメソッドを呼ぶだけ） |
+| **Utils** | Hard Token収集、データ処理 |
 
-```
-for each token:
-    h = embedding(token)
-    h = forward_lower_layers(h, lower_cache)  # Layer 0〜exit_layer-1
+**重要**: TrainerはModelの内部構造（layers, embedding）に直接アクセスしない
 
-    confidence = compute_confidence(h)
-
-    if confidence >= threshold:
-        output = shallow_logits  # Layer exit_layer〜をスキップ
-    else:
-        h = forward_upper_layers(h, upper_cache)  # Layer exit_layer〜を実行
-        output = deep_logits
-```
-
----
-
-## 信頼度とルーティング
-
-### 信頼度（Confidence）
+### 3. 信頼度とルーティング
 
 - **信頼度** = 予測確率の最大値（max probability）
-- 実装: `F.softmax(logits, dim=-1).max(dim=-1).values`
-
-### 閾値の決定
-
-- **自動調整**: 指定比率のトークンがHard Examplesになるよう閾値を計算
-- 実装: `compute_confidence_threshold(model, val_batches, target_ratio, device)`
-- 例：`hard_example_ratio=0.5` → 信頼度の低い方から50%を「難しいトークン」とする閾値を自動算出
+- **閾値の自動決定**: 指定比率のトークンがHard Tokensになるよう閾値を計算
+- **ルーティング**: `confidence >= threshold` → 現在のBlock出力を使用
 
 ---
 
-## 2フェーズ訓練の実装
+## 使用例
 
-### Phase 1: 浅いモデルの訓練
+### Block 1 訓練
 
 ```python
-model = LEGOTransformer(
-    vocab_size=vocab_size, dim=dim, num_layers=2, num_heads=num_heads
-)
+model = LEGOTransformer(vocab_size=vocab_size, dim=dim, num_layers=2)
 trainer = Trainer(vocab_size=vocab_size, device=device)
-optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-result = trainer.train_with_early_stopping(model, train_loader, val_loader, optimizer)
+result = trainer.train_with_early_stopping(model, train_data, val_data, optimizer)
 ```
 
-### Hard Examples収集
+### Hard Token収集（自動）
 
 ```python
-confidence_threshold = compute_confidence_threshold(
-    model, val_loader, target_ratio=0.5, device=device
-)
-hard_examples = collect_hard_examples(model, val_loader, confidence_threshold, device)
-hard_batches = create_hard_example_loader(hard_examples, batch_size=64)
+threshold = compute_confidence_threshold(model, val_data, target_ratio=0.5, device)
+hard_tokens = collect_hard_examples(model, val_data, threshold, device)
 # Returns: {'hidden_states', 'targets'}
 ```
 
-### Phase 2: 拡張モデルの訓練
+### Block 2 訓練
 
 ```python
-# extend メソッドで拡張（重みコピー＋凍結を自動化）
-model_extended = model.extend(
-    num_layers=4,
-    routing_threshold=threshold,
-    freeze_lower=True  # Layer 0-1 + embeddingを凍結
-).to(device)
+model_extended = model.extend(num_layers=4, routing_threshold=threshold)
+# Block 1の重みはコピー＆凍結、Block 2は新規初期化
 
-# Hard examplesで上位層のみ訓練
-optimizer = torch.optim.AdamW(model_extended.parameters(), lr=1e-4)
 result = trainer.train_upper_layers_with_early_stopping(
-    model_extended, hard_batches, val_loader, hard_examples,
-    optimizer, num_lower_layers=2,
-    routing_threshold=threshold
+    model_extended, hard_batches, val_data, hard_tokens, optimizer,
+    num_lower_layers=2, routing_threshold=threshold
 )
 ```
 
-### 推論: TRUE Early Exit
+### 推論（TRUE Early Exit）
 
 ```python
-# 生成時のTRUE Early Exit
-generated, stats = model_extended.generate(
-    prompt, max_new_tokens=32, routing_threshold=threshold
-)
-# Returns: generated tokens, {shallow_count, deep_count, actual_compute_cost, shallow_ratio}
-
-# 標準生成（Early Exit無効）: routing_threshold=1.0
-generated, stats = model_extended.generate(
-    prompt, max_new_tokens=32, routing_threshold=1.0
-)
+generated, stats = model.generate(prompt, max_new_tokens=32, routing_threshold=threshold)
+# stats: {shallow_count, deep_count, actual_compute_cost, shallow_ratio}
 ```
 
 ---
@@ -133,45 +96,28 @@ generated, stats = model_extended.generate(
 
 | メソッド | 用途 |
 |---------|------|
-| `forward(x)` | 標準推論（全層通過、訓練用） |
-| `forward_with_cache(x, past_kv_cache, use_cache)` | KVキャッシュ付き推論 |
-| `generate(input_ids, max_new_tokens, routing_threshold, ...)` | **統一生成API**（Early Exit対応） |
-| `forward_upper_layers(h, start_layer)` | 上位層のみ処理（Phase 2訓練用） |
-| `extend(num_layers, routing_threshold, freeze_lower)` | モデル拡張 |
-| `compute_confidence(h)` | 信頼度計算（logits, confidence を返す） |
-| `get_hidden_states(x)` | hidden states取得 |
-
-**generate() の使い分け**:
-- `routing_threshold < 1.0`: TRUE Early Exit有効
-- `routing_threshold >= 1.0`: 標準生成（全トークンdeepパス）
+| `forward(x)` | 標準推論（全Block通過） |
+| `generate(...)` | 生成（TRUE Early Exit対応） |
+| `forward_with_routing(x, threshold)` | ルーティング付き推論（評価用） |
+| `forward_upper_layers(h, start)` | 指定Block以降を処理 |
+| `extend(num_layers, threshold)` | Block追加 |
+| `compute_confidence(h)` | 信頼度計算 |
 
 ### Trainer
 
 | メソッド | 用途 |
 |---------|------|
-| `train_with_early_stopping(...)` | Phase 1 訓練 |
-| `train_upper_layers_with_early_stopping(...)` | Phase 2 訓練 |
-| `evaluate(model, val_batches, routing_threshold)` | 評価（Fake Early Exit統計） |
+| `train_with_early_stopping(...)` | Block訓練 |
+| `train_upper_layers_with_early_stopping(...)` | 追加Block訓練 |
+| `evaluate(...)` | 評価 |
 
-### ユーティリティ関数
+### ユーティリティ
 
 | 関数 | 用途 |
 |------|------|
-| `set_seed()` | 再現性のためのシード設定 |
-| `get_device()` | 利用可能なデバイス取得 |
-| `create_synthetic_data()` | テスト用合成データ生成 |
-| `compute_confidence_threshold()` | 指定比率で閾値を自動計算 |
-| `collect_hard_examples()` | 閾値未満のトークンを収集 |
-| `create_hard_example_loader()` | Hard examplesをバッチ化 |
-| `evaluate_on_hard_examples()` | Hard examplesでの評価 |
-
----
-
-## 実験スクリプト
-
-| スクリプト | 内容 |
-|-----------|------|
-| `colab4.py` | **TRUE Early Exit検証**（2フェーズ訓練 + 生成） |
+| `compute_confidence_threshold()` | 閾値自動計算 |
+| `collect_hard_examples()` | Hard Token収集 |
+| `create_hard_example_loader()` | バッチ化 |
 
 ---
 
@@ -180,19 +126,14 @@ generated, stats = model_extended.generate(
 ### 変更時の必須手順
 
 1. `python3 test_lego.py` で全テスト合格を確認
-2. `python3 -m mypy src/lego/ --ignore-missing-imports` でエラーなし
-3. `python3 -m ruff check src/lego/` でエラーなし
 
-### コード変更時のチェックリスト
+### 設計の注意点
 
-- [ ] `test_lego.py` で全テスト合格
-- [ ] mypy/ruff でエラーなし
-- [ ] メソッドの外部インターフェースを不用意に変更していない
-- [ ] 返り値の構造を変更する場合はテストも更新
+1. **TrainerはModelのAPIのみ使用** - 内部構造への直接アクセス禁止
+2. **Block単位で考える** - lower/upperではなくBlock 1, Block 2
+3. **シンプルさ優先** - 複雑な抽象化より明確なコード
 
 ### Git操作
-
-変更完了後は以下を実行：
 
 ```bash
 git add .
@@ -202,44 +143,21 @@ git push origin main
 
 ---
 
-## 教訓と注意事項
+## 注意事項
 
-### 1. テスト閾値の設定
+### テスト閾値
 
-未訓練モデルでEarly Exitをテストする場合、閾値を低く設定する必要がある。
-- 未訓練モデルの信頼度は低い（vocab_size=100で約1%）
-- threshold=0.5では全トークンがdeepパスへ
-- **threshold=0.02程度で適切にearly exitが発生**
+未訓練モデルは信頼度が低いため、テスト時は低い閾値（0.02程度）を使用
 
-### 2. KVキャッシュとRoPE
+### KVキャッシュとRoPE
 
-KVキャッシュ使用時、RoPEの位置インデックスは**累積位置**を使用する必要がある：
+位置インデックスは累積位置を使用：
 ```python
-# NG: 常に0から開始
-cos, sin = self.rope(x, seq_len, position_offset=0)
-
-# OK: 過去のキャッシュ長を考慮
-cos, sin = self.rope(x, seq_len, position_offset=past_len)
+cos, sin = self.rope(x, seq_len, position_offset=past_len)  # OK
 ```
 
-### 3. 削除禁止の核心機能
+### 核心機能（削除禁止）
 
-以下はLEGOの効率性を実現する核心機能：
-1. `collect_hard_examples()` - トークン単位でhidden statesを収集
-2. `create_hard_example_loader()` - hidden statesをバッチ化
-3. `forward_upper_layers()` - hidden statesから直接上位層を訓練
-4. `evaluate_on_hard_examples()` - hard examplesのPPL計算
-
-### 4. Gitマージコンフリクト防止
-
-大規模変更時は事前にリモート状態を確認：
-```bash
-git fetch origin
-git log --oneline --graph origin/main -10
-git diff HEAD origin/main --stat
-```
-
-### 5. Human-AI タスク分担
-
-- **Human**: 重い環境セットアップ、GUI操作、外部サービス認証
-- **AI**: コード作成・修正、git操作、ドキュメント作成
+1. `collect_hard_examples()` - トークン単位でhidden states収集
+2. `forward_upper_layers()` - hidden statesから直接Block訓練
+3. `compute_confidence()` - 信頼度計算

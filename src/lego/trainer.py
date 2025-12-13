@@ -10,9 +10,6 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Callable, Dict, List, Optional, Tuple, Any
 
-from .utils import compute_routing_cost
-
-
 class Trainer:
     """
     Trainer for LEGO models.
@@ -25,56 +22,6 @@ class Trainer:
     def __init__(self, vocab_size: int, device: str = 'cpu'):
         self.vocab_size = vocab_size
         self.device = device
-
-    def _forward_with_routing(
-        self,
-        model: nn.Module,
-        x: torch.Tensor,
-        routing_threshold: float
-    ) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """
-        Forward pass with routing statistics (for evaluation).
-
-        Computes both shallow and deep outputs, then routes based on confidence.
-        This is used for evaluation metrics only - for actual inference,
-        use model.generate() for true computation savings.
-        """
-        batch_size, seq_len = x.shape
-        exit_layer = getattr(model, 'exit_layer', model.num_layers)
-
-        h = model.embedding(x)
-
-        # Process up to exit layer
-        for i in range(exit_layer):
-            h = model.layers[i](h)
-
-        # Shallow output and confidence (using model's compute_confidence)
-        shallow_logits, confidence = model.compute_confidence(h)
-
-        # Continue to deep output
-        h_deep = h
-        for i in range(exit_layer, model.num_layers):
-            h_deep = model.layers[i](h_deep)
-        deep_logits = model.output_head(h_deep)
-
-        # Hard routing
-        mask = (confidence >= routing_threshold).unsqueeze(-1)
-        output = torch.where(mask, shallow_logits, deep_logits)
-
-        # Compute statistics
-        shallow_count = int(mask.sum().item())
-        total_count = batch_size * seq_len
-        deep_count = total_count - shallow_count
-
-        cost = compute_routing_cost(shallow_count, deep_count, exit_layer, model.num_layers)
-
-        stats = {
-            'mean_confidence': confidence.mean().item(),
-            'shallow_ratio': shallow_count / total_count,
-            'compute_cost': cost,
-        }
-
-        return output, stats
 
     @torch.no_grad()
     def evaluate(
@@ -98,7 +45,8 @@ class Trainer:
             x, y = x.to(self.device), y.to(self.device)
 
             if use_routing:
-                logits, stats = self._forward_with_routing(model, x, routing_threshold)
+                # Use model's forward_with_routing method
+                logits, stats = model.forward_with_routing(x, routing_threshold)
                 total_shallow += stats['shallow_ratio'] * x.numel()
                 total_compute += stats['compute_cost']
             else:
