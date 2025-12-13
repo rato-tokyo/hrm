@@ -41,6 +41,8 @@ from typing import Dict, Any
 from lego import (
     LEGOTransformer,
     Trainer,
+    set_seed,
+    get_device,
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
@@ -48,7 +50,7 @@ from lego import (
 )
 
 sys.path.insert(0, 'experiments')
-from utils import set_seed, get_device, create_wikitext_dataloaders
+from utils import create_wikitext_dataloaders
 
 
 # ==============================================================================
