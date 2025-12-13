@@ -1,1 +1,1 @@
-# EASE Framework
+# LEGO Framework

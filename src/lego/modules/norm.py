@@ -1,5 +1,5 @@
 """
-EASE Framework - Normalization Layers
+LEGO Framework - Normalization Layers
 """
 
 import torch

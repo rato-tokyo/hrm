@@ -1,5 +1,5 @@
 """
-EASE Framework - Feed-Forward Network Layers
+LEGO Framework - Feed-Forward Network Layers
 """
 
 import torch

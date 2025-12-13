@@ -1,5 +1,5 @@
 """
-EASE Framework - Transformer Block
+LEGO Framework - Transformer Block
 """
 
 import torch

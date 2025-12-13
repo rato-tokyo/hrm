@@ -1,7 +1,7 @@
 """
-LASH: Layered Adaptive Supervision Hierarchy
+LEGO: Layered Ensemble with Gradual Optimization
 
-層を組み合わせる柔軟なフレームワーク。2つのコアオプションで全てを制御。
+A modular training framework with 2 core options.
 
 Base Models:
 - StandardTransformer: Final layer loss only
@@ -14,15 +14,15 @@ Core Options (via TrainingConfig):
 Training Strategies:
 1. Standard: Final layer only (1 stage)
 2. Deep Supervision: All layers equally (all stages)
-3. ASHEM: Hard example mining with 2-stage training
+3. Hard Example Mining: 2-stage training with hard example focus
 
 Usage:
-    from ease import DeepSupervisionTransformer, Trainer, TrainingConfig, StageConfig
+    from lego import DeepSupervisionTransformer, Trainer, TrainingConfig, StageConfig
 
     # Create model
     model = DeepSupervisionTransformer(vocab_size=1000, dim=64, num_layers=3)
 
-    # Configure training (LASH's 2 core options)
+    # Configure training (2 core options)
     config = TrainingConfig(
         stages=[
             StageConfig(layers=(1, 2), loss_weight=0.7),
@@ -42,10 +42,10 @@ Usage:
     stats = trainer.evaluate(model, val_batches)
 
 References:
-- LASH: Layered Adaptive Supervision Hierarchy
+- LEGO: Layered Ensemble with Gradual Optimization
 - Deep Supervision: Lee et al., 2015
 - Early Exit: Teerapittayanon et al., 2016
-- ASHEM: Adaptive Supervision via Hard Example Mining
+- Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
 """
 
 from .models import (
@@ -59,8 +59,8 @@ from .trainer import (
     create_standard_config,
     create_deep_supervision_config,
 )
-from .ashem import (
-    ASHEMConfig,
+from .utils import (
+    LEGOConfig,
     compute_confidence,
     compute_confidence_threshold,
     collect_hard_examples,
@@ -88,8 +88,8 @@ __all__ = [
     'Trainer',
     'create_standard_config',
     'create_deep_supervision_config',
-    # ASHEM
-    'ASHEMConfig',
+    # LEGO Config
+    'LEGOConfig',
     'compute_confidence',
     'compute_confidence_threshold',
     'collect_hard_examples',

@@ -1,20 +1,13 @@
 """
-LASH Framework - ASHEM Training Strategy
+LEGO Framework - Hard Example Mining Utilities
 
-ASHEM: Adaptive Supervision via Hard Example Mining
-
-A two-phase training strategy that focuses computational resources on hard examples:
+Two-phase training strategy that focuses computational resources on hard examples:
 1. Phase 1: Train shallow model on all data
 2. Phase 2: Extend model with additional layers, train only on hard examples
-3. Inference: Two-stage routing using LASH's Early Exit mechanism
-
-Key Benefits:
-- 78% improvement on hard examples (PPL: 2600 → 571)
-- 36% compute cost reduction using adaptive routing
-- Fully integrated with LASH framework's 3 core options
+3. Inference: Two-stage routing using Early Exit mechanism
 
 References:
-- ASHEM: Adaptive Supervision via Hard Example Mining (本研究)
+- LEGO: Layered Ensemble with Gradual Optimization
 - Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
 - Early Exit: BranchyNet (2016), Teerapittayanon et al. (2016)
 """
@@ -27,11 +20,11 @@ from dataclasses import dataclass
 
 
 @dataclass
-class ASHEMConfig:
+class LEGOConfig:
     """
-    Configuration for ASHEM (Adaptive Supervision via Hard Example Mining).
+    Configuration for LEGO two-phase training strategy.
 
-    ASHEM is a two-phase training strategy:
+    Two-phase training:
     1. Phase 1: Train shallow model on all data
     2. Phase 2: Extend model with additional layers, train only on hard examples
 
@@ -60,7 +53,7 @@ class ASHEMConfig:
 
 
 # ==============================================================================
-# ASHEM Utility Functions
+# LEGO Utility Functions
 # ==============================================================================
 
 def compute_confidence(model: nn.Module, hidden_state: torch.Tensor) -> torch.Tensor:

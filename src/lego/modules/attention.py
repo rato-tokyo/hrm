@@ -1,5 +1,5 @@
 """
-EASE Framework - Attention Mechanisms
+LEGO Framework - Attention Mechanisms
 """
 
 import torch

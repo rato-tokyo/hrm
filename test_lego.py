@@ -1,5 +1,5 @@
 """
-LEGO/ASHEM Specification Verification Tests
+LEGO Specification Verification Tests
 
 Quick-running tests that verify the specification hasn't changed.
 Uses small fixed data with deterministic seeds to ensure exact numerical reproducibility.
@@ -17,13 +17,13 @@ import torch
 import torch.nn.functional as F
 from typing import List, Tuple
 
-from ease import (
+from lego import (
     StandardTransformer,
     DeepSupervisionTransformer,
     Trainer,
     TrainingConfig,
     StageConfig,
-    ASHEMConfig,
+    LEGOConfig,
     compute_confidence,
     compute_confidence_threshold,
     collect_hard_examples,
@@ -75,14 +75,14 @@ def assert_close(actual: float, expected: float, name: str, rtol: float = 1e-4) 
 
 
 # ==============================================================================
-# Test: ASHEMConfig
+# Test: LEGOConfig
 # ==============================================================================
 
-def test_ashem_config():
-    """Test ASHEMConfig default values."""
-    print("\n[TEST] ASHEMConfig defaults")
+def test_lego_config():
+    """Test LEGOConfig default values."""
+    print("\n[TEST] LEGOConfig defaults")
 
-    config = ASHEMConfig()
+    config = LEGOConfig()
 
     assert config.phase1_layers == 2, f"phase1_layers: expected 2, got {config.phase1_layers}"
     assert config.phase1_lr == 1e-3, f"phase1_lr: expected 1e-3, got {config.phase1_lr}"
@@ -507,12 +507,12 @@ def test_trainer_evaluate_routing():
 
 
 # ==============================================================================
-# Test: Full ASHEM Integration (Mini)
+# Test: Full LEGO Integration (Mini)
 # ==============================================================================
 
-def test_ashem_integration_mini():
-    """Mini integration test for ASHEM workflow."""
-    print("\n[TEST] ASHEM Integration (Mini)")
+def test_lego_integration_mini():
+    """Mini integration test for LEGO workflow."""
+    print("\n[TEST] LEGO Integration (Mini)")
 
     # Phase 1: Create and evaluate shallow model
     set_seed(42)
@@ -609,11 +609,11 @@ def test_ashem_integration_mini():
 def main():
     """Run all tests."""
     print("=" * 60)
-    print("LEGO/ASHEM Specification Verification Tests")
+    print("LEGO Specification Verification Tests")
     print("=" * 60)
 
     tests = [
-        test_ashem_config,
+        test_lego_config,
         test_training_config,
         test_standard_transformer,
         test_deep_supervision_transformer,
@@ -626,7 +626,7 @@ def main():
         test_trainer_compute_loss,
         test_trainer_evaluate_standard,
         test_trainer_evaluate_routing,
-        test_ashem_integration_mini,
+        test_lego_integration_mini,
     ]
 
     passed = 0

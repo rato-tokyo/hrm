@@ -1,7 +1,5 @@
 """
-EASE Framework - Core Modules
-
-Essential modules for Early-Exit Transformers.
+LEGO Framework - Core Modules
 """
 
 from .norm import RMSNorm

@@ -1,13 +1,11 @@
 """
-LASH Framework - Model Components
-
-Layered Adaptive Supervision Hierarchy: 層を組み合わせる柔軟なフレームワーク
+LEGO Framework - Model Components
 
 Two base models:
 - StandardTransformer: Final layer loss only
 - DeepSupervisionTransformer: Loss at all layers with early exit support
 
-Both support LASH's 2 core options:
+Both support 2 core options:
 - stages: Stage-based training configuration
 - routing_threshold: Early exit at inference
 """
