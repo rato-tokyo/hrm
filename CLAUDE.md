@@ -114,10 +114,15 @@ result = trainer.train_upper_layers_with_early_stopping(
 
 ```python
 # 生成時のTRUE Early Exit
-generated, stats = model_extended.generate_with_early_exit(
+generated, stats = model_extended.generate(
     prompt, max_new_tokens=32, routing_threshold=threshold
 )
 # Returns: generated tokens, {shallow_count, deep_count, actual_compute_cost, shallow_ratio}
+
+# 標準生成（Early Exit無効）: routing_threshold=1.0
+generated, stats = model_extended.generate(
+    prompt, max_new_tokens=32, routing_threshold=1.0
+)
 ```
 
 ---

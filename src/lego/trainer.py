@@ -35,7 +35,7 @@ class Trainer:
 
         Computes both shallow and deep outputs, then routes based on confidence.
         This is used for evaluation metrics only - for actual inference,
-        use model.generate_with_early_exit() for true computation savings.
+        use model.generate() for true computation savings.
         """
         batch_size, seq_len = x.shape
         exit_layer = getattr(model, 'exit_layer', model.num_layers)
@@ -46,10 +46,8 @@ class Trainer:
         for i in range(exit_layer):
             h = model.layers[i](h)
 
-        # Shallow output and confidence
-        shallow_logits = model.output_head(h)
-        probs = F.softmax(shallow_logits, dim=-1)
-        confidence = probs.max(dim=-1).values
+        # Shallow output and confidence (using model's compute_confidence)
+        shallow_logits, confidence = model.compute_confidence(h)
 
         # Continue to deep output
         h_deep = h

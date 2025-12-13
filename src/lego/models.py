@@ -66,12 +66,21 @@ class LEGOTransformer(nn.Module):
             h = layer(h)
         return h
 
-    def compute_confidence(self, h: torch.Tensor) -> torch.Tensor:
-        """Compute confidence (max probability) from hidden state."""
+    def compute_confidence(self, h: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute confidence (max probability) from hidden state.
+
+        Args:
+            h: Hidden states (batch_size, seq_len, dim)
+
+        Returns:
+            logits: Output logits
+            confidence: Max probability per token (batch_size, seq_len)
+        """
         logits = self.output_head(h)
         probs = F.softmax(logits, dim=-1)
         confidence = probs.max(dim=-1).values
-        return confidence
+        return logits, confidence
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Standard forward: output from final layer."""
@@ -114,7 +123,7 @@ class LEGOTransformer(nn.Module):
             return logits, new_kv_cache
         return logits  # type: ignore[return-value]
 
-    def forward_with_cache_partial(
+    def _forward_with_cache_partial(
         self,
         h: torch.Tensor,
         past_kv_cache: Optional[List[Tuple[torch.Tensor, torch.Tensor]]],
@@ -122,7 +131,7 @@ class LEGOTransformer(nn.Module):
         end_layer: int,
     ) -> Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor]]]:
         """
-        Process through a range of layers with KV cache.
+        Process through a range of layers with KV cache (internal method).
 
         Args:
             h: Hidden states (batch_size, seq_len, dim) - NOT token ids
@@ -148,58 +157,6 @@ class LEGOTransformer(nn.Module):
         self,
         input_ids: torch.Tensor,
         max_new_tokens: int,
-        temperature: float = 1.0,
-        top_k: Optional[int] = None,
-    ) -> torch.Tensor:
-        """
-        Autoregressive text generation with KV cache.
-
-        Args:
-            input_ids: Initial token ids (batch_size, seq_len)
-            max_new_tokens: Number of tokens to generate
-            temperature: Sampling temperature (1.0 = no change)
-            top_k: If set, only sample from top k tokens
-
-        Returns:
-            Generated token ids (batch_size, seq_len + max_new_tokens)
-        """
-        self.eval()
-        generated = input_ids.clone()
-        kv_cache: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
-
-        with torch.no_grad():
-            # Process initial prompt
-            logits, kv_cache = self.forward_with_cache(
-                input_ids, past_kv_cache=None, use_cache=True
-            )
-
-            for _ in range(max_new_tokens):
-                # Get logits for last position
-                next_logits = logits[:, -1, :] / temperature
-
-                # Apply top-k filtering
-                if top_k is not None:
-                    v, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
-                    next_logits[next_logits < v[:, [-1]]] = float('-inf')
-
-                # Sample next token
-                probs = F.softmax(next_logits, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1)
-
-                # Append to generated
-                generated = torch.cat([generated, next_token], dim=1)
-
-                # Forward with cache (only new token)
-                logits, kv_cache = self.forward_with_cache(
-                    next_token, past_kv_cache=kv_cache, use_cache=True
-                )
-
-        return generated
-
-    def generate_with_early_exit(
-        self,
-        input_ids: torch.Tensor,
-        max_new_tokens: int,
         routing_threshold: Optional[float] = None,
         temperature: float = 1.0,
         top_k: Optional[int] = None,
@@ -213,16 +170,19 @@ class LEGOTransformer(nn.Module):
         3. If confidence >= threshold: use shallow output, SKIP upper layers
         4. If confidence < threshold: process through upper layers
 
+        Set routing_threshold >= 1.0 to disable early exit (all tokens go deep).
+
         Args:
             input_ids: Initial token ids (batch_size, seq_len)
             max_new_tokens: Number of tokens to generate
             routing_threshold: Confidence threshold (default: self.routing_threshold)
+                              Use >= 1.0 for standard generation (no early exit)
             temperature: Sampling temperature
             top_k: Top-k filtering
 
         Returns:
             generated: Generated token ids
-            stats: {shallow_count, deep_count, total_layers_computed, actual_compute_cost}
+            stats: {shallow_count, deep_count, shallow_ratio, actual_compute_cost}
         """
         if routing_threshold is None:
             routing_threshold = self.routing_threshold
@@ -245,12 +205,12 @@ class LEGOTransformer(nn.Module):
             h = self.embedding(input_ids)
 
             # Lower layers
-            h, lower_kv_cache = self.forward_with_cache_partial(
+            h, lower_kv_cache = self._forward_with_cache_partial(
                 h, None, 0, self.exit_layer
             )
 
             # Upper layers
-            h, upper_kv_cache = self.forward_with_cache_partial(
+            h, upper_kv_cache = self._forward_with_cache_partial(
                 h, None, self.exit_layer, self.num_layers
             )
 
@@ -272,16 +232,14 @@ class LEGOTransformer(nn.Module):
 
                 # Process new token through lower layers
                 h = self.embedding(next_token)
-                h, new_lower_cache = self.forward_with_cache_partial(
+                h, new_lower_cache = self._forward_with_cache_partial(
                     h, lower_kv_cache, 0, self.exit_layer
                 )
                 lower_kv_cache = new_lower_cache
                 total_layers_computed += self.exit_layer
 
                 # Compute confidence at exit point
-                shallow_logits = self.output_head(h)
-                shallow_probs = F.softmax(shallow_logits, dim=-1)
-                confidence = shallow_probs.max(dim=-1).values  # (batch, 1)
+                shallow_logits, confidence = self.compute_confidence(h)
 
                 # Early exit decision (per batch item)
                 use_shallow = (confidence >= routing_threshold).all().item()
@@ -293,7 +251,7 @@ class LEGOTransformer(nn.Module):
                     # Upper cache is NOT updated (shallow tokens don't go through upper layers)
                 else:
                     # Process through upper layers
-                    h, new_upper_cache = self.forward_with_cache_partial(
+                    h, new_upper_cache = self._forward_with_cache_partial(
                         h, upper_kv_cache, self.exit_layer, self.num_layers
                     )
                     upper_kv_cache = new_upper_cache
@@ -387,4 +345,3 @@ class LEGOTransformer(nn.Module):
                     param.requires_grad = False
 
         return extended
-

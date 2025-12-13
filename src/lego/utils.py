@@ -91,7 +91,7 @@ def compute_confidence_threshold(
             h = model.get_hidden_states(x)
 
             # Compute confidence
-            confidence = model.compute_confidence(h)
+            _, confidence = model.compute_confidence(h)
             all_confidences.append(confidence.view(-1))
 
     # Concatenate all confidences and compute threshold
@@ -138,7 +138,7 @@ def collect_hard_examples(
             h = model.get_hidden_states(x)
 
             # Compute confidence
-            confidence = model.compute_confidence(h)
+            _, confidence = model.compute_confidence(h)
 
             # Identify low-confidence samples
             mask = confidence < threshold

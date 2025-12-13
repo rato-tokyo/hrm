@@ -163,27 +163,30 @@ def test_kv_cache():
 
 
 def test_generate():
-    """Test autoregressive generation with KV cache."""
-    print("\n[TEST] Generate")
+    """Test autoregressive generation (standard mode, no early exit)."""
+    print("\n[TEST] Generate (Standard)")
 
     set_seed(42)
     model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
 
-    # Generate from prompt
+    # Generate from prompt (threshold=1.0 disables early exit)
     set_seed(42)
     prompt = torch.randint(0, 100, (1, 4))  # batch=1, seq=4
-    generated = model.generate(prompt, max_new_tokens=8, temperature=1.0)
+    generated, stats = model.generate(prompt, max_new_tokens=8, routing_threshold=1.0, temperature=1.0)
 
     assert generated.shape == (1, 12), f"Expected (1, 12), got {generated.shape}"
     assert (generated[:, :4] == prompt).all(), "Prompt should be preserved"
+    # With threshold=1.0, all tokens should go deep (no early exit)
+    assert stats['shallow_count'] == 0, "No shallow exits expected with threshold=1.0"
     print(f"  Generated shape: {generated.shape} OK")
     print(f"  Generated tokens: {generated[0].tolist()}")
+    print(f"  All tokens deep (as expected): {stats['deep_count']} tokens")
     print("  Generate test: OK")
 
 
-def test_generate_with_early_exit():
+def test_generate_early_exit():
     """Test TRUE early exit generation."""
-    print("\n[TEST] Generate with Early Exit")
+    print("\n[TEST] Generate (Early Exit)")
 
     set_seed(42)
     # 4-layer model with exit_layer=2
@@ -197,7 +200,7 @@ def test_generate_with_early_exit():
     prompt = torch.randint(0, 100, (1, 4))
 
     # Generate with early exit (low threshold to trigger exits)
-    generated, stats = model.generate_with_early_exit(
+    generated, stats = model.generate(
         prompt, max_new_tokens=16, routing_threshold=0.02
     )
 
@@ -232,7 +235,7 @@ def main():
         test_lego_integration,
         test_kv_cache,
         test_generate,
-        test_generate_with_early_exit,
+        test_generate_early_exit,
     ]
 
     passed = 0

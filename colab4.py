@@ -166,7 +166,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     # Generate with TRUE early exit
     set_seed(123)
     start_time = time.time()
-    generated, early_exit_stats = model_extended.generate_with_early_exit(
+    generated, early_exit_stats = model_extended.generate(
         prompt_batch,
         max_new_tokens=max_new_tokens,
         routing_threshold=confidence_threshold,
@@ -181,12 +181,13 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"  Shallow ratio: {early_exit_stats['shallow_ratio']:.1%}")
     print(f"  ACTUAL compute cost: {early_exit_stats['actual_compute_cost']:.1%}")
 
-    # Compare with standard generation (no early exit)
+    # Compare with standard generation (no early exit, threshold=1.0)
     set_seed(123)
     start_time = time.time()
-    generated_standard = model_extended.generate(
+    generated_standard, _ = model_extended.generate(
         prompt_batch,
         max_new_tokens=max_new_tokens,
+        routing_threshold=1.0,  # Disable early exit
         temperature=1.0
     )
     gen_time_standard = time.time() - start_time
