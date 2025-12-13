@@ -1,104 +1,110 @@
 """
-LEGO: Layered Ensemble with Gradual Optimization
+EASE: Efficient Adaptive Supervision for Early Exit
 
-レゴブロックのようにPhase（層グループ）を組み合わせる柔軟な訓練アーキテクチャ。
+Staged Deep Supervision (SDS)ベースの統一訓練フレームワーク。
 
-Core Concepts:
-- PhaseConfig: 1つのフェーズ（層ブロック）の訓練設定
-- LEGOConfig: 複数フェーズの訓練設定（Cascading方式）
-- LEGOTrainer: Cascading LEGO訓練を実行
+Core Concept:
+- Stage: 訓練の1つのフェーズ（どの層を、どのデータで、どう訓練するか）
+- すべての訓練戦略をStageの組み合わせとして表現
 
 Training Strategies:
-1. Standard: Final layer only (create_standard_config + Trainer)
-2. LEGO: Multi-phase cascading training (LEGOConfig + LEGOTrainer)
+1. Standard: 最終層のみ（1 stage）
+2. Deep Supervision: 全層均等（1 stage, all layers）
+3. ASHEM: Hard example mining（2 stages, progressive layers, filtered data）
 
 Usage:
     from ease import (
-        StandardTransformer,
         DeepSupervisionTransformer,
-        LEGOConfig,
-        PhaseConfig,
-        LEGOTrainer,
+        StagedTrainer,
+        StageConfig,
+        StagedDSConfig,
+        create_ashem_config,
     )
 
-    # Define multi-phase configuration
-    config = LEGOConfig(
-        phases=[
-            PhaseConfig(layers=(1, 2), lr=1e-3, patience=1),
-            PhaseConfig(layers=(3, 4), lr=1e-4, patience=3),
-        ],
-        hard_example_ratio=0.5,
+    # ASHEMの例
+    config = create_ashem_config(
+        phase1_layers=2,
+        phase2_layers=4,
+        vocab_size=69830
     )
 
-    # Train with cascading phases
-    trainer = LEGOTrainer(config, vocab_size=10000, device='cuda')
-    result = trainer.train(model, train_loader, val_loader)
+    trainer = StagedTrainer(config, device='cuda')
+    model = DeepSupervisionTransformer(vocab_size=69830, dim=64, num_layers=4)
+
+    # Stage 1: 浅層モデル訓練
+    trainer.train_stage(config.stages[0], model, train_data, val_data)
+
+    # Stage 2: Hard examples収集 + 深層モデル訓練
+    threshold = compute_confidence_threshold(model, val_data, 0.5, 'cuda', 2)
+    hard_examples = collect_hard_examples(model, val_data, threshold, 'cuda', 2)
+    hard_batches = create_hard_example_loader(hard_examples, 64)
+    trainer.train_stage(config.stages[1], model, hard_batches, val_data)
+
+References:
+- Staged Deep Supervision: 本フレームワーク
+- Deep Supervision: Lee et al., 2015
+- Early Exit: Teerapittayanon et al., 2016
+- ASHEM: Adaptive Supervision via Hard Example Mining（本研究）
 """
 
-# Types (shared across modules)
-from .types import (
-    DataBatch,
-    HardBatch,
-    HardExamples,
-    EvalStats,
-    TrainingHistory,
-    PhaseHistory,
-    LEGOResult,
-)
-
-# Models
 from .models import (
     StandardTransformer,
     DeepSupervisionTransformer,
 )
-
-# Standard Trainer (for simple training)
-from .trainer import (
+from .staged_ds import (
     StageConfig,
-    TrainingConfig,
-    Trainer,
-    create_standard_config,
-)
-
-# LEGO (multi-phase cascading training)
-from .lego import (
-    PhaseConfig,
-    LEGOConfig,
-    LEGOTrainer,
-    # Utility functions (for advanced usage)
+    StagedDSConfig,
+    StagedTrainer,
+    compute_confidence,
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
     train_upper_layers,
     evaluate_on_hard_examples,
+    create_deep_supervision_config,
+    create_ashem_config,
+)
+from .compat import (
+    ASHEMConfig,
+    TrainingConfig,
+    Trainer,
+    create_standard_config,
+)
+from .modules import (
+    RMSNorm,
+    RotaryPositionalEmbedding,
+    MultiHeadAttention,
+    GatedLinearUnit,
+    TransformerBlock,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.3.0"  # Stageベース完全移行
 
 __all__ = [
-    # Types
-    'DataBatch',
-    'HardBatch',
-    'HardExamples',
-    'EvalStats',
-    'TrainingHistory',
-    'PhaseHistory',
-    'LEGOResult',
     # Models
     'StandardTransformer',
     'DeepSupervisionTransformer',
-    # Standard Trainer
+    # Staged DS
     'StageConfig',
-    'TrainingConfig',
-    'Trainer',
-    'create_standard_config',
-    # LEGO
-    'PhaseConfig',
-    'LEGOConfig',
-    'LEGOTrainer',
+    'StagedDSConfig',
+    'StagedTrainer',
+    'compute_confidence',
     'compute_confidence_threshold',
     'collect_hard_examples',
     'create_hard_example_loader',
     'train_upper_layers',
     'evaluate_on_hard_examples',
+    'create_deep_supervision_config',
+    'create_ashem_config',
+    # Legacy compatibility
+    'ASHEMConfig',
+    'TrainingConfig',
+    'Trainer',
+    'create_standard_config',
+    # Modules
+    'RMSNorm',
+    'RotaryPositionalEmbedding',
+    'MultiHeadAttention',
+    'GatedLinearUnit',
+    'TransformerBlock',
 ]

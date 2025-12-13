@@ -1,14 +1,15 @@
 """
-LEGO Framework - Model Components
+LASH Framework - Model Components
 
-Layered Ensemble with Gradual Optimization: レゴブロックのようにStageを組み合わせる柔軟な訓練アーキテクチャ
+Layered Adaptive Supervision Hierarchy: 層を組み合わせる柔軟なフレームワーク
 
 Two base models:
 - StandardTransformer: Final layer loss only
 - DeepSupervisionTransformer: Loss at all layers with early exit support
 
-Both support LEGO's 2 core options:
-- stages: Stage-based training configuration (LEGO blocks)
+Both support LASH's 3 core options:
+- layer_weights: Layer-wise loss weights
+- layer_lr_scales: Layer-wise learning rates
 - routing_threshold: Early exit at inference
 """
 
@@ -21,17 +22,12 @@ import math
 from .modules import TransformerBlock
 
 
-class BaseTransformer(nn.Module):
+class StandardTransformer(nn.Module):
     """
-    Base Transformer class with shared functionality.
+    Standard Transformer for language modeling.
 
-    Contains common components:
-    - Embedding layer
-    - Transformer layers
-    - Output head
-    - Weight initialization
-    - forward(), forward_to_hidden(), forward_all_layers() methods
-    - compute_confidence() for confidence-based routing
+    Base model with final layer loss only.
+    Supports forward_all_layers() for deep supervision training.
     """
 
     def __init__(
@@ -61,41 +57,11 @@ class BaseTransformer(nn.Module):
             elif isinstance(module, nn.Embedding):
                 nn.init.trunc_normal_(module.weight, std=0.02)
 
-    def forward_to_hidden(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass returning final hidden state (before output_head).
-
-        Args:
-            x: Input tensor of shape (batch_size, seq_len)
-
-        Returns:
-            Hidden state tensor of shape (batch_size, seq_len, dim)
-        """
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Standard forward: output from final layer."""
         h = self.embedding(x)
         for layer in self.layers:
             h = layer(h)
-        return h
-
-    def compute_confidence(self, h: torch.Tensor) -> torch.Tensor:
-        """
-        Compute prediction confidence from hidden state.
-
-        Confidence is defined as the maximum probability in the softmax distribution.
-        Higher confidence indicates the model is more certain about its prediction.
-
-        Args:
-            h: Hidden state tensor of shape (batch_size, seq_len, dim)
-
-        Returns:
-            Confidence values of shape (batch_size, seq_len), range [0, 1]
-        """
-        logits = self.output_head(h)
-        probs = F.softmax(logits, dim=-1)
-        return probs.max(dim=-1).values
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Standard forward: output from final layer."""
-        h = self.forward_to_hidden(x)
         return self.output_head(h)  # type: ignore[no-any-return]
 
     def forward_all_layers(self, x: torch.Tensor) -> List[torch.Tensor]:
@@ -107,36 +73,8 @@ class BaseTransformer(nn.Module):
             outputs.append(self.output_head(h))
         return outputs
 
-    def forward_to_layer(self, x: torch.Tensor, layer_idx: int) -> torch.Tensor:
-        """
-        Forward pass up to specified layer, returning hidden state.
 
-        Used in multi-phase LEGO training to compute confidence at intermediate layers.
-
-        Args:
-            x: Input tensor of shape (batch_size, seq_len)
-            layer_idx: Layer index (1-indexed) to stop at
-
-        Returns:
-            Hidden state tensor of shape (batch_size, seq_len, dim)
-        """
-        h = self.embedding(x)
-        for i in range(min(layer_idx, self.num_layers)):
-            h = self.layers[i](h)
-        return h
-
-
-class StandardTransformer(BaseTransformer):
-    """
-    Standard Transformer for language modeling.
-
-    Base model with final layer loss only.
-    Supports forward_all_layers() for deep supervision training.
-    """
-    pass
-
-
-class DeepSupervisionTransformer(BaseTransformer):
+class DeepSupervisionTransformer(nn.Module):
     """
     Deep Supervision Transformer with Early Exit support.
 
@@ -157,9 +95,50 @@ class DeepSupervisionTransformer(BaseTransformer):
         exit_layer: int = 1,
         routing_threshold: float = 0.8,
     ):
-        super().__init__(vocab_size, dim, num_layers, num_heads)
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.dim = dim
+        self.num_layers = num_layers
         self.exit_layer = exit_layer
         self.routing_threshold = routing_threshold
+
+        self.embedding = nn.Embedding(vocab_size, dim)
+        self.layers = nn.ModuleList([
+            TransformerBlock(dim, num_heads) for _ in range(num_layers)
+        ])
+        self.output_head = nn.Linear(dim, vocab_size, bias=False)
+
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.trunc_normal_(module.weight, std=1.0 / math.sqrt(self.dim))
+            elif isinstance(module, nn.Embedding):
+                nn.init.trunc_normal_(module.weight, std=0.02)
+
+    def compute_confidence(self, h: torch.Tensor) -> torch.Tensor:
+        """Compute confidence (max probability) from hidden state."""
+        logits = self.output_head(h)
+        probs = F.softmax(logits, dim=-1)
+        confidence = probs.max(dim=-1).values
+        return confidence
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Standard forward (deep path only)."""
+        h = self.embedding(x)
+        for layer in self.layers:
+            h = layer(h)
+        return self.output_head(h)  # type: ignore[no-any-return]
+
+    def forward_all_layers(self, x: torch.Tensor) -> List[torch.Tensor]:
+        """Forward returning output from each layer (for Deep Supervision training)."""
+        h = self.embedding(x)
+        outputs = []
+        for layer in self.layers:
+            h = layer(h)
+            outputs.append(self.output_head(h))
+        return outputs
 
     def forward_train(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
