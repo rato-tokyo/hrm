@@ -183,31 +183,13 @@ class LEGOTransformer(nn.Module):
                 # Last block: all remaining active tokens exit here
                 final_logits[active_mask] = logits[active_mask]
 
-        # Compute statistics
+        # Compute statistics using shared method
         exit_counts = [
             int((exit_blocks == i).sum().item()) for i in range(len(self.blocks))
         ]
-        total_tokens = batch_size * seq_len
-        shallow_exits = sum(exit_counts[:-1])  # All except last block
-        shallow_ratio = shallow_exits / total_tokens if total_tokens > 0 else 0.0
+        stats = self._compute_exit_stats(exit_counts)
 
-        # Compute weighted layer cost
-        total_layers_computed = 0
-        layers_so_far = 0
-        for block_idx, count in enumerate(exit_counts):
-            layers_so_far += self.blocks[block_idx].num_layers
-            total_layers_computed += count * layers_so_far
-
-        compute_cost = (
-            total_layers_computed / (total_tokens * self.num_layers)
-            if total_tokens > 0 else 1.0
-        )
-
-        return final_logits, {
-            'exit_counts': exit_counts,
-            'shallow_ratio': shallow_ratio,
-            'compute_cost': compute_cost,
-        }
+        return final_logits, stats
 
     def generate(
         self,
@@ -270,7 +252,7 @@ class LEGOTransformer(nn.Module):
                     logits = self.output_head(h)
                     exit_counts[-1] += batch_size
 
-        stats = self._compute_generate_stats(exit_counts)
+        stats = self._compute_exit_stats(exit_counts)
         return generated, stats
 
     def _process_prompt(
@@ -304,8 +286,17 @@ class LEGOTransformer(nn.Module):
         probs = F.softmax(next_logits, dim=-1)
         return torch.multinomial(probs, num_samples=1)
 
-    def _compute_generate_stats(self, exit_counts: List[int]) -> Dict[str, Any]:
-        """Compute generation statistics from exit counts."""
+    def _compute_exit_stats(self, exit_counts: List[int]) -> Dict[str, Any]:
+        """Compute statistics from exit counts.
+
+        Used by both forward_with_routing and generate for consistent stats.
+
+        Args:
+            exit_counts: Number of tokens exiting at each block
+
+        Returns:
+            Dictionary with exit_counts, shallow_ratio, compute_cost
+        """
         total_tokens = sum(exit_counts)
 
         # Compute weighted layer cost
@@ -315,21 +306,19 @@ class LEGOTransformer(nn.Module):
             layers_so_far += self.blocks[block_idx].num_layers
             total_layers_computed += count * layers_so_far
 
-        actual_compute_cost = (
+        compute_cost = (
             total_layers_computed / (total_tokens * self.num_layers)
             if total_tokens > 0 else 1.0
         )
 
-        shallow_ratio = (
-            exit_counts[0] / max(total_tokens, 1)
-            if len(self.blocks) >= 2 else 0.0
-        )
+        # Shallow ratio: all exits except last block
+        shallow_exits = sum(exit_counts[:-1]) if len(exit_counts) > 1 else 0
+        shallow_ratio = shallow_exits / total_tokens if total_tokens > 0 else 0.0
 
         return {
             'exit_counts': exit_counts,
-            'total_tokens': total_tokens,
-            'actual_compute_cost': actual_compute_cost,
             'shallow_ratio': shallow_ratio,
+            'compute_cost': compute_cost,
         }
 
     def extend(

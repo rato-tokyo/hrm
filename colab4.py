@@ -166,7 +166,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"  Time: {gen_time:.4f}s")
     print(f"  Exit counts: {early_exit_stats['exit_counts']}")
     print(f"  Shallow ratio: {early_exit_stats['shallow_ratio']:.1%}")
-    print(f"  ACTUAL compute cost: {early_exit_stats['actual_compute_cost']:.1%}")
+    print(f"  Compute cost: {early_exit_stats['compute_cost']:.1%}")
 
     # Summary
     print(f"\n{'='*60}")
@@ -177,8 +177,8 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"Final (full val): Acc {stats_routing['acc']*100:.2f}% | PPL {stats_routing['ppl']:.2f}")
     print(f"\nTRUE Early Exit Stats:")
     print(f"  Shallow ratio: {early_exit_stats['shallow_ratio']:.1%}")
-    print(f"  ACTUAL compute cost: {early_exit_stats['actual_compute_cost']:.1%}")
-    print(f"  Compute savings: {(1 - early_exit_stats['actual_compute_cost'])*100:.1f}%")
+    print(f"  Compute cost: {early_exit_stats['compute_cost']:.1%}")
+    print(f"  Compute savings: {(1 - early_exit_stats['compute_cost'])*100:.1f}%")
 
     return {
         'phase1_acc': phase1_acc,
@@ -189,7 +189,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
         'routing_shallow_ratio': stats_routing['shallow_ratio'],
         'routing_compute_cost': stats_routing['compute_cost'],
         'true_shallow_ratio': early_exit_stats['shallow_ratio'],
-        'true_compute_cost': early_exit_stats['actual_compute_cost'],
+        'true_compute_cost': early_exit_stats['compute_cost'],
     }
 
 
