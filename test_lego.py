@@ -21,13 +21,11 @@ from lego import (
     Trainer,
     TrainingConfig,
     LEGOConfig,
-    compute_confidence,
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
     train_upper_layers,
     evaluate_on_hard_examples,
-    create_standard_config,
 )
 
 from helpers import set_seed, create_synthetic_data, assert_close
@@ -59,18 +57,16 @@ def test_lego_config():
 # ==============================================================================
 
 def test_training_config():
-    """Test TrainingConfig and factory functions."""
+    """Test TrainingConfig."""
     print("\n[TEST] TrainingConfig")
 
-    # Standard config
-    std_config = create_standard_config(num_layers=3)
-    assert std_config.output_layer == 3
+    # Standard config (no routing)
+    std_config = TrainingConfig()
     assert std_config.has_routing == False
     print("  Standard config: OK")
 
     # Routing config
     routing_config = TrainingConfig(
-        output_layer=4,
         routing_threshold=0.15,
         exit_layer=2
     )
@@ -166,12 +162,12 @@ def test_lego_transformer_early_exit():
 
 
 # ==============================================================================
-# Test: compute_confidence
+# Test: model.compute_confidence
 # ==============================================================================
 
 def test_compute_confidence():
-    """Test compute_confidence function."""
-    print("\n[TEST] compute_confidence")
+    """Test model.compute_confidence method."""
+    print("\n[TEST] model.compute_confidence")
 
     set_seed(42)
     model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
@@ -184,8 +180,8 @@ def test_compute_confidence():
     for layer in model.layers:
         h = layer(h)
 
-    # Compute confidence
-    confidence = compute_confidence(model, h)
+    # Compute confidence using model method
+    confidence = model.compute_confidence(h)
 
     assert confidence.shape == (2, 8)
     assert (confidence >= 0).all() and (confidence <= 1).all()
@@ -364,8 +360,8 @@ def test_trainer_compute_loss():
     y = torch.randint(0, 100, (2, 8))
 
     # Standard config (final layer only)
-    std_config = create_standard_config(num_layers=2)
-    trainer_std = Trainer(std_config, vocab_size=100)
+    config = TrainingConfig()
+    trainer_std = Trainer(config, vocab_size=100)
     loss_std = trainer_std.compute_loss(model, x, y)
 
     expected_loss_std = 5.0274624825
@@ -384,7 +380,7 @@ def test_trainer_evaluate_standard():
     model = LEGOTransformer(vocab_size=100, dim=32, num_layers=2, num_heads=2)
     val_batches = create_synthetic_data(num_batches=4, batch_size=8, seq_len=16, vocab_size=100)
 
-    config = create_standard_config(num_layers=2)
+    config = TrainingConfig()
     trainer = Trainer(config, vocab_size=100)
 
     stats = trainer.evaluate(model, val_batches)
@@ -419,7 +415,6 @@ def test_trainer_evaluate_routing():
     val_batches = create_synthetic_data(num_batches=4, batch_size=8, seq_len=16, vocab_size=100)
 
     config = TrainingConfig(
-        output_layer=4,
         routing_threshold=0.02,
         exit_layer=2
     )
@@ -503,7 +498,6 @@ def test_lego_integration_mini():
 
     # Final evaluation with routing
     config = TrainingConfig(
-        output_layer=4,
         routing_threshold=threshold,
         exit_layer=2
     )

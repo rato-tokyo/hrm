@@ -7,7 +7,6 @@ Model:
 - LEGOTransformer: Unified model supporting standard and early exit
 
 Core Options (via TrainingConfig):
-- output_layer: Which layer to compute loss
 - routing_threshold: Early exit at inference
 
 Training Strategies:
@@ -21,10 +20,7 @@ Usage:
     model = LEGOTransformer(vocab_size=1000, dim=64, num_layers=3)
 
     # Configure training
-    config = TrainingConfig(
-        output_layer=3,
-        routing_threshold=0.95,
-    )
+    config = TrainingConfig(routing_threshold=0.95)
 
     # Create trainer
     trainer = Trainer(config, vocab_size=1000)
@@ -46,11 +42,10 @@ from .models import LEGOTransformer
 from .trainer import (
     TrainingConfig,
     Trainer,
-    create_standard_config,
 )
 from .utils import (
+    set_seed,
     LEGOConfig,
-    compute_confidence,
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
@@ -73,10 +68,9 @@ __all__ = [
     # Trainer
     'TrainingConfig',
     'Trainer',
-    'create_standard_config',
-    # LEGO Config
+    # Utilities
+    'set_seed',
     'LEGOConfig',
-    'compute_confidence',
     'compute_confidence_threshold',
     'collect_hard_examples',
     'create_hard_example_loader',

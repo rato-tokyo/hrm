@@ -12,11 +12,22 @@ References:
 - Early Exit: BranchyNet (2016), Teerapittayanon et al. (2016)
 """
 
+import random
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Tuple
 from dataclasses import dataclass
+
+
+def set_seed(seed: int) -> None:
+    """Set random seed for reproducibility."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
 
 
 @dataclass
@@ -55,29 +66,6 @@ class LEGOConfig:
 # ==============================================================================
 # LEGO Utility Functions
 # ==============================================================================
-
-def compute_confidence(model: nn.Module, hidden_state: torch.Tensor) -> torch.Tensor:
-    """
-    Compute prediction confidence from hidden state.
-
-    Confidence is defined as the maximum probability in the softmax distribution.
-    Higher confidence indicates the model is more certain about its prediction.
-
-    Args:
-        model: Model with output_head attribute (or compute_confidence method)
-        hidden_state: Hidden state tensor of shape (batch_size, seq_len, dim)
-
-    Returns:
-        Confidence values of shape (batch_size, seq_len), range [0, 1]
-    """
-    # Delegate to model's method if available
-    if hasattr(model, 'compute_confidence'):
-        return model.compute_confidence(hidden_state)
-    # Fallback for models without compute_confidence method
-    logits = model.output_head(hidden_state)
-    probs = F.softmax(logits, dim=-1)
-    return probs.max(dim=-1).values
-
 
 def compute_confidence_threshold(
     model: nn.Module,
@@ -118,7 +106,7 @@ def compute_confidence_threshold(
                 h = layer(h)
 
             # Compute confidence
-            confidence = compute_confidence(model, h)
+            confidence = model.compute_confidence(h)
             all_confidences.append(confidence.view(-1))
 
     # Concatenate all confidences and compute threshold
@@ -171,7 +159,7 @@ def collect_hard_examples(
                 h = layer(h)
 
             # Compute confidence
-            confidence = compute_confidence(model, h)
+            confidence = model.compute_confidence(h)
 
             # Identify low-confidence samples
             mask = confidence < threshold

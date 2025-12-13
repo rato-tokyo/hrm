@@ -4,15 +4,13 @@ Test Helpers for LEGO Framework
 Provides deterministic test utilities for reproducible testing.
 """
 
+import sys
+sys.path.insert(0, 'src')
+
 import torch
 from typing import List, Tuple
 
-
-def set_seed(seed: int = 42) -> None:
-    """Set random seed for reproducibility."""
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
+from lego import set_seed  # Re-export from lego
 
 
 def create_synthetic_data(

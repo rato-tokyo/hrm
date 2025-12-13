@@ -42,7 +42,6 @@ from lego import (
     LEGOTransformer,
     Trainer,
     TrainingConfig,
-    create_standard_config,
     LEGOConfig,
     compute_confidence_threshold,
     collect_hard_examples,
@@ -146,7 +145,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     ).to(device)
 
     # Train with early stopping
-    training_config = create_standard_config(config.lego.phase1_layers)
+    training_config = TrainingConfig()
     trainer = Trainer(training_config, vocab_size=vocab_size, device=device)
     optimizer = trainer.create_optimizer(model, base_lr=config.lego.phase1_lr)
 
@@ -242,7 +241,6 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
 
     # Configure training for Phase 2 (with routing for evaluation)
     phase2_config = TrainingConfig(
-        output_layer=config.lego.phase2_layers,
         routing_threshold=confidence_threshold,
         exit_layer=config.lego.phase1_layers
     )

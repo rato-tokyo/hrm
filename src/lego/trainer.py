@@ -6,7 +6,6 @@ Training Strategies:
 2. Hard Example Mining: 2-phase training with hard example focus
 
 Core Options:
-- output_layer: Which layer to compute loss (default: final layer)
 - routing_threshold: Early Exit at inference
 
 References:
@@ -28,16 +27,10 @@ class TrainingConfig:
     """
     Training configuration for LEGO framework.
 
-    2 core options:
-    1. output_layer: Which layer to compute loss (0 = final layer)
-    2. routing_threshold: When to exit early (inference efficiency)
-
     Args:
-        output_layer: Layer index for loss computation (0 or negative = final layer)
         routing_threshold: Confidence threshold for early exit (0 = disabled)
         exit_layer: Which layer to use for early exit (1-indexed)
     """
-    output_layer: int = 0  # 0 = final layer
     routing_threshold: float = 0.0
     exit_layer: int = 1
 
@@ -47,20 +40,11 @@ class TrainingConfig:
         return self.routing_threshold > 0
 
 
-def create_standard_config(num_layers: int = 3) -> TrainingConfig:
-    """
-    Create Standard LLM config (final layer loss only).
-    """
-    return TrainingConfig(output_layer=num_layers)
-
-
 class Trainer:
     """
     Trainer for LEGO models.
 
-    Supports 2 core options:
-    - output_layer: Which layer to compute loss
-    - routing_threshold: Early exit evaluation
+    Supports routing_threshold for early exit evaluation.
     """
 
     def __init__(self, config: TrainingConfig, vocab_size: int, device: str = 'cpu'):
