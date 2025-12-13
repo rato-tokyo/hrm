@@ -4,12 +4,17 @@ LEGO Framework - LEGOTransformer
 Manages LEGOBlocks and handles inter-block routing with early exit.
 """
 
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 import math
-from typing import Tuple, Dict, List, Any
+from typing import Tuple, Dict, List, Any, TYPE_CHECKING
 
 from .block import LEGOBlock
+
+if TYPE_CHECKING:
+    from .data import TrainingData
 
 
 class LEGOTransformer(nn.Module):
@@ -262,3 +267,38 @@ class LEGOTransformer(nn.Module):
                 block.freeze()
 
         return extended
+
+    def create_training_data(
+        self,
+        batches: List[Tuple[torch.Tensor, torch.Tensor]],
+        device: str
+    ) -> "TrainingData":
+        """
+        Create TrainingData from raw token batches.
+
+        Converts (input_ids, target_ids) batches into (hidden_states, targets)
+        by passing through the embedding layer.
+
+        Args:
+            batches: List of (input_ids, target_ids) tuples
+            device: Device to run on
+
+        Returns:
+            TrainingData ready for block training
+        """
+        from .data import TrainingData
+
+        all_hidden: List[torch.Tensor] = []
+        all_targets: List[torch.Tensor] = []
+
+        with torch.no_grad():
+            for x, y in batches:
+                x, y = x.to(device), y.to(device)
+                h = self.embedding(x)  # (batch, seq, dim)
+                all_hidden.append(h.view(-1, self.dim))
+                all_targets.append(y.view(-1))
+
+        return TrainingData(
+            torch.cat(all_hidden),
+            torch.cat(all_targets)
+        )

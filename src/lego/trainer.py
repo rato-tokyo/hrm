@@ -4,11 +4,16 @@ LEGO Framework - Trainer
 Training and evaluation for LEGO models.
 """
 
+from __future__ import annotations
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Callable, Dict, List, Optional, Tuple, Any
+from typing import Callable, Dict, List, Optional, Tuple, Any, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .data import TrainingData
 
 class Trainer:
     """
@@ -218,8 +223,8 @@ class Trainer:
     def train_block(
         self,
         model: nn.Module,
-        hard_train: Dict[str, torch.Tensor],
-        hard_val: Dict[str, torch.Tensor],
+        train_data: "TrainingData",
+        val_data: "TrainingData",
         optimizer: torch.optim.Optimizer,
         start_block_idx: int,
         batch_size: int = 64,
@@ -233,10 +238,12 @@ class Trainer:
         Both training and validation are done within hard examples.
         This ensures each block's training is independent.
 
+        Note: Consider using LEGOBlock.train_block() instead for simpler API.
+
         Args:
             model: Extended model with new block
-            hard_train: Hard examples for training (hidden_states, targets)
-            hard_val: Hard examples for validation (hidden_states, targets)
+            train_data: TrainingData for training
+            val_data: TrainingData for validation
             optimizer: Optimizer for trainable parameters
             start_block_idx: Index of the new block to train
             batch_size: Batch size for training/validation
@@ -245,9 +252,7 @@ class Trainer:
             grad_clip: Gradient clipping value
             verbose: Print progress
         """
-        from .utils import create_hard_example_loader
-
-        train_batches = create_hard_example_loader(hard_train, batch_size)
+        train_batches = train_data.batches(batch_size)
 
         def train_fn() -> float:
             model.train()
@@ -267,7 +272,7 @@ class Trainer:
             model.eval()
             total_loss = 0.0
             total_samples = 0
-            val_batches = create_hard_example_loader(hard_val, batch_size)
+            val_batches = val_data.batches(batch_size, shuffle=False)
             with torch.no_grad():
                 for h, y in val_batches:
                     h, y = h.to(self.device), y.to(self.device)

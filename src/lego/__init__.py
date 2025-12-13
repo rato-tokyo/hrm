@@ -8,15 +8,11 @@ from .block import LEGOBlock
 from .transformer import LEGOTransformer
 from .trainer import Trainer
 from .config import ExperimentConfig
-from .data import create_wikitext_dataloaders
+from .data import TrainingData, create_wikitext_dataloaders
 from .utils import (
     set_seed,
     get_device,
     create_synthetic_data,
-    compute_confidence_threshold,
-    collect_hard_examples,
-    split_hard_examples,
-    create_hard_example_loader,
 )
 from .modules import (
     RMSNorm,
@@ -37,15 +33,12 @@ __all__ = [
     # Config
     'ExperimentConfig',
     # Data
+    'TrainingData',
     'create_wikitext_dataloaders',
     # Utilities
     'set_seed',
     'get_device',
     'create_synthetic_data',
-    'compute_confidence_threshold',
-    'collect_hard_examples',
-    'split_hard_examples',
-    'create_hard_example_loader',
     # Modules
     'RMSNorm',
     'RotaryPositionalEmbedding',
