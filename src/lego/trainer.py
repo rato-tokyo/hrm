@@ -38,8 +38,7 @@ class Trainer:
         self,
         model: nn.Module,
         val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-        routing_threshold: float = 0.0,
-        exit_layer: int = 1
+        routing_threshold: float = 0.0
     ) -> Dict[str, float]:
         """Evaluate model with optional early exit routing."""
         model.eval()
@@ -112,7 +111,6 @@ class Trainer:
         patience: int,
         verbose: bool,
         routing_threshold: float = 0.0,
-        exit_layer: int = 1,
         extra_eval_fn: Optional[Callable[[], float]] = None
     ) -> Dict[str, Any]:
         """Core early stopping loop shared by training methods."""
@@ -131,7 +129,7 @@ class Trainer:
             train_ppl = float(np.exp(train_loss))
             train_ppls.append(train_ppl)
 
-            val_stats = self.evaluate(model, val_batches, routing_threshold, exit_layer)
+            val_stats = self.evaluate(model, val_batches, routing_threshold)
             val_ppl = val_stats['ppl']
             val_acc = val_stats['acc']
             val_ppls.append(val_ppl)
@@ -214,7 +212,6 @@ class Trainer:
         optimizer: torch.optim.Optimizer,
         num_lower_layers: int,
         routing_threshold: float = 0.0,
-        exit_layer: int = 1,
         max_epochs: int = 50,
         patience: int = 3,
         verbose: bool = True
@@ -225,18 +222,18 @@ class Trainer:
         def train_fn() -> float:
             return train_upper_layers(
                 model, hard_batches, optimizer,
-                self.vocab_size, self.device, num_lower_layers
+                self.device, num_lower_layers
             )
 
         def extra_eval_fn() -> float:
             return evaluate_on_hard_examples(
-                model, hard_examples, self.vocab_size, self.device,
+                model, hard_examples, self.device,
                 batch_size=64, num_lower_layers=num_lower_layers
             )
 
         result = self._early_stopping_loop(
             model, val_batches, train_fn, max_epochs, patience, verbose,
-            routing_threshold, exit_layer, extra_eval_fn
+            routing_threshold, extra_eval_fn
         )
         # Rename for backward compatibility
         result['train_ppls'] = result.pop('train_losses')

@@ -238,7 +238,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"{'='*60}\n")
 
     phase1_hard_ppl = evaluate_on_hard_examples(
-        model, hard_examples, vocab_size, device,
+        model, hard_examples, device,
         batch_size=config.phase2_batch, num_lower_layers=config.phase1_layers
     )
 

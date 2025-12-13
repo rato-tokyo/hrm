@@ -207,7 +207,6 @@ def train_upper_layers(
     model: nn.Module,
     hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
     optimizer: torch.optim.Optimizer,
-    vocab_size: int,
     device: str,
     num_lower_layers: int = 2
 ) -> float:
@@ -221,7 +220,6 @@ def train_upper_layers(
         model: Extended model with upper layers
         hard_batches: Batches of (hidden_state, target) pairs
         optimizer: Optimizer for trainable parameters
-        vocab_size: Vocabulary size for loss computation
         device: Device to run training on
         num_lower_layers: Number of frozen lower layers
 
@@ -251,7 +249,6 @@ def train_upper_layers(
 def evaluate_on_hard_examples(
     model: nn.Module,
     hard_examples: Dict[str, torch.Tensor],
-    vocab_size: int,
     device: str,
     batch_size: int = 64,
     num_lower_layers: int = 2
@@ -265,7 +262,6 @@ def evaluate_on_hard_examples(
     Args:
         model: Model to evaluate (can be shallow or deep)
         hard_examples: Dictionary with 'hidden_states' and 'targets'
-        vocab_size: Vocabulary size for loss computation
         device: Device to run evaluation on
         batch_size: Batch size for evaluation
         num_lower_layers: Number of lower layers (for deep model evaluation)

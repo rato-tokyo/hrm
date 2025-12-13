@@ -108,9 +108,10 @@ class LEGOTransformer(nn.Module):
         for i in range(self.exit_layer):
             h = self.layers[i](h)
 
-        # Shallow output and confidence at exit point
+        # Shallow output and confidence (reuse logits for efficiency)
         shallow_logits = self.output_head(h)
-        confidence = self.compute_confidence(h)
+        probs = F.softmax(shallow_logits, dim=-1)
+        confidence = probs.max(dim=-1).values
 
         # Continue to deep output
         h_deep = h
@@ -130,16 +131,20 @@ class LEGOTransformer(nn.Module):
         - confidence: Confidence at exit point
         - shallow_ratio: Fraction of tokens that would exit early
         """
-        # Get confidence without gradients
-        with torch.no_grad():
-            _, _, _, confidence = self._forward_early_exit(x)
-
-        # Re-compute with gradients for training
         h = self.embedding(x)
+
+        # Process up to exit layer
         for i in range(self.exit_layer):
             h = self.layers[i](h)
+
+        # Shallow output (with gradients)
         shallow_logits = self.output_head(h)
 
+        # Confidence (no gradients needed)
+        with torch.no_grad():
+            confidence = self.compute_confidence(h)
+
+        # Continue to deep output (with gradients)
         h_deep = h
         for i in range(self.exit_layer, self.num_layers):
             h_deep = self.layers[i](h_deep)

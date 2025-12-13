@@ -268,7 +268,7 @@ def test_train_upper_layers():
     set_seed(42)
     train_loss = train_upper_layers(
         model_extended, hard_batches, optimizer,
-        vocab_size=100, device='cpu', num_lower_layers=2
+        device='cpu', num_lower_layers=2
     )
 
     expected_loss = 5.0222663879
@@ -292,7 +292,7 @@ def test_evaluate_on_hard_examples():
 
     # Evaluate Phase 1 model on hard examples
     ppl = evaluate_on_hard_examples(
-        model, hard_examples, vocab_size=100, device='cpu',
+        model, hard_examples, device='cpu',
         batch_size=64, num_lower_layers=2
     )
 
@@ -370,7 +370,7 @@ def test_trainer_evaluate_routing():
 
     trainer = Trainer(vocab_size=100)
 
-    stats = trainer.evaluate(model, val_batches, routing_threshold=0.02, exit_layer=2)
+    stats = trainer.evaluate(model, val_batches, routing_threshold=0.02)
 
     expected_ppl = 164.9025456048
     expected_shallow_ratio = 1.0000000000
@@ -407,7 +407,7 @@ def test_lego_integration_mini():
 
     # Evaluate Phase 1 on hard examples
     phase1_hard_ppl = evaluate_on_hard_examples(
-        model_phase1, hard_examples, vocab_size=100, device='cpu',
+        model_phase1, hard_examples, device='cpu',
         batch_size=64, num_lower_layers=2
     )
     expected_phase1_hard_ppl = 160.6869812012
@@ -432,14 +432,14 @@ def test_lego_integration_mini():
     set_seed(42)
     train_loss = train_upper_layers(
         model_extended, hard_batches, optimizer,
-        vocab_size=100, device='cpu', num_lower_layers=2
+        device='cpu', num_lower_layers=2
     )
     expected_train_loss = 5.0222663879
     assert_close(train_loss, expected_train_loss, "train_loss")
 
     # Evaluate Phase 2 on hard examples
     phase2_hard_ppl = evaluate_on_hard_examples(
-        model_extended, hard_examples, vocab_size=100, device='cpu',
+        model_extended, hard_examples, device='cpu',
         batch_size=64, num_lower_layers=2
     )
     expected_phase2_hard_ppl = 146.9902038574
@@ -447,7 +447,7 @@ def test_lego_integration_mini():
 
     # Final evaluation with routing
     trainer = Trainer(vocab_size=100)
-    stats = trainer.evaluate(model_extended, val_batches, routing_threshold=threshold, exit_layer=2)
+    stats = trainer.evaluate(model_extended, val_batches, routing_threshold=threshold)
 
     expected_final_ppl = 149.0614695912
     expected_shallow_ratio = 0.5000000000
