@@ -172,6 +172,3 @@ class LEGOTransformer(nn.Module):
         return output, stats
 
 
-# Aliases for backward compatibility
-StandardTransformer = LEGOTransformer
-DeepSupervisionTransformer = LEGOTransformer

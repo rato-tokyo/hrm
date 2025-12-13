@@ -4,7 +4,7 @@ LEGO Framework - Training Configuration
 Training Strategies:
 1. Standard: Final layer loss only (1 stage)
 2. Deep Supervision: Loss at all layers (all stages)
-3. ASHEM: Hard example mining with 2-stage training
+3. Hard Example Mining: 2-stage training with hard example focus
 
 Core Options:
 - stages: Which stages to train (stage-based configuration)
@@ -14,14 +14,14 @@ References:
 - LEGO: Layered Ensemble with Gradual Optimization
 - Deep Supervision: Lee et al., 2015
 - Early Exit: Teerapittayanon et al., 2016
-- ASHEM: Adaptive Supervision via Hard Example Mining
+- Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Dict, List, Tuple, Optional, Any, TYPE_CHECKING
+from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass, field
 
 

@@ -47,11 +47,7 @@ References:
 - Hard Example Mining: Similar to HAM (IEEE TIFS 2025), HSM (2025)
 """
 
-from .models import (
-    LEGOTransformer,
-    StandardTransformer,
-    DeepSupervisionTransformer,
-)
+from .models import LEGOTransformer
 from .trainer import (
     StageConfig,
     TrainingConfig,
@@ -81,8 +77,6 @@ __version__ = "0.2.0"
 __all__ = [
     # Models
     'LEGOTransformer',
-    'StandardTransformer',  # Alias for backward compatibility
-    'DeepSupervisionTransformer',  # Alias for backward compatibility
     # Trainer
     'StageConfig',
     'TrainingConfig',
