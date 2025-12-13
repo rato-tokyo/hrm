@@ -78,9 +78,7 @@ class LEGOTransformer(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Standard forward: output from final layer."""
-        h = self.embedding(x)
-        for layer in self.layers:
-            h = layer(h)
+        h = self.get_hidden_states(x)
         return self.output_head(h)  # type: ignore[no-any-return]
 
     def forward_all_layers(self, x: torch.Tensor) -> List[torch.Tensor]:
@@ -92,6 +90,36 @@ class LEGOTransformer(nn.Module):
             outputs.append(self.output_head(h))
         return outputs
 
+    def _forward_early_exit(
+        self, x: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Core early exit forward pass.
+
+        Returns:
+            h_shallow: Hidden state at exit point
+            shallow_logits: Output after exit_layer
+            deep_logits: Output after all layers
+            confidence: Confidence at exit point
+        """
+        h = self.embedding(x)
+
+        # Process up to exit layer
+        for i in range(self.exit_layer):
+            h = self.layers[i](h)
+
+        # Shallow output and confidence at exit point
+        shallow_logits = self.output_head(h)
+        confidence = self.compute_confidence(h)
+
+        # Continue to deep output
+        h_deep = h
+        for i in range(self.exit_layer, self.num_layers):
+            h_deep = self.layers[i](h_deep)
+        deep_logits = self.output_head(h_deep)
+
+        return h, shallow_logits, deep_logits, confidence
+
     def forward_train(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
         """
         Training forward: compute both shallow and deep outputs.
@@ -102,24 +130,20 @@ class LEGOTransformer(nn.Module):
         - confidence: Confidence at exit point
         - shallow_ratio: Fraction of tokens that would exit early
         """
-        h = self.embedding(x)
+        # Get confidence without gradients
+        with torch.no_grad():
+            _, _, _, confidence = self._forward_early_exit(x)
 
-        # Process up to exit layer
+        # Re-compute with gradients for training
+        h = self.embedding(x)
         for i in range(self.exit_layer):
             h = self.layers[i](h)
-
-        # Shallow output (at exit point)
         shallow_logits = self.output_head(h)
 
-        # Continue to deep output
         h_deep = h
         for i in range(self.exit_layer, self.num_layers):
             h_deep = self.layers[i](h_deep)
         deep_logits = self.output_head(h_deep)
-
-        # Compute confidence at exit point
-        with torch.no_grad():
-            confidence = self.compute_confidence(h)
 
         return {
             'shallow_logits': shallow_logits,
@@ -138,21 +162,7 @@ class LEGOTransformer(nn.Module):
         """
         batch_size, seq_len = x.shape
 
-        h = self.embedding(x)
-
-        # Process up to exit layer
-        for i in range(self.exit_layer):
-            h = self.layers[i](h)
-
-        # Compute confidence for routing
-        confidence = self.compute_confidence(h)
-        shallow_logits = self.output_head(h)
-
-        # Deep path
-        h_deep = h
-        for i in range(self.exit_layer, self.num_layers):
-            h_deep = self.layers[i](h_deep)
-        deep_logits = self.output_head(h_deep)
+        _, shallow_logits, deep_logits, confidence = self._forward_early_exit(x)
 
         # Hard routing
         mask = (confidence >= self.routing_threshold).unsqueeze(-1)
@@ -172,6 +182,25 @@ class LEGOTransformer(nn.Module):
         }
 
         return output, stats
+
+    def forward_upper_layers(
+        self,
+        h: torch.Tensor,
+        start_layer: int
+    ) -> torch.Tensor:
+        """
+        Forward through upper layers only (for Phase 2 training).
+
+        Args:
+            h: Hidden states from lower layers (batch_size, seq_len, dim)
+            start_layer: Index of first upper layer to process
+
+        Returns:
+            Logits after processing through upper layers
+        """
+        for i in range(start_layer, self.num_layers):
+            h = self.layers[i](h)
+        return self.output_head(h)  # type: ignore[no-any-return]
 
     def extend(
         self,

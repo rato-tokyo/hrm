@@ -235,13 +235,8 @@ def train_upper_layers(
         h, y = h.to(device), y.to(device)
         optimizer.zero_grad()
 
-        # Process through upper layers only
-        for i in range(num_lower_layers, model.num_layers):
-            h = model.layers[i](h)
-
-        # Compute classification loss
-        # h shape: (batch_size, 1, dim)
-        logits = model.output_head(h).squeeze(1)  # (batch_size, vocab_size)
+        # Process through upper layers using model method
+        logits = model.forward_upper_layers(h, num_lower_layers).squeeze(1)
         loss = F.cross_entropy(logits, y)
 
         loss.backward()  # type: ignore[no-untyped-call]
@@ -292,13 +287,8 @@ def evaluate_on_hard_examples(
             h_batch = hidden_states[i:i + batch_size].unsqueeze(1).to(device)
             y_batch = targets[i:i + batch_size].to(device)
 
-            # If deep model, process through upper layers
-            if hasattr(model, 'num_layers') and model.num_layers > num_lower_layers:
-                for layer_idx in range(num_lower_layers, model.num_layers):
-                    h_batch = model.layers[layer_idx](h_batch)
-
-            # Compute loss
-            logits = model.output_head(h_batch).squeeze(1)
+            # Process through upper layers using model method
+            logits = model.forward_upper_layers(h_batch, num_lower_layers).squeeze(1)
             loss = F.cross_entropy(logits, y_batch, reduction='sum')
 
             total_loss += loss.item()

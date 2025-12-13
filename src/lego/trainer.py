@@ -56,18 +56,10 @@ class Trainer:
             x, y = x.to(self.device), y.to(self.device)
 
             if use_routing:
-                outputs = model.forward_train(x)
-                confidence = outputs['confidence']
-                mask = (confidence >= routing_threshold).unsqueeze(-1)
-                logits = torch.where(mask, outputs['shallow_logits'], outputs['deep_logits'])
-
-                batch_size, seq_len = x.shape
-                total_count = batch_size * seq_len
-                shallow_count = mask.sum().item()
-                total_shallow += shallow_count
-                deep_count = total_count - shallow_count
-                num_layers = model.num_layers
-                total_compute += (shallow_count * exit_layer + deep_count * num_layers) / (total_count * num_layers)
+                # Use forward_inference for consistent routing
+                logits, stats = model.forward_inference(x)
+                total_shallow += stats['shallow_ratio'] * x.numel()
+                total_compute += stats['compute_cost']
             else:
                 logits = model(x)
 
