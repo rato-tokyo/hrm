@@ -2,84 +2,45 @@ From https://github.com/rato-tokyo/hrm
  * branch            main       -> FETCH_HEAD
 Already up to date.
 ============================================================
-Hard Example Mining + Two-Stage Inference
+LEGO: Hard Example Mining + KV Cache Generation
 ============================================================
 Device: cuda
-GPU: NVIDIA L4
-
-Experiment Design:
-  Phase 1: Train 2-layer model
-  Compute: Auto-adjust threshold to collect 50% hard examples
-  Phase 2: Add 2 layers → Train on hard examples
-  Eval: Two-stage inference (Layer 2 or Layer 4) using Early Exit
-
 
 ============================================================
-LEGOTransformer - Hard Example Mining
+LEGOTransformer - Hard Example Mining + KV Cache
 ============================================================
 
 Phase 1: Train 2-layer model
 ============================================================
-Epoch 1/50 - Train PPL: 3208.8367 | Val PPL: 1155.4391 | Val Acc: 14.53%
-  → New best model (val_loss: 7.0522)
-Epoch 2/50 - Train PPL: 688.4413 | Val PPL: 995.6865 | Val Acc: 15.84%
-  → New best model (val_loss: 6.9034)
-Epoch 3/50 - Train PPL: 424.4466 | Val PPL: 986.4297 | Val Acc: 16.03%
-  → New best model (val_loss: 6.8941)
-Epoch 4/50 - Train PPL: 298.5926 | Val PPL: 1048.5312 | Val Acc: 15.99%
+Epoch 1/50 - Train PPL: 3208.8367 | Val PPL: 1155.44 | Val Acc: 14.53%
+  → New best (val_ppl: 1155.44)
+Epoch 2/50 - Train PPL: 688.4413 | Val PPL: 995.69 | Val Acc: 15.84%
+  → New best (val_ppl: 995.69)
+Epoch 3/50 - Train PPL: 424.4466 | Val PPL: 986.43 | Val Acc: 16.03%
+  → New best (val_ppl: 986.43)
+Epoch 4/50 - Train PPL: 298.5926 | Val PPL: 1048.53 | Val Acc: 15.99%
   → No improvement (1/1)
 
-Early stopping triggered at epoch 4
+Early stopping at epoch 4
 Best model was at epoch 3
 
 Restored best model from epoch 3
 
-Phase 1 Results:
-  Best Acc: 16.03%
-  Best PPL: 986.43
-  Time: 22.42s
+Phase 1 Results: Acc 16.03% | PPL 986.43 | Time 22.46s
 
 ============================================================
-Computing Confidence Threshold (target ratio: 50%)
+Computing Confidence Threshold (target: 50%)
 ============================================================
 
-✓ Computed confidence threshold: 0.1499
-  Examples with confidence < 0.1499 will be treated as hard
+Threshold: 0.1499
+Collected 32,768 hard examples (51.2%)
+Phase 1 Hard PPL: 2763.69
 
 ============================================================
-Collecting Hard Examples
+Phase 2: Add 2 layers, train on hard examples
 ============================================================
 
-✓ Collected 32,768 hard examples
-  Average confidence: 0.0653
-  Actual ratio: 51.2% (target: 50%)
-
-============================================================
-Evaluating Phase 1 on Hard Examples
-============================================================
-
-✓ Phase 1 Hard PPL: 2763.69
-  (vs Overall Val PPL: 986.43)
-
-============================================================
-Phase 2: Add 2 layers → Train on hard examples
-============================================================
-
-✓ Copied weights from 2-layer model
-✓ Layers 3-4 randomly initialized
-
-📊 Hard Freezing Configuration:
-  Layer 1-2: Frozen (requires_grad=False)
-  Layer 3-4: Trainable
-
-✓ Frozen lower layers
-  Trainable params: 4,600,448 / 9,200,896 (50.0%)
-  Hard example batches: 512
-
-📊 Training Configuration:
-  Learning rate: 1.0e-04
-  Patience: 3
-  Max epochs: 50
+Trainable params: 4,600,448 / 9,200,896 (50.0%)
 Epoch 1/50 - Train PPL: 2934.9144 | Val PPL: 987.12 | Val Acc: 15.72% | Hard PPL: 1797.55
   → New best (val_ppl: 987.12)
 Epoch 2/50 - Train PPL: 1541.0129 | Val PPL: 883.26 | Val Acc: 15.82% | Hard PPL: 1274.81
@@ -104,43 +65,41 @@ Epoch 10/50 - Train PPL: 577.0879 | Val PPL: 834.16 | Val Acc: 15.79% | Hard PPL
 Early stopping at epoch 10
 Best model was at epoch 7
 
-Restored best model from Phase 2
+Restored best model from epoch 7
 
-Phase 2 Results:
-  Best Val PPL: 829.78
-  Best Hard PPL: 668.08
-  Hard PPL Improvement: +2095.60 (+75.8%)
-  Time: 67.27s
+Phase 2 Results: Hard PPL 668.08 | Time 67.57s
+Hard PPL Improvement: +2095.60 (+75.8%)
 
 ============================================================
 Final Evaluation (Two-Stage Inference)
 ============================================================
 
-Results:
-  Accuracy: 15.77%
-  Shallow ratio (Layer 2): 70.4%
-  Deep ratio (Layer 4): 29.6%
-  Compute cost: 64.82% of full model
+Accuracy: 15.77%
+PPL: 829.78
+Shallow ratio: 70.4%
+Compute cost: 64.82%
 
 ============================================================
-Comparison
+KV Cache Generation Demo
 ============================================================
 
-Overall Performance:
-  Phase 1 (2-layer only):  Acc 16.03% | PPL 986.43
-  Two-stage inference:     Acc 15.77% | PPL 829.78
-  Accuracy change:         -0.26%
-  PPL change:              -156.65
+Prompt length: 8 tokens
+Generating: 32 new tokens
 
-Hard Examples Performance:
-  Phase 1 Hard PPL:        2763.69
-  Phase 2 Hard PPL:        668.08
-  Hard PPL Improvement:    +2095.60 (+75.8%)
+Generation Time:
+  Without cache: 0.2644s
+  With cache:    0.1789s
+  Speedup:       1.48x
 
-Efficiency:
-  Shallow ratio (Layer 2): 70.4%
-  Deep ratio (Layer 4):    29.6%
-  Compute cost:            64.82% of full model
+Outputs match: True
+
+============================================================
+Summary
+============================================================
+Phase 1: Acc 16.03% | PPL 986.43
+Phase 2: Acc 15.77% | PPL 829.78
+Hard PPL: 2763.69 -> 668.08
+KV Cache Speedup: 1.48x
 
 ============================================================
 Experiment completed!

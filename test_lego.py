@@ -181,6 +181,43 @@ def test_generate():
     print("  Generate test: OK")
 
 
+def test_generate_with_early_exit():
+    """Test TRUE early exit generation."""
+    print("\n[TEST] Generate with Early Exit")
+
+    set_seed(42)
+    # 4-layer model with exit_layer=2
+    # Use very low threshold (0.02) to ensure some early exits with untrained model
+    model = LEGOTransformer(
+        vocab_size=100, dim=32, num_layers=4, num_heads=2,
+        exit_layer=2, routing_threshold=0.02
+    )
+
+    set_seed(42)
+    prompt = torch.randint(0, 100, (1, 4))
+
+    # Generate with early exit (low threshold to trigger exits)
+    generated, stats = model.generate_with_early_exit(
+        prompt, max_new_tokens=16, routing_threshold=0.02
+    )
+
+    assert generated.shape == (1, 20), f"Expected (1, 20), got {generated.shape}"
+    assert (generated[:, :4] == prompt).all(), "Prompt should be preserved"
+
+    print(f"  Generated shape: {generated.shape} OK")
+    print(f"  Shallow count: {stats['shallow_count']}")
+    print(f"  Deep count: {stats['deep_count']}")
+    print(f"  Shallow ratio: {stats['shallow_ratio']:.2%}")
+    print(f"  Actual compute cost: {stats['actual_compute_cost']:.2%}")
+
+    # Verify compute cost is less than 100% if any shallow exits occurred
+    if stats['shallow_count'] > 0:
+        assert stats['actual_compute_cost'] < 1.0, "Compute cost should be < 100% with early exits"
+        print("  Compute cost reduction verified: OK")
+
+    print("  Generate with Early Exit test: OK")
+
+
 # ==============================================================================
 # Main
 # ==============================================================================
@@ -195,6 +232,7 @@ def main():
         test_lego_integration,
         test_kv_cache,
         test_generate,
+        test_generate_with_early_exit,
     ]
 
     passed = 0
