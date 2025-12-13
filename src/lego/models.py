@@ -83,12 +83,11 @@ class LEGOTransformer(nn.Module):
 
     def _forward_early_exit(
         self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Core early exit forward pass.
 
         Returns:
-            h_shallow: Hidden state at exit point
             shallow_logits: Output after exit_layer
             deep_logits: Output after all layers
             confidence: Confidence at exit point
@@ -110,43 +109,7 @@ class LEGOTransformer(nn.Module):
             h_deep = self.layers[i](h_deep)
         deep_logits = self.output_head(h_deep)
 
-        return h, shallow_logits, deep_logits, confidence
-
-    def forward_train(self, x: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """
-        Training forward: compute both shallow and deep outputs.
-
-        Returns dict with:
-        - shallow_logits: Output after exit_layer
-        - deep_logits: Output after all layers
-        - confidence: Confidence at exit point
-        - shallow_ratio: Fraction of tokens that would exit early
-        """
-        h = self.embedding(x)
-
-        # Process up to exit layer
-        for i in range(self.exit_layer):
-            h = self.layers[i](h)
-
-        # Shallow output (with gradients)
-        shallow_logits = self.output_head(h)
-
-        # Confidence (no gradients needed)
-        with torch.no_grad():
-            confidence = self.compute_confidence(h)
-
-        # Continue to deep output (with gradients)
-        h_deep = h
-        for i in range(self.exit_layer, self.num_layers):
-            h_deep = self.layers[i](h_deep)
-        deep_logits = self.output_head(h_deep)
-
-        return {
-            'shallow_logits': shallow_logits,
-            'deep_logits': deep_logits,
-            'confidence': confidence,
-            'shallow_ratio': (confidence >= self.routing_threshold).float().mean().item(),
-        }
+        return shallow_logits, deep_logits, confidence
 
     def forward_inference(self, x: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
@@ -158,7 +121,7 @@ class LEGOTransformer(nn.Module):
         """
         batch_size, seq_len = x.shape
 
-        _, shallow_logits, deep_logits, confidence = self._forward_early_exit(x)
+        shallow_logits, deep_logits, confidence = self._forward_early_exit(x)
 
         # Hard routing
         mask = (confidence >= self.routing_threshold).unsqueeze(-1)

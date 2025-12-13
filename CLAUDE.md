@@ -46,12 +46,7 @@ confidence_threshold = compute_confidence_threshold(
 )
 hard_examples = collect_hard_examples(model, val_loader, confidence_threshold, device)
 hard_batches = create_hard_example_loader(hard_examples, batch_size=64)
-
-# 方法2: Trainerのパイプラインメソッドを使用（推奨）
-hard_batches, hard_examples, threshold = trainer.collect_hard_examples(
-    model, val_loader, target_ratio=0.5, batch_size=64
-)
-# Returns: (batched_loader, {'inputs', 'hidden_states', 'targets', 'confidences'}, threshold)
+# Returns: {'hidden_states', 'targets', 'confidences'}
 ```
 
 ### Phase 2: 拡張モデルの訓練
@@ -89,7 +84,6 @@ stats = trainer.evaluate(
 ### モデル
 - `LEGOTransformer` - 統一モデル（standard/early exitの両モード対応）
   - `forward()` - 標準推論
-  - `forward_train()` - 訓練用（shallow/deep両出力）
   - `forward_inference()` - 推論用（ルーティング付き）
   - `extend()` - 浅いモデルから拡張モデルを作成（インスタンスメソッド）
   - `compute_confidence()` - hidden stateから信頼度を計算
@@ -97,10 +91,9 @@ stats = trainer.evaluate(
 ### 訓練
 - `Trainer` - 訓練・評価を実行
   - `__init__(vocab_size, device)` - 初期化
-  - `evaluate(model, val_batches, routing_threshold=0.0, exit_layer=1)` - 評価
+  - `evaluate(model, val_batches, routing_threshold=0.0)` - 評価
   - `train_with_early_stopping(...)` - Phase 1 訓練
   - `train_upper_layers_with_early_stopping(...)` - Phase 2 訓練
-  - `collect_hard_examples(model, val_batches, target_ratio, batch_size)` - Hard Example収集パイプライン
 
 ### ユーティリティ関数（削除禁止）
 | 関数 | 用途 |

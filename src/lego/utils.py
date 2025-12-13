@@ -122,14 +122,12 @@ def collect_hard_examples(
 
     Returns:
         Dictionary containing:
-        - 'inputs': Original input tokens
         - 'hidden_states': Layer outputs (used as input for deeper layers)
         - 'targets': Ground truth labels
         - 'confidences': Confidence scores
     """
     model.eval()
 
-    hard_inputs = []
     hard_hidden_states = []
     hard_targets = []
     hard_confidences = []
@@ -149,23 +147,20 @@ def collect_hard_examples(
 
             if mask.any():
                 # Flatten batch and sequence dimensions
-                x_flat = x.view(-1)
                 h_flat = h.view(-1, h.shape[-1])
                 y_flat = y.view(-1)
                 confidence_flat = confidence.view(-1)
                 mask_flat = mask.view(-1)
 
                 # Collect hard examples
-                hard_inputs.append(x_flat[mask_flat])
                 hard_hidden_states.append(h_flat[mask_flat])
                 hard_targets.append(y_flat[mask_flat])
                 hard_confidences.append(confidence_flat[mask_flat])
 
-    if not hard_inputs:
+    if not hard_hidden_states:
         raise ValueError("No hard examples found. Try increasing threshold.")
 
     return {
-        'inputs': torch.cat(hard_inputs),
         'hidden_states': torch.cat(hard_hidden_states),
         'targets': torch.cat(hard_targets),
         'confidences': torch.cat(hard_confidences)

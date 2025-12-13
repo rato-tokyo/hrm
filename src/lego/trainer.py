@@ -24,11 +24,6 @@ class Trainer:
         self.vocab_size = vocab_size
         self.device = device
 
-    def compute_loss(self, model: nn.Module, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
-        """Compute cross-entropy loss."""
-        output = model(x)
-        return F.cross_entropy(output.view(-1, self.vocab_size), y.view(-1))
-
     def create_optimizer(self, model: nn.Module, base_lr: float) -> torch.optim.Optimizer:
         """Create optimizer with uniform learning rate."""
         return torch.optim.AdamW(model.parameters(), lr=base_lr)
@@ -76,31 +71,6 @@ class Trainer:
             'shallow_ratio': total_shallow / total_all_tokens if use_routing else 0.0,
             'compute_cost': total_compute / len(val_batches) if use_routing else 1.0,
         }
-
-    def train_epoch(
-        self,
-        model: nn.Module,
-        train_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-        optimizer: torch.optim.Optimizer,
-        grad_clip: float = 1.0
-    ) -> float:
-        """Train for one epoch."""
-        model.train()
-        total_loss = 0.0
-
-        for x, y in train_batches:
-            x, y = x.to(self.device), y.to(self.device)
-            optimizer.zero_grad()
-
-            loss = self.compute_loss(model, x, y)
-            loss.backward()  # type: ignore[no-untyped-call]
-
-            torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-            optimizer.step()
-
-            total_loss += loss.item()
-
-        return total_loss / len(train_batches)
 
     def _early_stopping_loop(
         self,
@@ -197,7 +167,18 @@ class Trainer:
     ) -> Dict[str, Any]:
         """Train with early stopping."""
         def train_fn() -> float:
-            return self.train_epoch(model, train_batches, optimizer, grad_clip)
+            model.train()
+            total_loss = 0.0
+            for x, y in train_batches:
+                x, y = x.to(self.device), y.to(self.device)
+                optimizer.zero_grad()
+                output = model(x)
+                loss = F.cross_entropy(output.view(-1, self.vocab_size), y.view(-1))
+                loss.backward()  # type: ignore[no-untyped-call]
+                torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+                optimizer.step()
+                total_loss += loss.item()
+            return total_loss / len(train_batches)
 
         return self._early_stopping_loop(
             model, val_batches, train_fn, max_epochs, patience, verbose
@@ -235,36 +216,3 @@ class Trainer:
             model, val_batches, train_fn, max_epochs, patience, verbose,
             routing_threshold, extra_eval_fn
         )
-
-    def collect_hard_examples(
-        self,
-        model: nn.Module,
-        val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-        target_ratio: float = 0.5,
-        batch_size: int = 64
-    ) -> Tuple[List[Tuple[torch.Tensor, torch.Tensor]], Dict[str, torch.Tensor], float]:
-        """
-        Collect hard examples in one step.
-
-        Combines threshold computation, hard example collection, and batching.
-
-        Args:
-            model: Trained model
-            val_batches: Validation data batches
-            target_ratio: Ratio of examples to classify as hard (default: 0.5)
-            batch_size: Batch size for hard example loader
-
-        Returns:
-            Tuple of (hard_batches, hard_examples, threshold)
-        """
-        from .utils import (
-            compute_confidence_threshold,
-            collect_hard_examples as _collect_hard_examples,
-            create_hard_example_loader,
-        )
-
-        threshold = compute_confidence_threshold(model, val_batches, target_ratio, self.device)
-        hard_examples = _collect_hard_examples(model, val_batches, threshold, self.device)
-        hard_batches = create_hard_example_loader(hard_examples, batch_size)
-
-        return hard_batches, hard_examples, threshold
