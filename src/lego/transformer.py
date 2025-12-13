@@ -47,50 +47,6 @@ class LEGOTransformer(nn.Module):
 
         self._init_weights()
 
-    @classmethod
-    def create(
-        cls,
-        vocab_size: int,
-        dim: int,
-        num_heads: int,
-        layers_per_block: List[int],
-        thresholds: List[float],
-    ) -> 'LEGOTransformer':
-        """
-        Create a LEGOTransformer with multiple blocks.
-
-        Args:
-            vocab_size: Vocabulary size
-            dim: Model dimension
-            num_heads: Number of attention heads
-            layers_per_block: Number of layers in each block
-            thresholds: Early exit threshold for each block (1.0 = no early exit)
-
-        Returns:
-            LEGOTransformer with specified blocks
-
-        Example:
-            # 3 blocks: 2 layers each, thresholds 0.8, 0.9, 1.0
-            model = LEGOTransformer.create(
-                vocab_size=10000,
-                dim=64,
-                num_heads=4,
-                layers_per_block=[2, 2, 2],
-                thresholds=[0.8, 0.9, 1.0]
-            )
-        """
-        if len(layers_per_block) != len(thresholds):
-            raise ValueError(
-                f"layers_per_block and thresholds must have same length: "
-                f"{len(layers_per_block)} != {len(thresholds)}"
-            )
-
-        blocks = [
-            LEGOBlock(dim, num_heads, num_layers, threshold)
-            for num_layers, threshold in zip(layers_per_block, thresholds)
-        ]
-        return cls(vocab_size, dim, blocks)
-
     def _init_weights(self) -> None:
         """Initialize weights for embedding and output head."""
         nn.init.trunc_normal_(self.embedding.weight, std=0.02)
