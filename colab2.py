@@ -83,9 +83,6 @@ class ExperimentConfig:
     lego: LEGOConfig = field(default_factory=LEGOConfig)
 
 
-CONFIG = ExperimentConfig()
-
-
 # ==============================================================================
 # Utility Functions
 # ==============================================================================
@@ -109,7 +106,7 @@ CONFIG = ExperimentConfig()
 # Experiment Runner
 # ==============================================================================
 
-def run_experiment(device: str) -> Dict[str, Any]:
+def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     """
     Run complete hard example mining experiment.
 
@@ -120,6 +117,7 @@ def run_experiment(device: str) -> Dict[str, Any]:
     4. Evaluate using two-stage inference (Early Exit)
 
     Args:
+        config: Experiment configuration
         device: Device to run experiment on
 
     Returns:
@@ -132,27 +130,26 @@ def run_experiment(device: str) -> Dict[str, Any]:
     # ==========================================================================
     # Phase 1: Train Shallow Model
     # ==========================================================================
-    print(f"Phase 1: Train {CONFIG.lego.phase1_layers}-layer model")
+    print(f"Phase 1: Train {config.lego.phase1_layers}-layer model")
     print(f"{'='*60}")
 
     set_seed(42)
     train_loader, val_loader, vocab_size = create_wikitext_dataloaders(
-        CONFIG.phase1_samples, CONFIG.phase1_batch, CONFIG.seq_len
+        config.phase1_samples, config.phase1_batch, config.seq_len
     )
-    CONFIG.vocab_size = vocab_size  # Update vocab size from data
 
     # Create shallow model
     model = LEGOTransformer(
-        vocab_size=CONFIG.vocab_size,
-        dim=CONFIG.dim,
-        num_layers=CONFIG.lego.phase1_layers,
-        num_heads=CONFIG.num_heads
+        vocab_size=vocab_size,
+        dim=config.dim,
+        num_layers=config.lego.phase1_layers,
+        num_heads=config.num_heads
     ).to(device)
 
     # Train with early stopping
-    config = create_standard_config(CONFIG.lego.phase1_layers)
-    trainer = Trainer(config, vocab_size=CONFIG.vocab_size, device=device)
-    optimizer = trainer.create_optimizer(model, base_lr=CONFIG.lego.phase1_lr)
+    training_config = create_standard_config(config.lego.phase1_layers)
+    trainer = Trainer(training_config, vocab_size=vocab_size, device=device)
+    optimizer = trainer.create_optimizer(model, base_lr=config.lego.phase1_lr)
 
     start_time = time.time()
     result_phase1 = trainer.train_with_early_stopping(
@@ -160,8 +157,8 @@ def run_experiment(device: str) -> Dict[str, Any]:
         train_batches=train_loader,
         val_batches=val_loader,
         optimizer=optimizer,
-        max_epochs=CONFIG.phase1_epochs,
-        patience=CONFIG.lego.phase1_patience,
+        max_epochs=config.phase1_epochs,
+        patience=config.lego.phase1_patience,
         verbose=True
     )
     phase1_time = time.time() - start_time
@@ -178,11 +175,11 @@ def run_experiment(device: str) -> Dict[str, Any]:
     # Compute Confidence Threshold
     # ==========================================================================
     print(f"\n{'='*60}")
-    print(f"Computing Confidence Threshold (target ratio: {CONFIG.lego.hard_example_ratio*100:.0f}%)")
+    print(f"Computing Confidence Threshold (target ratio: {config.lego.hard_example_ratio*100:.0f}%)")
     print(f"{'='*60}\n")
 
     confidence_threshold = compute_confidence_threshold(
-        model, val_loader, CONFIG.lego.hard_example_ratio, device
+        model, val_loader, config.lego.hard_example_ratio, device
     )
 
     print(f"✓ Computed confidence threshold: {confidence_threshold:.4f}")
@@ -201,12 +198,12 @@ def run_experiment(device: str) -> Dict[str, Any]:
 
     num_hard = len(hard_examples['targets'])
     avg_confidence = hard_examples['confidences'].mean().item()
-    total_samples = CONFIG.phase1_samples * 0.2 * CONFIG.seq_len
+    total_samples = config.phase1_samples * 0.2 * config.seq_len
 
     print(f"✓ Collected {num_hard:,} hard examples")
     print(f"  Average confidence: {avg_confidence:.4f}")
     print(f"  Actual ratio: {num_hard / total_samples * 100:.1f}% "
-          f"(target: {CONFIG.lego.hard_example_ratio*100:.0f}%)")
+          f"(target: {config.lego.hard_example_ratio*100:.0f}%)")
 
     # ==========================================================================
     # Evaluate Phase 1 on Hard Examples
@@ -216,8 +213,8 @@ def run_experiment(device: str) -> Dict[str, Any]:
     print(f"{'='*60}\n")
 
     phase1_hard_ppl = evaluate_on_hard_examples(
-        model, hard_examples, CONFIG.vocab_size, device,
-        batch_size=CONFIG.phase2_batch, num_lower_layers=CONFIG.lego.phase1_layers
+        model, hard_examples, vocab_size, device,
+        batch_size=config.phase2_batch, num_lower_layers=config.lego.phase1_layers
     )
 
     print(f"✓ Phase 1 Hard PPL: {phase1_hard_ppl:.2f}")
@@ -233,7 +230,7 @@ def run_experiment(device: str) -> Dict[str, Any]:
     # Create extended model with Early Exit support
     model_extended = LEGOTransformer.extend_from(
         source_model=model,
-        num_layers=CONFIG.lego.phase2_layers,
+        num_layers=config.lego.phase2_layers,
         routing_threshold=confidence_threshold,
         freeze_lower=True
     ).to(device)
@@ -246,12 +243,12 @@ def run_experiment(device: str) -> Dict[str, Any]:
 
     # Configure training for Phase 2 (with routing for evaluation)
     phase2_config = TrainingConfig(
-        stages=[StageConfig(layers=(CONFIG.lego.phase2_layers, CONFIG.lego.phase2_layers), loss_weight=1.0)],
+        stages=[StageConfig(layers=(config.lego.phase2_layers, config.lego.phase2_layers), loss_weight=1.0)],
         routing_threshold=confidence_threshold,
-        exit_layer=CONFIG.lego.phase1_layers
+        exit_layer=config.lego.phase1_layers
     )
 
-    trainer_phase2 = Trainer(phase2_config, vocab_size=CONFIG.vocab_size, device=device)
+    trainer_phase2 = Trainer(phase2_config, vocab_size=vocab_size, device=device)
 
     trainable = sum(p.numel() for p in model_extended.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model_extended.parameters())
@@ -259,19 +256,19 @@ def run_experiment(device: str) -> Dict[str, Any]:
     print(f"  Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.1f}%)")
 
     # Create hard example loader
-    hard_batches = create_hard_example_loader(hard_examples, CONFIG.phase2_batch)
+    hard_batches = create_hard_example_loader(hard_examples, config.phase2_batch)
     print(f"  Hard example batches: {len(hard_batches)}")
 
     # Train upper layers only
     optimizer_upper = trainer_phase2.create_optimizer(
         model_extended,
-        base_lr=CONFIG.lego.phase2_lr
+        base_lr=config.lego.phase2_lr
     )
 
     print(f"\n📊 Training Configuration:")
-    print(f"  Learning rate: {CONFIG.lego.phase2_lr:.1e}")
-    print(f"  Patience: {CONFIG.lego.phase2_patience}")
-    print(f"  Max epochs: {CONFIG.phase2_epochs}")
+    print(f"  Learning rate: {config.lego.phase2_lr:.1e}")
+    print(f"  Patience: {config.lego.phase2_patience}")
+    print(f"  Max epochs: {config.phase2_epochs}")
 
     # Train upper layers with early stopping (simplified)
     start_time = time.time()
@@ -281,9 +278,9 @@ def run_experiment(device: str) -> Dict[str, Any]:
         val_batches=val_loader,
         hard_examples=hard_examples,
         optimizer=optimizer_upper,
-        num_lower_layers=CONFIG.lego.phase1_layers,
-        max_epochs=CONFIG.phase2_epochs,
-        patience=CONFIG.lego.phase2_patience,
+        num_lower_layers=config.lego.phase1_layers,
+        max_epochs=config.phase2_epochs,
+        patience=config.lego.phase2_patience,
         verbose=True
     )
     phase2_time = time.time() - start_time
@@ -361,6 +358,8 @@ def run_experiment(device: str) -> Dict[str, Any]:
 
 def main() -> None:
     """Run Hard Example Mining experiment."""
+    config = ExperimentConfig()
+
     print("="*60)
     print("Hard Example Mining + Two-Stage Inference")
     print("="*60)
@@ -369,16 +368,16 @@ def main() -> None:
         print(f"GPU: {torch.cuda.get_device_name(0)}")
 
     print("\nExperiment Design:")
-    print(f"  Phase 1: Train {CONFIG.lego.phase1_layers}-layer model")
-    print(f"  Compute: Auto-adjust threshold to collect {CONFIG.lego.hard_example_ratio*100:.0f}% hard examples")
-    print(f"  Phase 2: Add {CONFIG.lego.phase2_layers - CONFIG.lego.phase1_layers} layers → Train on hard examples")
+    print(f"  Phase 1: Train {config.lego.phase1_layers}-layer model")
+    print(f"  Compute: Auto-adjust threshold to collect {config.lego.hard_example_ratio*100:.0f}% hard examples")
+    print(f"  Phase 2: Add {config.lego.phase2_layers - config.lego.phase1_layers} layers → Train on hard examples")
     print("  Eval: Two-stage inference (Layer 2 or Layer 4) using Early Exit")
     print()
 
     device = get_device()
 
     # Run experiment
-    run_experiment(device)
+    run_experiment(config, device)
 
     print("\n" + "="*60)
     print("Experiment completed!")
