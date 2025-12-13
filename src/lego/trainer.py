@@ -21,7 +21,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, TYPE_CHECKING
 from dataclasses import dataclass, field
 
 
@@ -362,6 +362,113 @@ class Trainer:
             'val_losses': val_losses,
             'val_accs': val_accs,
             'best_epoch': best_epoch,
+            'total_epochs': epoch + 1,
+            'stopped_early': patience_counter >= patience
+        }
+
+    def train_upper_layers_with_early_stopping(
+        self,
+        model: nn.Module,
+        hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+        val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+        hard_examples: Dict[str, torch.Tensor],
+        optimizer: torch.optim.Optimizer,
+        num_lower_layers: int,
+        max_epochs: int = 50,
+        patience: int = 3,
+        verbose: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Train upper layers on hard examples with early stopping.
+
+        This method trains newly added layers on hard examples only,
+        while using full validation set for early stopping decisions.
+
+        Args:
+            model: Extended model with frozen lower layers
+            hard_batches: Batches of (hidden_state, target) from hard examples
+            val_batches: Full validation batches for evaluation
+            hard_examples: Raw hard examples for PPL computation
+            optimizer: Optimizer for trainable parameters
+            num_lower_layers: Number of frozen lower layers
+            max_epochs: Maximum training epochs
+            patience: Early stopping patience
+            verbose: Print progress
+
+        Returns:
+            Dictionary containing training history and metrics
+        """
+        from .utils import train_upper_layers, evaluate_on_hard_examples
+
+        best_val_ppl = float('inf')
+        best_model_state = None
+        patience_counter = 0
+        best_epoch = 0
+
+        train_ppls = []
+        val_ppls = []
+        hard_ppls = []
+
+        for epoch in range(max_epochs):
+            # Train on hard examples
+            train_loss = train_upper_layers(
+                model, hard_batches, optimizer,
+                self.vocab_size, self.device, num_lower_layers
+            )
+            train_ppl = float(np.exp(train_loss))
+            train_ppls.append(train_ppl)
+
+            # Evaluate on full validation set with routing
+            val_stats = self.evaluate(model, val_batches)
+            val_ppl = val_stats['ppl']
+            val_acc = val_stats['acc']
+            val_ppls.append(val_ppl)
+
+            # Evaluate on hard examples
+            hard_ppl = evaluate_on_hard_examples(
+                model, hard_examples, self.vocab_size, self.device,
+                batch_size=64, num_lower_layers=num_lower_layers
+            )
+            hard_ppls.append(hard_ppl)
+
+            if verbose:
+                print(f"Epoch {epoch+1}/{max_epochs} - "
+                      f"Train PPL: {train_ppl:.4f} | "
+                      f"Val PPL: {val_ppl:.2f} | "
+                      f"Val Acc: {val_acc*100:.2f}% | "
+                      f"Hard PPL: {hard_ppl:.2f}")
+
+            # Early stopping check
+            if val_ppl < best_val_ppl:
+                best_val_ppl = val_ppl
+                best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+                patience_counter = 0
+                best_epoch = epoch
+                if verbose:
+                    print(f"  → New best (val_ppl: {val_ppl:.2f})")
+            else:
+                patience_counter += 1
+                if verbose:
+                    print(f"  → No improvement ({patience_counter}/{patience})")
+
+            if patience_counter >= patience:
+                if verbose:
+                    print(f"\nEarly stopping at epoch {epoch+1}")
+                    print(f"Best model was at epoch {best_epoch+1}")
+                break
+
+        # Restore best model
+        if best_model_state is not None:
+            model.load_state_dict({k: v.to(self.device) for k, v in best_model_state.items()})
+            if verbose:
+                print("\nRestored best model from Phase 2")
+
+        return {
+            'train_ppls': train_ppls,
+            'val_ppls': val_ppls,
+            'hard_ppls': hard_ppls,
+            'best_epoch': best_epoch,
+            'best_val_ppl': best_val_ppl,
             'total_epochs': epoch + 1,
             'stopped_early': patience_counter >= patience
         }

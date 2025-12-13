@@ -49,7 +49,6 @@ from lego import (
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
-    train_upper_layers,
     evaluate_on_hard_examples,
 )
 
@@ -270,12 +269,14 @@ def run_experiment(
         for param in model_extended.layers[i].parameters():
             param.requires_grad = False
 
-    # Configure training (final layer only for loss)
+    # Configure training for Phase 2 (with routing for evaluation)
     phase2_config = TrainingConfig(
-        stages=[StageConfig(layers=(4, 4), loss_weight=1.0)]  # Final layer only for loss
+        stages=[StageConfig(layers=(CONFIG.lego.phase2_layers, CONFIG.lego.phase2_layers), loss_weight=1.0)],
+        routing_threshold=confidence_threshold,
+        exit_layer=CONFIG.lego.phase1_layers
     )
 
-    trainer_phase2 = Trainer(phase2_config, vocab_size=CONFIG.vocab_size)
+    trainer_phase2 = Trainer(phase2_config, vocab_size=CONFIG.vocab_size, device=device)
 
     trainable = sum(p.numel() for p in model_extended.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model_extended.parameters())
@@ -297,81 +298,24 @@ def run_experiment(
     print(f"  Patience: {CONFIG.lego.phase2_patience}")
     print(f"  Max epochs: {CONFIG.phase2_epochs}")
 
-    # Training loop with early stopping
-    best_val_ppl = float('inf')
-    best_model_state = None
-    patience_counter = 0
-
+    # Train upper layers with early stopping (simplified)
     start_time = time.time()
-    for epoch in range(CONFIG.phase2_epochs):
-        # Train on hard examples
-        train_loss = train_upper_layers(
-            model_extended, hard_batches, optimizer_upper,
-            CONFIG.vocab_size, device, CONFIG.lego.phase1_layers
-        )
-
-        # Evaluate with Early Exit
-        eval_config = TrainingConfig(
-            stages=[StageConfig(layers=(CONFIG.lego.phase2_layers, CONFIG.lego.phase2_layers), loss_weight=1.0)],
-            routing_threshold=confidence_threshold,
-            exit_layer=CONFIG.lego.phase1_layers
-        )
-
-        eval_trainer = Trainer(eval_config, vocab_size=CONFIG.vocab_size, device=device)
-        val_stats = eval_trainer.evaluate(model_extended, val_loader)
-
-        val_acc = val_stats['acc']
-        val_ppl = val_stats['ppl']
-        train_ppl = torch.exp(torch.tensor(train_loss)).item()
-
-        # Evaluate on hard examples
-        hard_ppl = evaluate_on_hard_examples(
-            model_extended, hard_examples, CONFIG.vocab_size, device,
-            batch_size=CONFIG.phase2_batch, num_lower_layers=CONFIG.lego.phase1_layers
-        )
-
-        print(f"Epoch {epoch+1}/{CONFIG.phase2_epochs} - "
-              f"Train PPL: {train_ppl:.4f} | "
-              f"Val PPL: {val_ppl:.2f} | "
-              f"Val Acc: {val_acc*100:.2f}% | "
-              f"Hard PPL: {hard_ppl:.2f}")
-
-        # Early stopping
-        if val_ppl < best_val_ppl:
-            best_val_ppl = val_ppl
-            best_model_state = {k: v.cpu().clone() for k, v in model_extended.state_dict().items()}
-            patience_counter = 0
-            print(f"  → New best (val_ppl: {val_ppl:.2f})")
-        else:
-            patience_counter += 1
-            print(f"  → No improvement ({patience_counter}/{CONFIG.lego.phase2_patience})")
-
-        if patience_counter >= CONFIG.lego.phase2_patience:
-            print(f"\nEarly stopping at epoch {epoch+1}")
-            print(f"Best model was at epoch {epoch - patience_counter + 1}")
-            break
-
+    result_phase2 = trainer_phase2.train_upper_layers_with_early_stopping(
+        model=model_extended,
+        hard_batches=hard_batches,
+        val_batches=val_loader,
+        hard_examples=hard_examples,
+        optimizer=optimizer_upper,
+        num_lower_layers=CONFIG.lego.phase1_layers,
+        max_epochs=CONFIG.phase2_epochs,
+        patience=CONFIG.lego.phase2_patience,
+        verbose=True
+    )
     phase2_time = time.time() - start_time
 
-    # Restore best model
-    if best_model_state is not None:
-        model_extended.load_state_dict({k: v.to(device) for k, v in best_model_state.items()})
-        print("\nRestored best model from Phase 2")
-
-    # Evaluate best model on hard examples
-    phase2_hard_ppl = evaluate_on_hard_examples(
-        model_extended, hard_examples, CONFIG.vocab_size, device,
-        batch_size=CONFIG.phase2_batch, num_lower_layers=CONFIG.lego.phase1_layers
-    )
-
-    # Get final val stats
-    final_eval_config = TrainingConfig(
-        stages=[StageConfig(layers=(CONFIG.lego.phase2_layers, CONFIG.lego.phase2_layers), loss_weight=1.0)],
-        routing_threshold=confidence_threshold,
-        exit_layer=CONFIG.lego.phase1_layers
-    )
-    final_eval_trainer = Trainer(final_eval_config, vocab_size=CONFIG.vocab_size, device=device)
-    final_val_stats = final_eval_trainer.evaluate(model_extended, val_loader)
+    # Get Phase 2 metrics from result
+    phase2_hard_ppl = result_phase2['hard_ppls'][result_phase2['best_epoch']]
+    final_val_stats = trainer_phase2.evaluate(model_extended, val_loader)
 
     print("\nPhase 2 Results:")
     print(f"  Best Val PPL: {final_val_stats['ppl']:.2f}")
@@ -387,15 +331,8 @@ def run_experiment(
     print("Final Evaluation (Two-Stage Inference)")
     print(f"{'='*60}\n")
 
-    # Use built-in Early Exit evaluation
-    final_config = TrainingConfig(
-        stages=[StageConfig(layers=(CONFIG.lego.phase2_layers, CONFIG.lego.phase2_layers), loss_weight=1.0)],
-        routing_threshold=confidence_threshold,
-        exit_layer=CONFIG.lego.phase1_layers
-    )
-
-    final_trainer = Trainer(final_config, vocab_size=CONFIG.vocab_size, device=device)
-    stats = final_trainer.evaluate(model_extended, val_loader)
+    # Reuse trainer_phase2 (same config with routing)
+    stats = trainer_phase2.evaluate(model_extended, val_loader)
 
     print("Results:")
     print(f"  Accuracy: {stats['acc']*100:.2f}%")
