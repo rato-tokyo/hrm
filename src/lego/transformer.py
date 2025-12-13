@@ -9,12 +9,9 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import math
-from typing import Tuple, Dict, List, Any, TYPE_CHECKING
+from typing import Tuple, Dict, List, Any, Union, overload, Literal
 
 from .block import LEGOBlock
-
-if TYPE_CHECKING:
-    from .data import TrainingData
 
 
 class LEGOTransformer(nn.Module):
@@ -28,8 +25,7 @@ class LEGOTransformer(nn.Module):
 
     Args:
         vocab_size: Vocabulary size
-        dim: Model dimension
-        num_heads: Number of attention heads
+        dim: Model dimension (embedding dimension)
         blocks: List of LEGOBlock instances
     """
 
@@ -37,13 +33,9 @@ class LEGOTransformer(nn.Module):
         self,
         vocab_size: int,
         dim: int,
-        num_heads: int,
         blocks: List[LEGOBlock],
     ):
         super().__init__()
-        self.vocab_size = vocab_size
-        self.dim = dim
-        self.num_heads = num_heads
 
         self.embedding = nn.Embedding(vocab_size, dim)
         self.blocks = nn.ModuleList(blocks)
@@ -59,79 +51,69 @@ class LEGOTransformer(nn.Module):
     def create(
         cls,
         vocab_size: int,
-        dim: int = 64,
-        num_layers: int = 3,
-        num_heads: int = 4,
-        threshold: float = 1.0
+        dim: int,
+        num_heads: int,
+        layers_per_block: List[int],
+        thresholds: List[float],
     ) -> 'LEGOTransformer':
         """
-        Create a LEGOTransformer with a single block.
+        Create a LEGOTransformer with multiple blocks.
 
         Args:
             vocab_size: Vocabulary size
             dim: Model dimension
-            num_layers: Number of transformer layers
             num_heads: Number of attention heads
-            threshold: Early exit threshold (1.0 = no early exit)
+            layers_per_block: Number of layers in each block
+            thresholds: Early exit threshold for each block (1.0 = no early exit)
 
         Returns:
-            LEGOTransformer with single block
+            LEGOTransformer with specified blocks
+
+        Example:
+            # 3 blocks: 2 layers each, thresholds 0.8, 0.9, 1.0
+            model = LEGOTransformer.create(
+                vocab_size=10000,
+                dim=64,
+                num_heads=4,
+                layers_per_block=[2, 2, 2],
+                thresholds=[0.8, 0.9, 1.0]
+            )
         """
-        block = LEGOBlock(dim, num_heads, num_layers, threshold)
-        return cls(vocab_size, dim, num_heads, [block])
+        if len(layers_per_block) != len(thresholds):
+            raise ValueError(
+                f"layers_per_block and thresholds must have same length: "
+                f"{len(layers_per_block)} != {len(thresholds)}"
+            )
+
+        blocks = [
+            LEGOBlock(dim, num_heads, num_layers, threshold)
+            for num_layers, threshold in zip(layers_per_block, thresholds)
+        ]
+        return cls(vocab_size, dim, blocks)
 
     def _init_weights(self) -> None:
         """Initialize weights for embedding and output head."""
         nn.init.trunc_normal_(self.embedding.weight, std=0.02)
-        nn.init.trunc_normal_(self.output_head.weight, std=1.0 / math.sqrt(self.dim))
+        nn.init.trunc_normal_(self.output_head.weight, std=1.0 / math.sqrt(self.embedding.embedding_dim))
 
     @property
     def num_layers(self) -> int:
         """Total number of layers across all blocks."""
         return sum(block.num_layers for block in self.blocks)
 
+    @overload
+    def forward(
+        self, x: torch.Tensor, *, return_stats: Literal[False] = ...
+    ) -> torch.Tensor: ...
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Standard forward: process through all blocks."""
-        h = self.embedding(x)
-        for block in self.blocks:
-            h = block(h)
-        return self.output_head(h)  # type: ignore[no-any-return]
+    @overload
+    def forward(
+        self, x: torch.Tensor, *, return_stats: Literal[True]
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]: ...
 
-    def get_hidden_states(self, x: torch.Tensor, up_to_block: int) -> torch.Tensor:
-        """
-        Get hidden states after specified block.
-
-        Args:
-            x: Input token ids (batch_size, seq_len)
-            up_to_block: Block index to stop at (inclusive, 0-indexed). Must be explicit.
-
-        Returns:
-            Hidden states after the specified block
-        """
-        h = self.embedding(x)
-        for block in self.blocks[:up_to_block + 1]:
-            h = block(h)
-        return h
-
-    def forward_from_block(self, h: torch.Tensor, start_block_idx: int) -> torch.Tensor:
-        """
-        Forward through blocks starting from start_block_idx.
-
-        Used for training new blocks on hard examples.
-
-        Args:
-            h: Hidden states from previous block (batch_size, seq_len, dim)
-            start_block_idx: Index of first block to process
-
-        Returns:
-            Logits after processing through remaining blocks
-        """
-        for block in self.blocks[start_block_idx:]:
-            h = block(h)
-        return self.output_head(h)  # type: ignore[no-any-return]
-
-    def forward_with_routing(self, x: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, Any]]:
+    def forward(
+        self, x: torch.Tensor, *, return_stats: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, Any]]]:
         """
         Forward pass with TRUE token-level early exit.
 
@@ -141,19 +123,23 @@ class LEGOTransformer(nn.Module):
 
         Args:
             x: Input token ids (batch_size, seq_len)
+            return_stats: If True, return (logits, stats) tuple with exit statistics
 
         Returns:
-            logits: Output logits (batch_size, seq_len, vocab_size)
-            stats: Dictionary with exit_counts, shallow_ratio, compute_cost
+            If return_stats=False: logits (batch_size, seq_len, vocab_size)
+            If return_stats=True: (logits, stats) where stats contains
+                exit_counts, shallow_ratio, compute_cost
         """
         batch_size, seq_len = x.shape
         device = x.device
+        dim = self.embedding.embedding_dim
 
         h = self.embedding(x)
-        h_flat = h.view(-1, self.dim)
+        h_flat = h.view(-1, dim)
         total_tokens = batch_size * seq_len
 
-        final_logits = torch.zeros(total_tokens, self.vocab_size, device=device)
+        vocab_size = self.embedding.num_embeddings
+        final_logits = torch.zeros(total_tokens, vocab_size, device=device)
         exit_blocks = torch.full((total_tokens,), len(self.blocks) - 1, device=device)
         active_indices = torch.arange(total_tokens, device=device)
 
@@ -179,12 +165,15 @@ class LEGOTransformer(nn.Module):
             else:
                 final_logits[active_indices] = logits_active
 
-        final_logits = final_logits.view(batch_size, seq_len, self.vocab_size)
-        exit_counts = [
-            int((exit_blocks == i).sum().item()) for i in range(len(self.blocks))
-        ]
+        final_logits = final_logits.view(batch_size, seq_len, vocab_size)
 
-        return final_logits, self._compute_exit_stats(exit_counts)
+        if return_stats:
+            exit_counts = [
+                int((exit_blocks == i).sum().item()) for i in range(len(self.blocks))
+            ]
+            return final_logits, self._compute_exit_stats(exit_counts)
+
+        return final_logits
 
     def _compute_exit_stats(self, exit_counts: List[int]) -> Dict[str, Any]:
         """Compute statistics from exit counts.
@@ -218,87 +207,3 @@ class LEGOTransformer(nn.Module):
             'shallow_ratio': shallow_ratio,
             'compute_cost': compute_cost,
         }
-
-    def extend(
-        self,
-        num_new_layers: int,
-        threshold: float,
-        freeze_existing: bool = True,
-    ) -> 'LEGOTransformer':
-        """
-        Create an extended model by adding a new block.
-
-        Args:
-            num_new_layers: Number of layers in the new block
-            threshold: Confidence threshold for the current last block
-            freeze_existing: Whether to freeze existing blocks
-
-        Returns:
-            Extended LEGOTransformer with new block added
-        """
-        # Update threshold on current last block
-        self.blocks[-1].threshold = threshold
-
-        # Create new block
-        new_block = LEGOBlock(
-            self.dim, self.num_heads, num_new_layers, threshold=1.0
-        )
-
-        # Create new model with all blocks
-        new_blocks = list(self.blocks) + [new_block]
-        extended = LEGOTransformer(
-            vocab_size=self.vocab_size,
-            dim=self.dim,
-            num_heads=self.num_heads,
-            blocks=new_blocks,
-        )
-
-        # Copy weights
-        extended.embedding.load_state_dict(self.embedding.state_dict())
-        for i, block in enumerate(self.blocks):
-            extended.blocks[i].load_state_dict(block.state_dict())
-        extended.output_head.load_state_dict(self.output_head.state_dict())
-
-        # Freeze existing if requested
-        if freeze_existing:
-            for param in extended.embedding.parameters():
-                param.requires_grad = False
-            for block in extended.blocks[:-1]:
-                block.freeze()
-
-        return extended
-
-    def create_training_data(
-        self,
-        batches: List[Tuple[torch.Tensor, torch.Tensor]],
-        device: str
-    ) -> "TrainingData":
-        """
-        Create TrainingData from raw token batches.
-
-        Converts (input_ids, target_ids) batches into (hidden_states, targets)
-        by passing through the embedding layer.
-
-        Args:
-            batches: List of (input_ids, target_ids) tuples
-            device: Device to run on
-
-        Returns:
-            TrainingData ready for block training
-        """
-        from .data import TrainingData
-
-        all_hidden: List[torch.Tensor] = []
-        all_targets: List[torch.Tensor] = []
-
-        with torch.no_grad():
-            for x, y in batches:
-                x, y = x.to(device), y.to(device)
-                h = self.embedding(x)  # (batch, seq, dim)
-                all_hidden.append(h.view(-1, self.dim))
-                all_targets.append(y.view(-1))
-
-        return TrainingData(
-            torch.cat(all_hidden),
-            torch.cat(all_targets)
-        )

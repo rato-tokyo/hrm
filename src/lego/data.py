@@ -87,7 +87,7 @@ class TrainingData:
 
         Returns:
             List of (hidden_states, targets) tuples
-            - hidden_states: (batch_size, 1, dim) for compatibility with forward_from_block
+            - hidden_states: (batch_size, 1, dim) for LEGOBlock.forward()
             - targets: (batch_size,)
         """
         num_samples = len(self)
@@ -99,7 +99,7 @@ class TrainingData:
         batches = []
         for i in range(0, num_samples, batch_size):
             batch_indices = indices[i:i + batch_size]
-            # Add seq_len=1 dimension for compatibility with forward_from_block
+            # Add seq_len=1 dimension for LEGOBlock.forward()
             h_batch = self._hidden_states[batch_indices].unsqueeze(1)
             t_batch = self._targets[batch_indices]
             batches.append((h_batch, t_batch))
@@ -135,18 +135,6 @@ class TrainingData:
         return train_data, val_data
 
     @classmethod
-    def from_dict(cls, data: Dict[str, torch.Tensor]) -> "TrainingData":
-        """Create from dictionary with 'hidden_states' and 'targets' keys."""
-        return cls(data['hidden_states'], data['targets'])
-
-    def to_dict(self) -> Dict[str, torch.Tensor]:
-        """Convert to dictionary format."""
-        return {
-            'hidden_states': self._hidden_states,
-            'targets': self._targets,
-        }
-
-    @classmethod
     def empty(cls, dim: int, device: Optional[str] = None) -> "TrainingData":
         """Create an empty TrainingData instance."""
         hidden_states = torch.empty(0, dim)
@@ -155,13 +143,6 @@ class TrainingData:
             hidden_states = hidden_states.to(device)
             targets = targets.to(device)
         return cls(hidden_states, targets)
-
-    def concat(self, other: "TrainingData") -> "TrainingData":
-        """Concatenate with another TrainingData instance."""
-        return TrainingData(
-            torch.cat([self._hidden_states, other._hidden_states]),
-            torch.cat([self._targets, other._targets])
-        )
 
 
 def create_wikitext_dataloaders(

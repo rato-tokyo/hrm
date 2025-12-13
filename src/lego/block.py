@@ -85,16 +85,6 @@ class LEGOBlock(nn.Module):
         """Set the shared output head reference."""
         self.output_head = output_head
 
-    def freeze(self) -> None:
-        """Freeze all parameters in this block."""
-        for param in self.parameters():
-            param.requires_grad = False
-
-    def unfreeze(self) -> None:
-        """Unfreeze all parameters in this block."""
-        for param in self.parameters():
-            param.requires_grad = True
-
     def train_block(
         self,
         data: "TrainingData",

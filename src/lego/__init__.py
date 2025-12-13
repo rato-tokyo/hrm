@@ -14,13 +14,6 @@ from .utils import (
     get_device,
     create_synthetic_data,
 )
-from .modules import (
-    RMSNorm,
-    RotaryPositionalEmbedding,
-    MultiHeadAttention,
-    GatedLinearUnit,
-    TransformerBlock,
-)
 
 __version__ = "0.3.0"
 
@@ -39,10 +32,4 @@ __all__ = [
     'set_seed',
     'get_device',
     'create_synthetic_data',
-    # Modules
-    'RMSNorm',
-    'RotaryPositionalEmbedding',
-    'MultiHeadAttention',
-    'GatedLinearUnit',
-    'TransformerBlock',
 ]
