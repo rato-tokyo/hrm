@@ -100,12 +100,13 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"Phase 1 Hard PPL: {phase1_hard_ppl:.2f}")
 
     # Phase 2: Extend Model and Train on Hard Examples
+    num_new_layers = config.phase2_layers - config.phase1_layers
     print(f"\n{'='*60}")
-    print("Phase 2: Add 2 layers, train on hard examples")
+    print(f"Phase 2: Add {num_new_layers} layers, train on hard examples")
     print(f"{'='*60}\n")
 
     model_extended = model.extend(
-        num_new_layers=config.phase2_layers,
+        num_new_layers=num_new_layers,
         threshold=confidence_threshold,
         freeze_existing=True
     ).to(device)
@@ -160,8 +161,8 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
 
     print(f"Prompt length: {prompt_batch.shape[1]} tokens")
     print(f"Generating: {max_new_tokens} new tokens")
-    print(f"Routing threshold: {confidence_threshold:.4f}")
-    print(f"Exit layer: {model_extended.exit_layer} / {model_extended.num_layers}")
+    print(f"Blocks: {len(model_extended.blocks)} (layers: {[b.end_layer for b in model_extended.blocks]})")
+    print(f"Block 1 threshold: {model_extended.blocks[0].threshold:.4f}")
 
     # Generate with TRUE early exit
     # Threshold is already set in blocks via extend()

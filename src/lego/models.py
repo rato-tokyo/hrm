@@ -439,14 +439,3 @@ class LEGOTransformer(nn.Module):
             extended._freeze_layers(self.num_layers)
 
         return extended
-
-    # Backward compatibility properties
-    @property
-    def exit_layer(self) -> int:
-        """First exit point (end of first block). For backward compatibility."""
-        return self.blocks[0].end_layer if self.blocks else self.num_layers
-
-    @property
-    def routing_threshold(self) -> float:
-        """First block's threshold. For backward compatibility."""
-        return self.blocks[0].threshold if self.blocks else 1.0

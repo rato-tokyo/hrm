@@ -26,7 +26,7 @@ Best model was at epoch 3
 
 Restored best model from epoch 3
 
-Phase 1 Results: Acc 16.03% | PPL 986.43 | Time 22.55s
+Phase 1 Results: Acc 16.03% | PPL 986.43 | Time 22.41s
 
 ============================================================
 Computing Confidence Threshold (target: 50%)
@@ -40,44 +40,40 @@ Phase 1 Hard PPL: 2763.69
 Phase 2: Add 2 layers, train on hard examples
 ============================================================
 
-Trainable params: 4,600,448 / 9,200,896 (50.0%)
-Epoch 1/50 - Train PPL: 2934.9144 | Val PPL: 987.12 | Val Acc: 15.72% | Hard PPL: 1797.55
-  → New best (val_ppl: 987.12)
-Epoch 2/50 - Train PPL: 1541.0129 | Val PPL: 883.26 | Val Acc: 15.82% | Hard PPL: 1274.81
-  → New best (val_ppl: 883.26)
-Epoch 3/50 - Train PPL: 1175.0932 | Val PPL: 844.55 | Val Acc: 15.85% | Hard PPL: 1032.28
-  → New best (val_ppl: 844.55)
-Epoch 4/50 - Train PPL: 987.6182 | Val PPL: 832.64 | Val Acc: 15.78% | Hard PPL: 893.20
-  → New best (val_ppl: 832.64)
-Epoch 5/50 - Train PPL: 870.6471 | Val PPL: 829.80 | Val Acc: 15.76% | Hard PPL: 798.39
-  → New best (val_ppl: 829.80)
-Epoch 6/50 - Train PPL: 786.4367 | Val PPL: 829.89 | Val Acc: 15.78% | Hard PPL: 726.42
+Trainable params: 4,731,776 / 9,332,224 (50.7%)
+Epoch 1/50 - Train PPL: 3039.7457 | Val PPL: 1039.04 | Val Acc: 15.59% | Hard PPL: 1732.84
+  → New best (val_ppl: 1039.04)
+Epoch 2/50 - Train PPL: 1474.4059 | Val PPL: 917.85 | Val Acc: 15.69% | Hard PPL: 1205.18
+  → New best (val_ppl: 917.85)
+Epoch 3/50 - Train PPL: 1123.0385 | Val PPL: 885.34 | Val Acc: 15.66% | Hard PPL: 985.09
+  → New best (val_ppl: 885.34)
+Epoch 4/50 - Train PPL: 950.4378 | Val PPL: 876.45 | Val Acc: 15.67% | Hard PPL: 856.11
+  → New best (val_ppl: 876.45)
+Epoch 5/50 - Train PPL: 838.7987 | Val PPL: 875.91 | Val Acc: 15.71% | Hard PPL: 765.03
+  → New best (val_ppl: 875.91)
+Epoch 6/50 - Train PPL: 755.5477 | Val PPL: 880.30 | Val Acc: 15.70% | Hard PPL: 694.33
   → No improvement (1/3)
-Epoch 7/50 - Train PPL: 720.2856 | Val PPL: 829.78 | Val Acc: 15.77% | Hard PPL: 668.08
-  → New best (val_ppl: 829.78)
-Epoch 8/50 - Train PPL: 665.4618 | Val PPL: 830.82 | Val Acc: 15.76% | Hard PPL: 618.80
-  → No improvement (1/3)
-Epoch 9/50 - Train PPL: 618.4207 | Val PPL: 832.58 | Val Acc: 15.76% | Hard PPL: 575.97
+Epoch 7/50 - Train PPL: 688.5745 | Val PPL: 888.40 | Val Acc: 15.70% | Hard PPL: 636.19
   → No improvement (2/3)
-Epoch 10/50 - Train PPL: 577.0879 | Val PPL: 834.16 | Val Acc: 15.79% | Hard PPL: 538.03
+Epoch 8/50 - Train PPL: 632.0650 | Val PPL: 897.16 | Val Acc: 15.73% | Hard PPL: 586.51
   → No improvement (3/3)
 
-Early stopping at epoch 10
-Best model was at epoch 7
+Early stopping at epoch 8
+Best model was at epoch 5
 
-Restored best model from epoch 7
+Restored best model from epoch 5
 
-Phase 2 Results: Hard PPL 668.08 | Time 67.51s
-Hard PPL Improvement: +2095.60 (+75.8%)
+Phase 2 Results: Hard PPL 765.03 | Time 90.31s
+Hard PPL Improvement: +1998.65 (+72.3%)
 
 ============================================================
 Evaluation: Fake Early Exit (both paths computed)
 ============================================================
 
-Accuracy: 15.77%
-PPL: 829.78
-Shallow ratio: 70.4%
-Compute cost (theoretical): 64.82%
+Accuracy: 15.71%
+PPL: 875.91
+Shallow ratio: 70.7%
+Compute cost (theoretical): 52.84%
 
 ============================================================
 TRUE Early Exit Generation Demo
@@ -86,31 +82,30 @@ TRUE Early Exit Generation Demo
 Prompt length: 8 tokens
 Generating: 32 new tokens
 Routing threshold: 0.1499
-Exit layer: 2 / 4
+Exit layer: 2 / 6
 
 Generation Results:
-  Time: 0.1399s
-  Shallow exits: 21
-  Deep exits: 11
-  Shallow ratio: 65.6%
-  ACTUAL compute cost: 67.2%
+  Time: 0.1567s
+  Exit counts: [24, 8]
+  Shallow ratio: 75.0%
+  ACTUAL compute cost: 50.0%
 
 Comparison with Standard Generation:
-  Standard time: 0.1634s
-  Early exit time: 0.1399s
-  Speedup: 1.17x
+  Standard time: 0.1567s
+  Early exit time: 0.1567s
+  (No speedup - overhead)
 
 ============================================================
 Summary
 ============================================================
 Phase 1: Acc 16.03% | PPL 986.43
-Phase 2: Acc 15.77% | PPL 829.78
-Hard PPL: 2763.69 -> 668.08
+Phase 2: Acc 15.71% | PPL 875.91
+Hard PPL: 2763.69 -> 765.03
 
 TRUE Early Exit Stats:
-  Shallow ratio: 65.6%
-  ACTUAL compute cost: 67.2%
-  Compute savings: 32.8%
+  Shallow ratio: 75.0%
+  ACTUAL compute cost: 50.0%
+  Compute savings: 50.0%
 
 ============================================================
 Experiment completed!
