@@ -29,6 +29,35 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
+def compute_routing_cost(
+    shallow_count: int,
+    deep_count: int,
+    exit_layer: int,
+    num_layers: int
+) -> float:
+    """
+    Compute routing cost as fraction of full model computation.
+
+    Cost = weighted average of layers computed per token, normalized by total layers.
+    - Shallow tokens compute exit_layer layers
+    - Deep tokens compute num_layers layers
+
+    Args:
+        shallow_count: Number of tokens using shallow path
+        deep_count: Number of tokens using deep path
+        exit_layer: Number of layers for shallow path
+        num_layers: Total number of layers in model
+
+    Returns:
+        Compute cost as fraction (0.0 to 1.0)
+    """
+    total_count = shallow_count + deep_count
+    if total_count == 0:
+        return 1.0
+    actual_layers = shallow_count * exit_layer + deep_count * num_layers
+    return actual_layers / (total_count * num_layers)
+
+
 def get_device() -> str:
     """Get available compute device (CUDA if available, otherwise CPU)."""
     return 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -193,6 +222,27 @@ def create_hard_example_loader(
     return batches
 
 
+def _forward_upper_on_hard_batch(
+    model: nn.Module,
+    h_batch: torch.Tensor,
+    num_lower_layers: int,
+    device: str
+) -> torch.Tensor:
+    """Forward through upper layers on a hard example batch.
+
+    Args:
+        model: Model with forward_upper_layers method
+        h_batch: Hidden states (batch_size, 1, dim)
+        num_lower_layers: Number of lower layers to skip
+        device: Device to run on
+
+    Returns:
+        Logits (batch_size, vocab_size)
+    """
+    h_batch = h_batch.to(device)
+    return model.forward_upper_layers(h_batch, num_lower_layers).squeeze(1)
+
+
 def train_upper_layers(
     model: nn.Module,
     hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
@@ -220,11 +270,10 @@ def train_upper_layers(
     total_loss = 0.0
 
     for h, y in hard_batches:
-        h, y = h.to(device), y.to(device)
+        y = y.to(device)
         optimizer.zero_grad()
 
-        # Process through upper layers using model method
-        logits = model.forward_upper_layers(h, num_lower_layers).squeeze(1)
+        logits = _forward_upper_on_hard_batch(model, h, num_lower_layers, device)
         loss = F.cross_entropy(logits, y)
 
         loss.backward()  # type: ignore[no-untyped-call]
@@ -269,12 +318,10 @@ def evaluate_on_hard_examples(
 
     with torch.no_grad():
         for i in range(0, num_samples, batch_size):
-            # Get batch
-            h_batch = hidden_states[i:i + batch_size].unsqueeze(1).to(device)
+            h_batch = hidden_states[i:i + batch_size].unsqueeze(1)
             y_batch = targets[i:i + batch_size].to(device)
 
-            # Process through upper layers using model method
-            logits = model.forward_upper_layers(h_batch, num_lower_layers).squeeze(1)
+            logits = _forward_upper_on_hard_batch(model, h_batch, num_lower_layers, device)
             loss = F.cross_entropy(logits, y_batch, reduction='sum')
 
             total_loss += loss.item()

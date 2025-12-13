@@ -26,7 +26,7 @@ Best model was at epoch 3
 
 Restored best model from epoch 3
 
-Phase 1 Results: Acc 16.03% | PPL 986.43 | Time 22.46s
+Phase 1 Results: Acc 16.03% | PPL 986.43 | Time 22.55s
 
 ============================================================
 Computing Confidence Threshold (target: 50%)
@@ -67,7 +67,7 @@ Best model was at epoch 7
 
 Restored best model from epoch 7
 
-Phase 2 Results: Hard PPL 668.08 | Time 67.44s
+Phase 2 Results: Hard PPL 668.08 | Time 67.51s
 Hard PPL Improvement: +2095.60 (+75.8%)
 
 ============================================================
@@ -89,16 +89,16 @@ Routing threshold: 0.1499
 Exit layer: 2 / 4
 
 Generation Results:
-  Time: 0.1443s
+  Time: 0.1399s
   Shallow exits: 21
   Deep exits: 11
   Shallow ratio: 65.6%
   ACTUAL compute cost: 67.2%
 
 Comparison with Standard Generation:
-  Standard time: 0.1555s
-  Early exit time: 0.1443s
-  Speedup: 1.08x
+  Standard time: 0.1634s
+  Early exit time: 0.1399s
+  Speedup: 1.17x
 
 ============================================================
 Summary

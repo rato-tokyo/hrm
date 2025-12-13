@@ -10,6 +10,8 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Callable, Dict, List, Optional, Tuple, Any
 
+from .utils import compute_routing_cost
+
 
 class Trainer:
     """
@@ -60,16 +62,16 @@ class Trainer:
         output = torch.where(mask, shallow_logits, deep_logits)
 
         # Compute statistics
-        shallow_count = mask.sum().item()
+        shallow_count = int(mask.sum().item())
         total_count = batch_size * seq_len
         deep_count = total_count - shallow_count
 
-        compute_cost = (shallow_count * exit_layer + deep_count * model.num_layers) / (total_count * model.num_layers)
+        cost = compute_routing_cost(shallow_count, deep_count, exit_layer, model.num_layers)
 
         stats = {
             'mean_confidence': confidence.mean().item(),
             'shallow_ratio': shallow_count / total_count,
-            'compute_cost': compute_cost,
+            'compute_cost': cost,
         }
 
         return output, stats

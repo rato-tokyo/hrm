@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import math
 
 from .modules import TransformerBlock
+from .utils import compute_routing_cost
 
 
 class LEGOTransformer(nn.Module):
@@ -153,6 +154,42 @@ class LEGOTransformer(nn.Module):
 
         return h, new_kv_cache
 
+    def _sample_next_token(
+        self,
+        logits: torch.Tensor,
+        temperature: float,
+        top_k: Optional[int]
+    ) -> torch.Tensor:
+        """Sample next token from logits with temperature and optional top-k filtering."""
+        next_logits = logits[:, -1, :] / temperature
+
+        if top_k is not None:
+            v, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
+            next_logits[next_logits < v[:, [-1]]] = float('-inf')
+
+        probs = F.softmax(next_logits, dim=-1)
+        return torch.multinomial(probs, num_samples=1)
+
+    def _process_prompt(
+        self,
+        input_ids: torch.Tensor
+    ) -> Tuple[
+        torch.Tensor,
+        List[Tuple[torch.Tensor, torch.Tensor]],
+        List[Tuple[torch.Tensor, torch.Tensor]]
+    ]:
+        """Process initial prompt through all layers, returning logits and KV caches."""
+        h = self.embedding(input_ids)
+
+        # Lower layers
+        h, lower_kv_cache = self._forward_with_cache_partial(h, None, 0, self.exit_layer)
+
+        # Upper layers
+        h, upper_kv_cache = self._forward_with_cache_partial(h, None, self.exit_layer, self.num_layers)
+
+        logits = self.output_head(h)
+        return logits, lower_kv_cache, upper_kv_cache
+
     def generate(
         self,
         input_ids: torch.Tensor,
@@ -191,52 +228,24 @@ class LEGOTransformer(nn.Module):
         batch_size = input_ids.shape[0]
         generated = input_ids.clone()
 
-        # Separate KV caches for lower and upper layers
-        lower_kv_cache: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
-        upper_kv_cache: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
-
         # Statistics
         shallow_count = 0
         deep_count = 0
-        total_layers_computed = 0
 
         with torch.no_grad():
-            # Process initial prompt through ALL layers (no early exit for prompt)
-            h = self.embedding(input_ids)
-
-            # Lower layers
-            h, lower_kv_cache = self._forward_with_cache_partial(
-                h, None, 0, self.exit_layer
-            )
-
-            # Upper layers
-            h, upper_kv_cache = self._forward_with_cache_partial(
-                h, None, self.exit_layer, self.num_layers
-            )
-
-            logits = self.output_head(h)
-            total_layers_computed += input_ids.shape[1] * self.num_layers
+            # Process initial prompt through ALL layers
+            logits, lower_kv_cache, upper_kv_cache = self._process_prompt(input_ids)
 
             # Generate new tokens one by one
             for _ in range(max_new_tokens):
-                # Get logits for last position and sample
-                next_logits = logits[:, -1, :] / temperature
-
-                if top_k is not None:
-                    v, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
-                    next_logits[next_logits < v[:, [-1]]] = float('-inf')
-
-                probs = F.softmax(next_logits, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1)
+                next_token = self._sample_next_token(logits, temperature, top_k)
                 generated = torch.cat([generated, next_token], dim=1)
 
                 # Process new token through lower layers
                 h = self.embedding(next_token)
-                h, new_lower_cache = self._forward_with_cache_partial(
+                h, lower_kv_cache = self._forward_with_cache_partial(
                     h, lower_kv_cache, 0, self.exit_layer
                 )
-                lower_kv_cache = new_lower_cache
-                total_layers_computed += self.exit_layer
 
                 # Compute confidence at exit point
                 shallow_logits, confidence = self.compute_confidence(h)
@@ -248,33 +257,25 @@ class LEGOTransformer(nn.Module):
                     # Use shallow output, SKIP upper layers
                     logits = shallow_logits
                     shallow_count += batch_size
-                    # Upper cache is NOT updated (shallow tokens don't go through upper layers)
                 else:
                     # Process through upper layers
-                    h, new_upper_cache = self._forward_with_cache_partial(
+                    h, upper_kv_cache = self._forward_with_cache_partial(
                         h, upper_kv_cache, self.exit_layer, self.num_layers
                     )
-                    upper_kv_cache = new_upper_cache
                     logits = self.output_head(h)
                     deep_count += batch_size
-                    total_layers_computed += (self.num_layers - self.exit_layer)
 
-        # Compute actual compute cost
+        # Compute statistics
         total_tokens = shallow_count + deep_count
-        if total_tokens > 0:
-            # Cost relative to always using all layers
-            actual_layers = (shallow_count * self.exit_layer +
-                            deep_count * self.num_layers)
-            actual_compute_cost = actual_layers / (total_tokens * self.num_layers)
-        else:
-            actual_compute_cost = 1.0
+        actual_compute_cost = compute_routing_cost(
+            shallow_count, deep_count, self.exit_layer, self.num_layers
+        )
 
         stats = {
             'shallow_count': shallow_count,
             'deep_count': deep_count,
             'shallow_ratio': shallow_count / max(total_tokens, 1),
             'actual_compute_cost': actual_compute_cost,
-            'total_layers_computed': total_layers_computed,
         }
 
         return generated, stats
@@ -297,6 +298,14 @@ class LEGOTransformer(nn.Module):
         for i in range(start_layer, self.num_layers):
             h = self.layers[i](h)
         return self.output_head(h)  # type: ignore[no-any-return]
+
+    def _freeze_layers(self, num_layers_to_freeze: int) -> None:
+        """Freeze embedding and specified number of lower layers."""
+        for param in self.embedding.parameters():
+            param.requires_grad = False
+        for i in range(num_layers_to_freeze):
+            for param in self.layers[i].parameters():
+                param.requires_grad = False
 
     def extend(
         self,
@@ -338,10 +347,6 @@ class LEGOTransformer(nn.Module):
 
         # Freeze lower layers if requested
         if freeze_lower:
-            for param in extended.embedding.parameters():
-                param.requires_grad = False
-            for i in range(self.num_layers):
-                for param in extended.layers[i].parameters():
-                    param.requires_grad = False
+            extended._freeze_layers(self.num_layers)
 
         return extended
