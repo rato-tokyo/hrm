@@ -16,7 +16,7 @@ from .utils import (
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
-    train_upper_layers,
+    train_new_block,
     evaluate_on_hard_examples,
 )
 from .modules import (
@@ -47,7 +47,7 @@ __all__ = [
     'compute_confidence_threshold',
     'collect_hard_examples',
     'create_hard_example_loader',
-    'train_upper_layers',
+    'train_new_block',
     'evaluate_on_hard_examples',
     # Modules
     'RMSNorm',

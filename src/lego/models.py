@@ -291,21 +291,17 @@ class LEGOTransformer(nn.Module):
 
         actual_compute_cost = total_layers_computed / (total_tokens * self.num_layers) if total_tokens > 0 else 1.0
 
-        stats: Dict[str, Any] = {
+        # Compute shallow ratio for multi-block models
+        shallow_ratio = exit_counts[0] / max(total_tokens, 1) if len(self.blocks) >= 2 else 0.0
+
+        return {
             'exit_counts': exit_counts,
             'total_tokens': total_tokens,
             'actual_compute_cost': actual_compute_cost,
+            'shallow_ratio': shallow_ratio,
         }
 
-        # For backward compatibility with 2-block case
-        if len(self.blocks) == 2:
-            stats['shallow_count'] = exit_counts[0]
-            stats['deep_count'] = exit_counts[1]
-            stats['shallow_ratio'] = exit_counts[0] / max(total_tokens, 1)
-
-        return stats
-
-    def forward_upper_layers(
+    def forward_from_layer(
         self,
         h: torch.Tensor,
         start_layer: int
@@ -325,18 +321,16 @@ class LEGOTransformer(nn.Module):
 
     def forward_with_routing(
         self,
-        x: torch.Tensor,
-        routing_threshold: Optional[float] = None
+        x: torch.Tensor
     ) -> Tuple[torch.Tensor, Dict[str, float]]:
         """
         Forward pass with routing statistics (for evaluation).
 
-        Uses block thresholds by default, or override with routing_threshold.
+        Uses first block's threshold for routing decisions.
         For evaluation metrics only - use generate() for actual computation savings.
 
         Args:
             x: Input token ids (batch_size, seq_len)
-            routing_threshold: Override threshold (uses first block's threshold if None)
 
         Returns:
             output: Routed logits (batch_size, seq_len, vocab_size)
@@ -348,7 +342,7 @@ class LEGOTransformer(nn.Module):
             return logits, {'mean_confidence': 1.0, 'shallow_ratio': 0.0, 'compute_cost': 1.0}
 
         batch_size, seq_len = x.shape
-        threshold = routing_threshold if routing_threshold is not None else self.blocks[0].threshold
+        threshold = self.blocks[0].threshold
 
         # Process first block
         h = self.embedding(x)

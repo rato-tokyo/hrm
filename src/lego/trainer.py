@@ -28,9 +28,15 @@ class Trainer:
         self,
         model: nn.Module,
         val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-        routing_threshold: float = 0.0
+        use_routing: bool = False
     ) -> Dict[str, float]:
-        """Evaluate model with optional early exit routing."""
+        """Evaluate model with optional early exit routing.
+
+        Args:
+            model: Model to evaluate
+            val_batches: Validation data batches
+            use_routing: If True, use model's block thresholds for routing
+        """
         model.eval()
 
         total_loss = 0.0
@@ -39,14 +45,12 @@ class Trainer:
         total_shallow = 0.0
         total_compute = 0.0
 
-        use_routing = routing_threshold > 0
-
         for x, y in val_batches:
             x, y = x.to(self.device), y.to(self.device)
 
             if use_routing:
-                # Use model's forward_with_routing method
-                logits, stats = model.forward_with_routing(x, routing_threshold)
+                # Use model's forward_with_routing method (uses block thresholds)
+                logits, stats = model.forward_with_routing(x)
                 total_shallow += stats['shallow_ratio'] * x.numel()
                 total_compute += stats['compute_cost']
             else:
@@ -126,7 +130,7 @@ class Trainer:
         max_epochs: int,
         patience: int,
         verbose: bool,
-        routing_threshold: float = 0.0,
+        use_routing: bool = False,
         extra_eval_fn: Optional[Callable[[], float]] = None
     ) -> Dict[str, Any]:
         """Core early stopping loop shared by training methods."""
@@ -145,7 +149,7 @@ class Trainer:
             train_ppl = float(np.exp(train_fn()))
             train_ppls.append(train_ppl)
 
-            val_stats = self.evaluate(model, val_batches, routing_threshold)
+            val_stats = self.evaluate(model, val_batches, use_routing)
             val_ppl, val_acc = val_stats['ppl'], val_stats['acc']
             val_ppls.append(val_ppl)
             val_accs.append(val_acc)
@@ -216,35 +220,48 @@ class Trainer:
             model, val_batches, train_fn, max_epochs, patience, verbose
         )
 
-    def train_upper_layers_with_early_stopping(
+    def train_new_block_with_early_stopping(
         self,
         model: nn.Module,
         hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
         val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
         hard_examples: Dict[str, torch.Tensor],
         optimizer: torch.optim.Optimizer,
-        num_lower_layers: int,
-        routing_threshold: float = 0.0,
+        start_layer: int,
+        use_routing: bool = False,
         max_epochs: int = 50,
         patience: int = 3,
         verbose: bool = True
     ) -> Dict[str, Any]:
-        """Train upper layers on hard examples with early stopping."""
-        from .utils import train_upper_layers, evaluate_on_hard_examples
+        """Train new block on hard examples with early stopping.
+
+        Args:
+            model: Extended model with new block
+            hard_batches: Batches of hard examples
+            val_batches: Validation data batches
+            hard_examples: Dictionary with hidden_states and targets
+            optimizer: Optimizer for trainable parameters
+            start_layer: Index of first layer in new block (Block 1 end_layer)
+            use_routing: If True, use routing for validation evaluation
+            max_epochs: Maximum training epochs
+            patience: Early stopping patience
+            verbose: Print progress
+        """
+        from .utils import train_new_block, evaluate_on_hard_examples
 
         def train_fn() -> float:
-            return train_upper_layers(
+            return train_new_block(
                 model, hard_batches, optimizer,
-                self.device, num_lower_layers
+                self.device, start_layer
             )
 
         def extra_eval_fn() -> float:
             return evaluate_on_hard_examples(
                 model, hard_examples, self.device,
-                batch_size=64, num_lower_layers=num_lower_layers
+                batch_size=64, start_layer=start_layer
             )
 
         return self._early_stopping_loop(
             model, val_batches, train_fn, max_epochs, patience, verbose,
-            routing_threshold, extra_eval_fn
+            use_routing, extra_eval_fn
         )

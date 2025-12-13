@@ -25,7 +25,7 @@ from lego import (
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
-    train_upper_layers,
+    train_new_block,
     evaluate_on_hard_examples,
 )
 
@@ -57,9 +57,10 @@ def test_lego_integration():
     print(f"  hard examples: {len(hard_examples['targets'])}")
 
     # Evaluate Phase 1 on hard examples
+    # start_layer=2 means process from layer 2 onwards (Block 1 end)
     phase1_hard_ppl = evaluate_on_hard_examples(
         model_phase1, hard_examples, device='cpu',
-        batch_size=64, num_lower_layers=2
+        batch_size=64, start_layer=2
     )
     expected_phase1_hard_ppl = 160.6869812012
     assert_close(phase1_hard_ppl, expected_phase1_hard_ppl, "phase1_hard_ppl")
@@ -77,7 +78,7 @@ def test_lego_integration():
     assert model_extended.blocks[0].end_layer == 2, "Block 1 should end at layer 2"
     assert model_extended.blocks[1].end_layer == 4, "Block 2 should end at layer 4"
 
-    # Train upper layers
+    # Train new block
     set_seed(42)
     hard_batches = create_hard_example_loader(hard_examples, batch_size=64)
     optimizer = torch.optim.AdamW(
@@ -86,9 +87,10 @@ def test_lego_integration():
     )
 
     set_seed(42)
-    train_loss = train_upper_layers(
+    # start_layer=2 is where Block 2 starts (Block 1 end_layer)
+    train_loss = train_new_block(
         model_extended, hard_batches, optimizer,
-        device='cpu', num_lower_layers=2
+        device='cpu', start_layer=2
     )
     expected_train_loss = 5.0222663879
     assert_close(train_loss, expected_train_loss, "train_loss")
@@ -96,14 +98,14 @@ def test_lego_integration():
     # Evaluate Phase 2 on hard examples
     phase2_hard_ppl = evaluate_on_hard_examples(
         model_extended, hard_examples, device='cpu',
-        batch_size=64, num_lower_layers=2
+        batch_size=64, start_layer=2
     )
     expected_phase2_hard_ppl = 146.9902038574
     assert_close(phase2_hard_ppl, expected_phase2_hard_ppl, "phase2_hard_ppl")
 
-    # Final evaluation with routing
+    # Final evaluation with routing (uses block thresholds)
     trainer = Trainer(vocab_size=100)
-    stats = trainer.evaluate(model_extended, val_batches, routing_threshold=threshold)
+    stats = trainer.evaluate(model_extended, val_batches, use_routing=True)
 
     expected_final_ppl = 149.0614695912
     expected_shallow_ratio = 0.5000000000
@@ -216,13 +218,11 @@ def test_generate_early_exit():
 
     print(f"  Generated shape: {generated.shape} OK")
     print(f"  Exit counts: {stats['exit_counts']}")
-    print(f"  Shallow count: {stats['shallow_count']}")
-    print(f"  Deep count: {stats['deep_count']}")
     print(f"  Shallow ratio: {stats['shallow_ratio']:.2%}")
     print(f"  Actual compute cost: {stats['actual_compute_cost']:.2%}")
 
     # Verify compute cost is less than 100% if any shallow exits occurred
-    if stats['shallow_count'] > 0:
+    if stats['exit_counts'][0] > 0:
         assert stats['actual_compute_cost'] < 1.0, "Compute cost should be < 100% with early exits"
         print("  Compute cost reduction verified: OK")
 

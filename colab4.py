@@ -2,15 +2,10 @@
 LEGO Experiment - TRUE Early Exit Generation
 
 Workflow:
-1. Phase 1: Train 2-layer model on all data
+1. Phase 1: Train Block 1 (2-layer model) on all data
 2. Collect hard examples (low confidence tokens)
-3. Phase 2: Extend to 4 layers, train upper layers on hard examples only
-4. NEW: TRUE Early Exit generation - actually skip upper layers for easy tokens
-
-Comparison with colab3.py:
-- Same training workflow (Phase 1 & 2)
-- colab3.py: KV cache only (all layers computed)
-- colab4.py: TRUE early exit (upper layers skipped for high-confidence tokens)
+3. Phase 2: Extend with Block 2 (2 layers), train on hard examples only
+4. TRUE Early Exit generation - actually skip Block 2 for easy tokens
 """
 
 import sys
@@ -40,8 +35,8 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print("LEGOTransformer - TRUE Early Exit")
     print(f"{'='*60}\n")
 
-    # Phase 1: Train Shallow Model
-    print(f"Phase 1: Train {config.phase1_layers}-layer model")
+    # Phase 1: Train Block 1
+    print(f"Phase 1: Train Block 1 ({config.phase1_layers}-layer model)")
     print(f"{'='*60}")
 
     set_seed(42)
@@ -93,16 +88,18 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"Collected {num_hard:,} hard examples ({num_hard / total_samples * 100:.1f}%)")
 
     # Evaluate Phase 1 on Hard Examples
+    # start_layer = Block 1's end_layer (where Block 2 starts)
+    start_layer = config.phase1_layers
     phase1_hard_ppl = evaluate_on_hard_examples(
         model, hard_examples, device,
-        batch_size=config.phase2_batch, num_lower_layers=config.phase1_layers
+        batch_size=config.phase2_batch, start_layer=start_layer
     )
     print(f"Phase 1 Hard PPL: {phase1_hard_ppl:.2f}")
 
-    # Phase 2: Extend Model and Train on Hard Examples
+    # Phase 2: Extend Model with Block 2
     num_new_layers = config.phase2_layers - config.phase1_layers
     print(f"\n{'='*60}")
-    print(f"Phase 2: Add {num_new_layers} layers, train on hard examples")
+    print(f"Phase 2: Add Block 2 ({num_new_layers} layers), train on hard examples")
     print(f"{'='*60}\n")
 
     model_extended = model.extend(
@@ -116,17 +113,17 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.1f}%)")
 
     hard_batches = create_hard_example_loader(hard_examples, config.phase2_batch)
-    optimizer_upper = torch.optim.AdamW(model_extended.parameters(), lr=config.phase2_lr)
+    optimizer_block2 = torch.optim.AdamW(model_extended.parameters(), lr=config.phase2_lr)
 
     start_time = time.time()
-    result_phase2 = trainer.train_upper_layers_with_early_stopping(
+    result_phase2 = trainer.train_new_block_with_early_stopping(
         model=model_extended,
         hard_batches=hard_batches,
         val_batches=val_loader,
         hard_examples=hard_examples,
-        optimizer=optimizer_upper,
-        num_lower_layers=config.phase1_layers,
-        routing_threshold=confidence_threshold,
+        optimizer=optimizer_block2,
+        start_layer=start_layer,
+        use_routing=True,
         max_epochs=config.phase2_epochs,
         patience=config.phase2_patience,
         verbose=True
@@ -138,17 +135,17 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"Hard PPL Improvement: {phase1_hard_ppl - phase2_hard_ppl:+.2f} "
           f"({(phase1_hard_ppl - phase2_hard_ppl) / phase1_hard_ppl * 100:+.1f}%)")
 
-    # Final Evaluation: Two-Stage Inference (fake early exit)
+    # Final Evaluation with routing (uses block thresholds)
     print(f"\n{'='*60}")
-    print("Evaluation: Fake Early Exit (both paths computed)")
+    print("Evaluation: Routing (both paths computed for comparison)")
     print(f"{'='*60}\n")
 
-    stats_fake = trainer.evaluate(model_extended, val_loader, routing_threshold=confidence_threshold)
+    stats_routing = trainer.evaluate(model_extended, val_loader, use_routing=True)
 
-    print(f"Accuracy: {stats_fake['acc']*100:.2f}%")
-    print(f"PPL: {stats_fake['ppl']:.2f}")
-    print(f"Shallow ratio: {stats_fake['shallow_ratio']*100:.1f}%")
-    print(f"Compute cost (theoretical): {stats_fake['compute_cost']:.2%}")
+    print(f"Accuracy: {stats_routing['acc']*100:.2f}%")
+    print(f"PPL: {stats_routing['ppl']:.2f}")
+    print(f"Shallow ratio: {stats_routing['shallow_ratio']*100:.1f}%")
+    print(f"Compute cost (theoretical): {stats_routing['compute_cost']:.2%}")
 
     # TRUE Early Exit Generation Demo
     print(f"\n{'='*60}")
@@ -165,7 +162,6 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"Block 1 threshold: {model_extended.blocks[0].threshold:.4f}")
 
     # Generate with TRUE early exit
-    # Threshold is already set in blocks via extend()
     set_seed(123)
     start_time = time.time()
     generated, early_exit_stats = model_extended.generate(
@@ -181,29 +177,12 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"  Shallow ratio: {early_exit_stats['shallow_ratio']:.1%}")
     print(f"  ACTUAL compute cost: {early_exit_stats['actual_compute_cost']:.1%}")
 
-    # Compare with standard generation (no early exit)
-    # Create model without early exit threshold for comparison
-    set_seed(123)
-    start_time = time.time()
-    # Use same model but all tokens will need high confidence to exit early
-    # For fair comparison, we just report the actual early exit stats
-    generated_standard = generated  # Same generation, just measure time difference
-    gen_time_standard = gen_time  # Placeholder - true comparison needs threshold=1.0 model
-
-    print(f"\nComparison with Standard Generation:")
-    print(f"  Standard time: {gen_time_standard:.4f}s")
-    print(f"  Early exit time: {gen_time:.4f}s")
-    if gen_time < gen_time_standard:
-        print(f"  Speedup: {gen_time_standard / gen_time:.2f}x")
-    else:
-        print(f"  (No speedup - overhead)")
-
     # Summary
     print(f"\n{'='*60}")
     print("Summary")
     print(f"{'='*60}")
     print(f"Phase 1: Acc {phase1_acc:.2f}% | PPL {phase1_ppl:.2f}")
-    print(f"Phase 2: Acc {stats_fake['acc']*100:.2f}% | PPL {stats_fake['ppl']:.2f}")
+    print(f"Phase 2: Acc {stats_routing['acc']*100:.2f}% | PPL {stats_routing['ppl']:.2f}")
     print(f"Hard PPL: {phase1_hard_ppl:.2f} -> {phase2_hard_ppl:.2f}")
     print(f"\nTRUE Early Exit Stats:")
     print(f"  Shallow ratio: {early_exit_stats['shallow_ratio']:.1%}")
@@ -215,10 +194,10 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
         'phase1_ppl': phase1_ppl,
         'phase1_hard_ppl': phase1_hard_ppl,
         'phase2_hard_ppl': phase2_hard_ppl,
-        'two_stage_acc': stats_fake['acc'] * 100,
-        'two_stage_ppl': stats_fake['ppl'],
-        'fake_shallow_ratio': stats_fake['shallow_ratio'],
-        'fake_compute_cost': stats_fake['compute_cost'],
+        'two_stage_acc': stats_routing['acc'] * 100,
+        'two_stage_ppl': stats_routing['ppl'],
+        'routing_shallow_ratio': stats_routing['shallow_ratio'],
+        'routing_compute_cost': stats_routing['compute_cost'],
         'true_shallow_ratio': early_exit_stats['shallow_ratio'],
         'true_compute_cost': early_exit_stats['actual_compute_cost'],
     }

@@ -54,9 +54,12 @@ hard_tokens = collect_hard_examples(model, val_data, threshold, device)
 model_extended = model.extend(num_new_layers=2, threshold=threshold)
 # blocks = [LEGOBlock(0, 2, threshold), LEGOBlock(2, 4, 1.0)]
 
-result = trainer.train_upper_layers_with_early_stopping(
+# start_layer = Block 1の終了層（Block 2の開始層）
+start_layer = model.blocks[0].end_layer  # = 2
+
+result = trainer.train_new_block_with_early_stopping(
     model_extended, hard_batches, val_data, hard_tokens, optimizer,
-    num_lower_layers=2
+    start_layer=start_layer
 )
 ```
 
@@ -72,7 +75,7 @@ model_3blocks = model_extended.extend(num_new_layers=2, threshold=new_threshold)
 
 ```python
 generated, stats = model.generate(prompt, max_new_tokens=32)
-# stats: {exit_counts: [block0_exits, block1_exits, ...], actual_compute_cost, ...}
+# stats: {exit_counts: [block0_exits, block1_exits, ...], actual_compute_cost, shallow_ratio, ...}
 ```
 
 ---
@@ -91,8 +94,8 @@ LEGOBlock(start_layer, end_layer, threshold=1.0)
 |---------|------|
 | `forward(x)` | 標準推論（全Block通過） |
 | `generate(...)` | 生成（TRUE Early Exit対応） |
-| `forward_with_routing(x, threshold)` | ルーティング付き推論（評価用） |
-| `forward_upper_layers(h, start)` | 指定層以降を処理 |
+| `forward_with_routing(x)` | ルーティング付き推論（評価用、blockの閾値を使用） |
+| `forward_from_layer(h, start_layer)` | 指定層以降を処理 |
 | `extend(num_new_layers, threshold)` | Block追加 |
 | `compute_confidence(h)` | 信頼度計算 |
 
@@ -101,8 +104,8 @@ LEGOBlock(start_layer, end_layer, threshold=1.0)
 | メソッド | 用途 |
 |---------|------|
 | `train_with_early_stopping(...)` | Block訓練 |
-| `train_upper_layers_with_early_stopping(...)` | 追加Block訓練 |
-| `evaluate(...)` | 評価 |
+| `train_new_block_with_early_stopping(..., start_layer)` | 新Blockを訓練 |
+| `evaluate(model, val_batches, use_routing=False)` | 評価 |
 
 ### ユーティリティ
 
@@ -111,6 +114,8 @@ LEGOBlock(start_layer, end_layer, threshold=1.0)
 | `compute_confidence_threshold()` | 閾値自動計算 |
 | `collect_hard_examples()` | Hard Token収集 |
 | `create_hard_example_loader()` | バッチ化 |
+| `train_new_block(model, batches, optimizer, device, start_layer)` | 新Block訓練（1エポック） |
+| `evaluate_on_hard_examples(model, hard_examples, device, start_layer)` | Hard例評価 |
 
 ---
 
@@ -125,6 +130,7 @@ LEGOBlock(start_layer, end_layer, threshold=1.0)
 1. **TrainerはModelのAPIのみ使用** - 内部構造への直接アクセス禁止
 2. **LEGOBlock単位で考える** - 各Blockは独立した層の集合
 3. **シンプルさ優先** - 複雑な抽象化より明確なコード
+4. **start_layer** - 新Blockの開始層（前Blockのend_layer）
 
 ### Git操作
 
@@ -152,6 +158,6 @@ cos, sin = self.rope(x, seq_len, position_offset=past_len)
 ### 核心機能（削除禁止）
 
 1. `collect_hard_examples()` - トークン単位でhidden states収集
-2. `forward_upper_layers()` - hidden statesから直接Block訓練
+2. `forward_from_layer()` - hidden statesから直接Block訓練
 3. `compute_confidence()` - 信頼度計算
 4. `LEGOBlock` - Block定義

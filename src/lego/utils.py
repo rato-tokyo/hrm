@@ -32,21 +32,21 @@ def set_seed(seed: int) -> None:
 def compute_routing_cost(
     shallow_count: int,
     deep_count: int,
-    exit_layer: int,
-    num_layers: int
+    block1_layers: int,
+    total_layers: int
 ) -> float:
     """
     Compute routing cost as fraction of full model computation.
 
     Cost = weighted average of layers computed per token, normalized by total layers.
-    - Shallow tokens compute exit_layer layers
-    - Deep tokens compute num_layers layers
+    - Shallow tokens (exit at Block 1) compute block1_layers layers
+    - Deep tokens (full model) compute total_layers layers
 
     Args:
-        shallow_count: Number of tokens using shallow path
-        deep_count: Number of tokens using deep path
-        exit_layer: Number of layers for shallow path
-        num_layers: Total number of layers in model
+        shallow_count: Number of tokens exiting at Block 1
+        deep_count: Number of tokens using full model
+        block1_layers: Number of layers in Block 1
+        total_layers: Total number of layers in model
 
     Returns:
         Compute cost as fraction (0.0 to 1.0)
@@ -54,8 +54,8 @@ def compute_routing_cost(
     total_count = shallow_count + deep_count
     if total_count == 0:
         return 1.0
-    actual_layers = shallow_count * exit_layer + deep_count * num_layers
-    return actual_layers / (total_count * num_layers)
+    actual_layers = shallow_count * block1_layers + deep_count * total_layers
+    return actual_layers / (total_count * total_layers)
 
 
 def get_device() -> str:
@@ -215,7 +215,7 @@ def create_hard_example_loader(
     for i in range(0, num_samples, batch_size):
         batch_indices = indices[i:i + batch_size]
         # Hard examples are individual tokens (batch, dim).
-        # Add seq_len=1 dimension for compatibility with forward_upper_layers.
+        # Add seq_len=1 dimension for compatibility with forward_from_layer.
         h_batch = hidden_states[batch_indices].unsqueeze(1)
         t_batch = targets[batch_indices]
         batches.append((h_batch, t_batch))
@@ -223,51 +223,50 @@ def create_hard_example_loader(
     return batches
 
 
-def _forward_upper_on_hard_batch(
+def _forward_on_hard_batch(
     model: nn.Module,
     h_batch: torch.Tensor,
-    num_lower_layers: int,
+    start_layer: int,
     device: str
 ) -> torch.Tensor:
-    """Forward through upper layers on a hard example batch.
+    """Forward through layers starting from start_layer on a hard example batch.
 
     Hard examples are individual tokens extracted from sequences, stored as (batch, dim).
-    Model's forward_upper_layers expects (batch, seq_len, dim), so we add seq_len=1.
+    Model's forward_from_layer expects (batch, seq_len, dim), so we add seq_len=1.
     Output logits are (batch, 1, vocab), squeezed to (batch, vocab) for loss computation.
 
     Args:
-        model: Model with forward_upper_layers method
+        model: Model with forward_from_layer method
         h_batch: Hidden states (batch_size, 1, dim) - seq_len dimension already added
-        num_lower_layers: Number of lower layers to skip
+        start_layer: Index of first layer to process
         device: Device to run on
 
     Returns:
         Logits (batch_size, vocab_size)
     """
     h_batch = h_batch.to(device)
-    # forward_upper_layers returns (batch, seq_len=1, vocab), squeeze to (batch, vocab)
-    return model.forward_upper_layers(h_batch, num_lower_layers).squeeze(1)
+    return model.forward_from_layer(h_batch, start_layer).squeeze(1)
 
 
-def train_upper_layers(
+def train_new_block(
     model: nn.Module,
     hard_batches: List[Tuple[torch.Tensor, torch.Tensor]],
     optimizer: torch.optim.Optimizer,
     device: str,
-    num_lower_layers: int = 2
+    start_layer: int
 ) -> float:
     """
-    Train upper layers on hard examples only.
+    Train new block on hard examples only.
 
-    The lower layers are frozen (already trained in Phase 1).
-    Only the newly added upper layers are trained on hard examples.
+    Previous blocks are frozen (already trained).
+    Only the newly added block is trained on hard examples.
 
     Args:
-        model: Extended model with upper layers
+        model: Extended model with new block
         hard_batches: Batches of (hidden_state, target) pairs
         optimizer: Optimizer for trainable parameters
         device: Device to run training on
-        num_lower_layers: Number of frozen lower layers
+        start_layer: Index of first layer in new block
 
     Returns:
         Average training loss for this epoch
@@ -279,7 +278,7 @@ def train_upper_layers(
         y = y.to(device)
         optimizer.zero_grad()
 
-        logits = _forward_upper_on_hard_batch(model, h, num_lower_layers, device)
+        logits = _forward_on_hard_batch(model, h, start_layer, device)
         loss = F.cross_entropy(logits, y)
 
         loss.backward()  # type: ignore[no-untyped-call]
@@ -324,7 +323,7 @@ def evaluate_on_hard_examples(
     hard_examples: Dict[str, torch.Tensor],
     device: str,
     batch_size: int = 64,
-    num_lower_layers: int = 2
+    start_layer: int = 2
 ) -> float:
     """
     Evaluate model performance on hard examples only.
@@ -333,11 +332,11 @@ def evaluate_on_hard_examples(
     which is crucial for understanding the benefit of deeper processing.
 
     Args:
-        model: Model to evaluate (can be shallow or deep)
+        model: Model to evaluate
         hard_examples: Dictionary with 'hidden_states' and 'targets'
         device: Device to run evaluation on
         batch_size: Batch size for evaluation
-        num_lower_layers: Number of lower layers (for deep model evaluation)
+        start_layer: Index of first layer to process (Block 1 end_layer)
 
     Returns:
         Perplexity on hard examples
@@ -351,7 +350,7 @@ def evaluate_on_hard_examples(
     with torch.no_grad():
         for h_batch, y_batch in batches:
             y_batch = y_batch.to(device)
-            logits = _forward_upper_on_hard_batch(model, h_batch, num_lower_layers, device)
+            logits = _forward_on_hard_batch(model, h_batch, start_layer, device)
             loss = F.cross_entropy(logits, y_batch, reduction='sum')
 
             total_loss += loss.item()
