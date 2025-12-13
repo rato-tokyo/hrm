@@ -17,6 +17,7 @@ TransformerLayer    → 1層（Attention + FFN）
 TransformerBlock    → 複数層のスタック（標準Transformer）
 LEGOBlock           → TransformerBlock + early exit機能
 LEGOLLM             → LEGOBlock × N（モデル全体）
+train_block()       → Block訓練関数（外部）
 ```
 
 ### ファイル構成
@@ -28,8 +29,9 @@ src/lego/
 │   ├── attention.py    # MultiHeadAttention
 │   ├── ffn.py          # GatedLinearUnit
 │   └── norm.py         # RMSNorm
-├── block.py            # LEGOBlock
+├── block.py            # LEGOBlock（推論のみ、約90行）
 ├── model.py            # LEGOLLM
+├── trainer.py          # train_block()（訓練ロジック）
 ├── data.py             # TrainingData
 └── config.py           # ExperimentConfig
 ```
@@ -57,15 +59,30 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 4. **LEGOLLMはルーティングのみ** - Block間のインデックス管理と統計計算
 5. **トークン単位のEarly Exit** - すべての処理でearly exitはトークン単位（バッチ単位ではない）
 6. **TRUE Early Exit** - exitしたトークンの後続blockは処理しない
+7. **訓練と推論の分離** - LEGOBlockは推論のみ、訓練は`train_block()`関数
 
 ---
 
 ## 核心機能（削除禁止）
 
 1. `LEGOBlock.forward()` - Transformer処理 + exit判定（h, logits, should_exit）
-2. `LEGOBlock.fit()` - Block訓練 + hard example収集
+2. `train_block()` - Block訓練 + hard example収集（trainer.py）
 3. `LEGOLLM.forward()` - TRUE Early Exit推論
 4. `TrainingData` - hidden states + targetsのコンテナ
+
+### LEGOBlockの責務（シンプル）
+
+```python
+class LEGOBlock(nn.Module):
+    # 属性
+    transformer: TransformerBlock  # 標準Transformer（委譲）
+    exit_classifier: nn.Linear     # LEGO特有（dim → 1）
+    threshold: float               # exit判定閾値（trainerが設定）
+
+    # メソッド
+    forward() → (h, logits, should_exit)  # 推論のみ
+    set_output_head()                      # 共有出力層の設定
+```
 
 ### 信頼度計算方式（重要：削除禁止）
 
@@ -95,13 +112,13 @@ threshold方式（`confidence < threshold`）ではない。ratio方式は訓練
 
 ### Threshold自動設定方式（重要：削除禁止）
 
-**thresholdは`fit()`内で自動計算される**：外部からハードコードしない。
+**thresholdは`train_block()`内で自動計算される**：外部からハードコードしない。
 
 ```python
 # 正しい実装（quantile方式）
 # hard_ratio=0.5なら、上位50%がexitするthresholdを計算
 threshold = torch.quantile(all_confidences, 1.0 - hard_ratio)
-self.threshold = threshold
+block.threshold = threshold
 ```
 
 これにより：
@@ -136,3 +153,9 @@ self.threshold = threshold
 **問題：** 「後続blockのKVキャッシュを保持する」処理を複雑に実装しようとした。
 
 **教訓：** 「Xを保持する」は「Xを変更しない」と同義。何もしなければいい。
+
+### 5. モデルに訓練ロジックを含める
+
+**問題：** LEGOBlockに`fit()`メソッドを実装し、300行超のクラスになっていた。
+
+**教訓：** 訓練と推論を分離する。モデルは推論のみ、訓練は外部関数で。

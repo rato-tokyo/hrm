@@ -2,7 +2,7 @@
 LEGO Framework Example - Block-wise Training with TRUE Early Exit
 
 Workflow:
-1. Create LEGOTransformer with multiple blocks
+1. Create LEGOLLM with multiple blocks
 2. Train Block 0 on all data, collect hard examples
 3. Train Block 1 on hard examples only
 4. Evaluate with TRUE Early Exit
@@ -18,6 +18,7 @@ from lego import (
     LEGOBlock,
     TrainingData,
     ExperimentConfig,
+    train_block,
     set_seed,
     get_device,
     create_wikitext_dataloaders,
@@ -42,7 +43,7 @@ def main() -> None:
     )
 
     # Create model with 2 blocks
-    # Thresholds are set automatically by fit() based on hard_ratio
+    # Thresholds are set automatically by train_block() based on hard_ratio
     blocks = [
         LEGOBlock(config.dim, config.num_heads, config.phase1_layers),
         LEGOBlock(config.dim, config.num_heads, config.phase2_layers - config.phase1_layers),
@@ -76,7 +77,8 @@ def main() -> None:
 
     # Train Block 0
     optimizer0 = torch.optim.AdamW(model.blocks[0].parameters(), lr=config.phase1_lr)
-    hard_data, stats0 = model.blocks[0].fit(
+    hard_data, stats0 = train_block(
+        block=model.blocks[0],
         data=initial_data,
         optimizer=optimizer0,
         batch_size=config.phase1_batch,
@@ -98,7 +100,8 @@ def main() -> None:
 
     if len(hard_data) > 0:
         optimizer1 = torch.optim.AdamW(model.blocks[1].parameters(), lr=config.phase2_lr)
-        _, stats1 = model.blocks[1].fit(
+        _, stats1 = train_block(
+            block=model.blocks[1],
             data=hard_data,
             optimizer=optimizer1,
             batch_size=config.phase2_batch,
