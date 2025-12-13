@@ -8,7 +8,7 @@ Each block owns its layers and handles forward pass through them.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional
 
 from .modules import TransformerBlock
 
@@ -64,31 +64,6 @@ class LEGOBlock(nn.Module):
             h = layer(h)
         return h
 
-    def forward_with_cache(
-        self,
-        h: torch.Tensor,
-        kv_cache: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
-    ) -> Tuple[torch.Tensor, List[Tuple[torch.Tensor, torch.Tensor]]]:
-        """
-        Forward pass with KV cache for autoregressive generation.
-
-        Args:
-            h: Hidden states (batch_size, seq_len, dim)
-            kv_cache: List of (K, V) tuples for each layer in this block
-
-        Returns:
-            h: Output hidden states
-            new_cache: Updated KV cache for this block
-        """
-        new_cache: List[Tuple[torch.Tensor, torch.Tensor]] = []
-
-        for i, layer in enumerate(self.layers):
-            layer_cache = kv_cache[i] if kv_cache else None
-            h, cache = layer(h, kv_cache=layer_cache, use_cache=True)
-            new_cache.append(cache)
-
-        return h, new_cache
-
     def set_output_head(self, output_head: nn.Linear) -> None:
         """Set the shared output head reference."""
         self.output_head = output_head
@@ -110,6 +85,29 @@ class LEGOBlock(nn.Module):
         probs = F.softmax(logits, dim=-1)
         confidence = probs.max(dim=-1).values
         return logits, confidence
+
+    def forward_with_exit(
+        self,
+        h: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Forward pass with exit decision.
+
+        Combines forward(), compute_confidence(), and exit mask computation
+        into a single method. This encapsulates the block's exit logic.
+
+        Args:
+            h: Hidden states (batch_size, seq_len, dim)
+
+        Returns:
+            h: Output hidden states (batch_size, seq_len, dim)
+            logits: Output logits (batch_size, seq_len, vocab_size)
+            exit_mask: Boolean mask where True = should exit (batch_size, seq_len)
+        """
+        h = self.forward(h)
+        logits, confidence = self.compute_confidence(h)
+        exit_mask = confidence >= self.threshold
+        return h, logits, exit_mask
 
     def freeze(self) -> None:
         """Freeze all parameters in this block."""

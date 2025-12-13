@@ -1,5 +1,24 @@
 # LEGO (Layered Ensemble with Gradual Optimization) の仕様
 
+## スコープ
+
+**本フレームワークは事前学習（pre-training）専用です。**
+
+- テキスト生成（generate）機能は含まない
+- KVキャッシュは不要（事前学習では使わない）
+- 推論は`forward_with_routing`で評価のみ
+
+### Early ExitとKVキャッシュに関する設計方針
+
+**本プロジェクトでは、Early Exitによって後続BlockのKVキャッシュが更新されないことを問題視しない。むしろ、Early Exit後も後続BlockのKVキャッシュが更新される実装こそが問題である。**
+
+理由：
+- Early Exitの目的は計算量削減。後続Blockを処理しないことで計算を省く
+- 後続BlockのKVキャッシュが更新されるなら、その Block を通過したことになり、Early Exitの意味がない
+- 「KVキャッシュが更新されない」は「そのBlockを通らなかった」の正しい結果
+
+---
+
 ## コア概念
 
 LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を組み合わせた効率的なTransformer訓練フレームワークです。
@@ -29,17 +48,17 @@ class LEGOBlock(nn.Module):
         self.layers = nn.ModuleList([...])  # TransformerBlockのリスト
         self.threshold = threshold          # Early Exit閾値
 
-    def forward(h) -> h                    # 全レイヤー処理
-    def forward_with_cache(h, cache) -> (h, cache)  # KVキャッシュ対応
+    def forward(h) -> h                                # 全レイヤー処理
+    def forward_with_exit(h) -> (h, logits, exit_mask) # forward + exit判定
     def compute_confidence(h) -> (logits, confidence)  # 信頼度計算（トークン単位）
-    def freeze() / unfreeze()                    # パラメータ凍結
+    def freeze() / unfreeze()                          # パラメータ凍結
 ```
 
 ### LEGOTransformer (nn.Module)
 
 ```python
 class LEGOTransformer(nn.Module):
-    """LEGOBlockの管理と橋渡し。"""
+    """LEGOBlockの管理とルーティング。"""
     def __init__(self, vocab_size, dim, num_heads, blocks: List[LEGOBlock]):
         self.embedding = nn.Embedding(...)
         self.blocks = nn.ModuleList(blocks)
@@ -53,7 +72,6 @@ class LEGOTransformer(nn.Module):
     def get_hidden_states(x, up_to_block) -> h   # 指定ブロックまでのhidden states
     def forward_from_block(h, start_block_idx)   # 指定Blockから処理
     def forward_with_routing(x) -> (logits, stats)  # TRUE Early Exit評価
-    def generate(...) -> (tokens, stats)         # TRUE Early Exit生成
     def extend(num_new_layers, threshold) -> LEGOTransformer  # Block追加
 ```
 
@@ -100,7 +118,7 @@ result = trainer.train_block(
 ### 推論（TRUE Early Exit）
 
 ```python
-generated, stats = model.generate(prompt, max_new_tokens=32)
+logits, stats = model.forward_with_routing(x)
 # stats: {exit_counts: [block0_exits, block1_exits, ...], compute_cost, shallow_ratio}
 ```
 
@@ -113,7 +131,7 @@ generated, stats = model.generate(prompt, max_new_tokens=32)
 | メソッド | 用途 |
 |---------|------|
 | `forward(h)` | 全レイヤー処理 |
-| `forward_with_cache(h, cache)` | KVキャッシュ対応 |
+| `forward_with_exit(h)` | forward + exit判定 |
 | `compute_confidence(h)` | 信頼度計算（トークン単位） |
 | `freeze()` / `unfreeze()` | パラメータ凍結 |
 
@@ -126,7 +144,6 @@ generated, stats = model.generate(prompt, max_new_tokens=32)
 | `get_hidden_states(x, up_to_block)` | 指定ブロックまでのhidden states取得 |
 | `forward_from_block(h, start_block_idx)` | 指定Blockから処理 |
 | `forward_with_routing(x)` | TRUE Early Exit評価 |
-| `generate(...)` | TRUE Early Exit生成 |
 | `extend(...)` | Block追加 |
 
 ### Trainer
@@ -170,18 +187,66 @@ src/lego/
 
 ## 設計原則
 
-1. **LEGOBlockがレイヤーを所有** - 各Blockは自身のTransformerLayerを持つ
-2. **LEGOTransformerは橋渡し役** - Block間のルーティングと管理
-3. **start_block_idx / block_idx** - 常に明示的に指定（0-indexed）
-4. **デフォルト引数値禁止** - block_idx等のブロック指定引数にはデフォルト値を設定しない
-5. **Block訓練の独立性** - Phase 2以降の各Blockはtrain/valともにHard Examples内で完結。全データのval_batchesは使用しない
-6. **トークン単位のEarly Exit** - すべての処理（訓練、評価、生成）でearly exitはトークン単位。バッチ単位ではない
+1. **事前学習専用** - generate、KVキャッシュは不要。実装しない
+2. **LEGOBlockがレイヤーとexit判定を所有** - 各Blockは自身のTransformerLayerを持ち、exit判定もBlockの責務
+3. **LEGOTransformerはルーティングのみ** - Block間のインデックス管理と統計計算
+4. **start_block_idx / block_idx** - 常に明示的に指定（0-indexed）
+5. **デフォルト引数値禁止** - block_idx等のブロック指定引数にはデフォルト値を設定しない
+6. **Block訓練の独立性** - Phase 2以降の各Blockはtrain/valともにHard Examples内で完結
+7. **トークン単位のEarly Exit** - すべての処理でearly exitはトークン単位（バッチ単位ではない）
+
+---
+
+## TRUE Early Exitの実装
+
+### 正しい実装パターン
+
+```python
+# forward_with_routing内のループ
+active_indices = torch.arange(total_tokens)  # 全トークン
+
+for block_idx, block in enumerate(self.blocks):
+    if len(active_indices) == 0:
+        break  # 全トークンexit済み → 後続blockをスキップ
+
+    h_active = h_flat[active_indices]  # activeなトークンのみ取得
+
+    # Blockがforward + exit判定を一括処理
+    h_active, logits_active, exit_mask = block.forward_with_exit(h_active)
+
+    if not is_last_block:
+        # exitするトークンのlogitsを保存
+        final_logits[active_indices[exit_mask]] = logits_active[exit_mask]
+        # 継続するトークンのみに絞る（TRUE Early Exit）
+        active_indices = active_indices[~exit_mask]
+```
+
+### 重要なポイント
+
+- `active_indices`を更新することで、exitしたトークンは**後続blockを実際に通らない**
+- Blockの`forward_with_exit`がexit判定を含むため、Transformerはインデックス管理に専念
+
+---
+
+## 注意事項
+
+### RoPE
+
+位置インデックスは累積位置を使用
+
+### 核心機能（削除禁止）
+
+1. `collect_hard_examples()` - トークン単位でhidden states収集
+2. `forward_from_block()` - hidden statesから直接Block訓練
+3. `compute_confidence()` - 信頼度計算（トークン単位）
+4. `forward_with_exit()` - Block単位のexit判定
+5. `forward_with_routing()` - TRUE Early Exit評価
 
 ---
 
 ## 過去の設計ミスと教訓
 
-### `forward_with_routing`の誤実装と修正
+### 1. `forward_with_routing`の誤実装
 
 **問題：**
 評価時の`forward_with_routing`で、全トークンを全Blockに通してからマスクで統計を取る実装をしていた。
@@ -193,57 +258,47 @@ for block in self.blocks:
 # 後からマスクで「どこでexitしたか」を記録するだけ
 ```
 
-これではearly exitによる計算量削減が実現できていない。
+**教訓：** TRUE early exitを謳うなら、実際に計算をスキップしなければ意味がない。
+
+### 2. 不要な機能の実装（generate、KVキャッシュ）
+
+**問題：**
+事前学習フレームワークなのに、テキスト生成用の`generate`メソッドとKVキャッシュ関連機能を実装していた。
 
 **原因：**
-1. 「評価時はリアルタイム判断が必要」と思い込んだ
-2. 訓練時と評価時で異なるロジックを実装してしまった
-3. 実装の簡易さを優先し、コードの一貫性を軽視した
-
-**正しい実装：**
-訓練・評価・生成すべてで同じロジック：
-
-```python
-# Block 1実行
-h = block1(h)
-logits1, confidence = block1.compute_confidence(h)
-
-# easy/hard分離
-easy_mask = confidence >= threshold
-hard_mask = ~easy_mask
-
-# easy tokenのlogitsを保存
-final_logits[easy_mask] = logits1[easy_mask]
-
-# hard tokenだけBlock 2へ
-if hard_mask.any():
-    h_hard = h[hard_mask]
-    h_hard = block2(h_hard)
-    logits2 = output_head(h_hard)
-    final_logits[hard_mask] = logits2
-```
+- スコープを明確にしていなかった
+- 「将来使うかもしれない」という曖昧な理由で実装
+- 事前学習と推論/生成の区別が不明確だった
 
 **教訓：**
-- 訓練時に正しく実装できているロジックは、評価時も同じ方法で実装できる
-- 「複雑になる」と思い込む前に、既存の正しい実装を参考にする
-- TRUE early exitを謳うなら、実際に計算をスキップしなければ意味がない
+- **スコープを最初に明確化する** - 何を作るのか、何を作らないのかを決める
+- **YAGNI原則** - 今必要ないものは実装しない
+- **事前学習専用と明記する** - 生成機能が必要なら別フレームワークで
+
+### 3. exit判定がTransformerに散在
+
+**問題：**
+exit判定のロジック（`confidence >= threshold`）がTransformer側に書かれていた。
+
+**修正：**
+`forward_with_exit`をBlockに追加し、exit判定をBlock内に集約。
+
+**教訓：** 責務を適切に分離する。Blockはexit判定、Transformerはルーティング。
+
+### 4. 「保持する」を複雑に実装
+
+**問題：**
+「後続blockのKVキャッシュを保持する」処理を複雑に実装しようとした。
+
+**正しい発想：**
+「更新しない」は「何もしない」で実現できる。
+
+**教訓：** 「Xを保持する」は「Xを変更しない」と同義。複雑な保持処理を書く前に、そもそも何もしなければいいことに気づくべき。
 
 ---
 
-## 注意事項
+## 厳守事項
 
-### KVキャッシュとEarly Exit
-
-- Early exitした場合、後続BlockのKVキャッシュは**更新されない**（これが正しい動作）
-- 例：Block 1でexit → Block 2のKVキャッシュは変更なし
-- 次トークンでBlock 2まで処理が必要になれば、その時点で更新される
-
-### RoPE
-
-位置インデックスは累積位置を使用
-
-### 核心機能（削除禁止）
-
-1. `collect_hard_examples()` - トークン単位でhidden states収集
-2. `forward_from_block()` - hidden statesから直接Block訓練
-3. `compute_confidence()` - 信頼度計算（トークン単位）
+1. **事前学習専用** - generate、KVキャッシュは実装しない
+2. **TRUE Early Exit** - exitしたトークンの後続blockは処理しない
+3. **シンプルに保つ** - 不要な機能を追加しない

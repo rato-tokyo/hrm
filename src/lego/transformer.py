@@ -6,9 +6,8 @@ Manages LEGOBlocks and handles inter-block routing with early exit.
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F  # Used in _sample_next_token
 import math
-from typing import Tuple, Dict, Optional, List, Any
+from typing import Tuple, Dict, List, Any
 
 from .block import LEGOBlock
 
@@ -127,10 +126,7 @@ class LEGOTransformer(nn.Module):
             h = block(h)
         return self.output_head(h)  # type: ignore[no-any-return]
 
-    def forward_with_routing(
-        self,
-        x: torch.Tensor
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+    def forward_with_routing(self, x: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, Any]]:
         """
         Forward pass with TRUE token-level early exit.
 
@@ -142,22 +138,18 @@ class LEGOTransformer(nn.Module):
             x: Input token ids (batch_size, seq_len)
 
         Returns:
-            output: Logits (batch_size, seq_len, vocab_size)
+            logits: Output logits (batch_size, seq_len, vocab_size)
             stats: Dictionary with exit_counts, shallow_ratio, compute_cost
         """
         batch_size, seq_len = x.shape
         device = x.device
 
-        # Flatten to (batch_size * seq_len, dim) for easier indexing
         h = self.embedding(x)
         h_flat = h.view(-1, self.dim)
         total_tokens = batch_size * seq_len
 
-        # Track final logits and exit block for each token
         final_logits = torch.zeros(total_tokens, self.vocab_size, device=device)
         exit_blocks = torch.full((total_tokens,), len(self.blocks) - 1, device=device)
-
-        # Track which tokens are still active (indices)
         active_indices = torch.arange(total_tokens, device=device)
 
         for block_idx, block in enumerate(self.blocks):
@@ -165,148 +157,32 @@ class LEGOTransformer(nn.Module):
                 break
 
             is_last_block = (block_idx == len(self.blocks) - 1)
+            h_active = h_flat[active_indices].unsqueeze(1)
 
-            # Get active hidden states
-            h_active = h_flat[active_indices].unsqueeze(1)  # (num_active, 1, dim)
-
-            # Process through block
-            h_active = block(h_active)
-
-            # Compute confidence
-            logits_active, confidence_active = block.compute_confidence(h_active)
-            logits_active = logits_active.squeeze(1)  # (num_active, vocab_size)
-            confidence_active = confidence_active.squeeze(1)  # (num_active,)
+            h_active, logits_active, exit_mask = block.forward_with_exit(h_active)
+            logits_active = logits_active.squeeze(1)
+            exit_mask = exit_mask.squeeze(1)
 
             if not is_last_block:
-                # Determine which tokens should exit at this block
-                exit_mask = confidence_active >= block.threshold
-
-                # Store logits and exit block for exiting tokens
                 exiting_indices = active_indices[exit_mask]
                 final_logits[exiting_indices] = logits_active[exit_mask]
                 exit_blocks[exiting_indices] = block_idx
 
-                # Update h_flat for tokens that continue
                 continuing_mask = ~exit_mask
                 h_flat[active_indices[continuing_mask]] = h_active.squeeze(1)[continuing_mask]
-
-                # Update active indices to only those continuing
                 active_indices = active_indices[continuing_mask]
             else:
-                # Last block: all remaining active tokens exit here
                 final_logits[active_indices] = logits_active
-                # exit_blocks already initialized to last block index
 
-        # Reshape final_logits back to (batch_size, seq_len, vocab_size)
         final_logits = final_logits.view(batch_size, seq_len, self.vocab_size)
-
-        # Compute statistics
         exit_counts = [
             int((exit_blocks == i).sum().item()) for i in range(len(self.blocks))
         ]
-        stats = self._compute_exit_stats(exit_counts)
 
-        return final_logits, stats
-
-    def generate(
-        self,
-        input_ids: torch.Tensor,
-        max_new_tokens: int,
-        temperature: float = 1.0,
-        top_k: Optional[int] = None,
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        """
-        Autoregressive generation with TRUE early exit.
-
-        For each token, processes through blocks sequentially.
-        After each block (except the last), checks confidence.
-        If confidence >= threshold, uses current output and skips remaining blocks.
-
-        Args:
-            input_ids: Initial token ids (batch_size, seq_len)
-            max_new_tokens: Number of tokens to generate
-            temperature: Sampling temperature
-            top_k: Top-k filtering
-
-        Returns:
-            generated: Generated token ids
-            stats: Dictionary with exit counts per block and compute cost
-        """
-        self.eval()
-        batch_size = input_ids.shape[0]
-        generated = input_ids.clone()
-
-        exit_counts = [0] * len(self.blocks)
-
-        with torch.no_grad():
-            # Process prompt through all blocks
-            logits, block_caches = self._process_prompt(input_ids)
-
-            for _ in range(max_new_tokens):
-                next_token = self._sample_next_token(logits, temperature, top_k)
-                generated = torch.cat([generated, next_token], dim=1)
-
-                h = self.embedding(next_token)
-                exited = False
-
-                for block_idx, block in enumerate(self.blocks):
-                    h, block_caches[block_idx] = block.forward_with_cache(
-                        h, block_caches[block_idx]
-                    )
-
-                    # Check early exit (skip for last block)
-                    if block_idx < len(self.blocks) - 1:
-                        block_logits, confidence = block.compute_confidence(h)
-                        # Token-level early exit: check if confidence >= threshold
-                        # For generation with batch_size=1, this is a single token check
-                        if (confidence >= block.threshold).all():
-                            logits = block_logits
-                            exit_counts[block_idx] += batch_size
-                            exited = True
-                            break
-
-                if not exited:
-                    logits = self.output_head(h)
-                    exit_counts[-1] += batch_size
-
-        stats = self._compute_exit_stats(exit_counts)
-        return generated, stats
-
-    def _process_prompt(
-        self,
-        input_ids: torch.Tensor
-    ) -> Tuple[torch.Tensor, List[List[Tuple[torch.Tensor, torch.Tensor]]]]:
-        """Process initial prompt through all blocks, returning logits and KV caches."""
-        h = self.embedding(input_ids)
-
-        block_caches: List[List[Tuple[torch.Tensor, torch.Tensor]]] = []
-        for block in self.blocks:
-            h, cache = block.forward_with_cache(h, None)
-            block_caches.append(cache)
-
-        logits = self.output_head(h)
-        return logits, block_caches
-
-    def _sample_next_token(
-        self,
-        logits: torch.Tensor,
-        temperature: float,
-        top_k: Optional[int]
-    ) -> torch.Tensor:
-        """Sample next token from logits."""
-        next_logits = logits[:, -1, :] / temperature
-
-        if top_k is not None:
-            v, _ = torch.topk(next_logits, min(top_k, next_logits.size(-1)))
-            next_logits[next_logits < v[:, [-1]]] = float('-inf')
-
-        probs = F.softmax(next_logits, dim=-1)
-        return torch.multinomial(probs, num_samples=1)
+        return final_logits, self._compute_exit_stats(exit_counts)
 
     def _compute_exit_stats(self, exit_counts: List[int]) -> Dict[str, Any]:
         """Compute statistics from exit counts.
-
-        Used by both forward_with_routing and generate for consistent stats.
 
         Args:
             exit_counts: Number of tokens exiting at each block
