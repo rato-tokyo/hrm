@@ -4,16 +4,22 @@ LEGO: Layered Ensemble with Gradual Optimization
 レゴブロックのようにPhase（層グループ）を組み合わせる柔軟な訓練アーキテクチャ。
 
 Core Concepts:
-- LEGOTransformer: 統一されたTransformerモデル
 - PhaseConfig: 1つのフェーズ（層ブロック）の訓練設定
 - LEGOConfig: 複数フェーズの訓練設定（Cascading方式）
 - LEGOTrainer: Cascading LEGO訓練を実行
 
-Usage:
-    from ease import LEGOTransformer, LEGOConfig, PhaseConfig, LEGOTrainer
+Training Strategies:
+1. Standard: Final layer only (create_standard_config + Trainer)
+2. LEGO: Multi-phase cascading training (LEGOConfig + LEGOTrainer)
 
-    # Create model
-    model = LEGOTransformer(vocab_size=10000, num_layers=4, exit_layer=2)
+Usage:
+    from ease import (
+        StandardTransformer,
+        DeepSupervisionTransformer,
+        LEGOConfig,
+        PhaseConfig,
+        LEGOTrainer,
+    )
 
     # Define multi-phase configuration
     config = LEGOConfig(
@@ -40,15 +46,13 @@ from .types import (
     LEGOResult,
 )
 
-# Model
+# Models
 from .models import (
-    LEGOTransformer,
-    # Backward compatibility aliases
     StandardTransformer,
     DeepSupervisionTransformer,
 )
 
-# Standard Trainer (for evaluation and simple training)
+# Standard Trainer (for simple training)
 from .trainer import (
     StageConfig,
     TrainingConfig,
@@ -69,7 +73,7 @@ from .lego import (
     evaluate_on_hard_examples,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.4.0"
 
 __all__ = [
     # Types
@@ -80,10 +84,9 @@ __all__ = [
     'TrainingHistory',
     'PhaseHistory',
     'LEGOResult',
-    # Model
-    'LEGOTransformer',
-    'StandardTransformer',  # Backward compatibility
-    'DeepSupervisionTransformer',  # Backward compatibility
+    # Models
+    'StandardTransformer',
+    'DeepSupervisionTransformer',
     # Standard Trainer
     'StageConfig',
     'TrainingConfig',

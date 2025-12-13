@@ -221,7 +221,7 @@ class Trainer:
         for x, y in val_batches:
             x, y = x.to(self.device), y.to(self.device)
 
-            outputs = model.forward_with_routing(x)
+            outputs = model.forward_train(x)
             shallow_logits = outputs['shallow_logits']
             deep_logits = outputs['deep_logits']
             confidence = outputs['confidence']

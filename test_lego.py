@@ -2,13 +2,16 @@
 """
 LEGO Framework - Quick Test Script
 
+ローカルで実行して、LEGOが正しく機能しているか確認するテスト。
+小さいデータセット + 固定シードで数値の完全一致を検証。
+
 Usage:
     python test_lego.py
 
 Expected:
     - Phase 1 → Phase 2 で Hard PPL が改善
-    - Hard tokens 収集率 ~50%
-    - Shallow ratio > 0
+    - Hard tokens 収集率 ~50%（100%ならバグ）
+    - Shallow ratio > 0（早期終了が発生）
     - 実行時間 < 5秒
 """
 
@@ -20,7 +23,7 @@ import torch
 import numpy as np
 
 from ease import (
-    LEGOTransformer,
+    DeepSupervisionTransformer,
     Trainer,
     TrainingConfig,
     StageConfig,
@@ -79,7 +82,7 @@ def test_lego_trainer() -> bool:
 
     # Create model (4 layers for 2 phases)
     set_seed(SEED)
-    model = LEGOTransformer(
+    model = DeepSupervisionTransformer(
         vocab_size=VOCAB_SIZE, dim=DIM, num_layers=4, num_heads=NUM_HEADS,
         exit_layer=2, routing_threshold=0.5
     )
@@ -165,10 +168,11 @@ def test_hard_example_collection() -> bool:
 
     total_tokens = sum(x.numel() for x, _ in val_batches)
 
-    # Create model
+    # Create and "train" a simple model
     set_seed(SEED)
-    model = LEGOTransformer(
-        vocab_size=VOCAB_SIZE, dim=DIM, num_layers=2, num_heads=NUM_HEADS
+    model = DeepSupervisionTransformer(
+        vocab_size=VOCAB_SIZE, dim=DIM, num_layers=2, num_heads=NUM_HEADS,
+        exit_layer=2, routing_threshold=0.5
     )
 
     # Compute threshold
@@ -187,9 +191,11 @@ def test_hard_example_collection() -> bool:
     # Validation
     errors = []
 
+    # Hard ratio should be ~50%, NOT 100%
     if hard_ratio > 0.9:
-        errors.append(f"Hard ratio too high: {hard_ratio*100:.1f}%")
+        errors.append(f"Hard ratio too high (sequence-level bug?): {hard_ratio*100:.1f}%")
 
+    # Hard ratio should be close to target (50%)
     if abs(hard_ratio - 0.5) > 0.15:
         errors.append(f"Hard ratio far from target 50%: {hard_ratio*100:.1f}%")
 
@@ -229,12 +235,12 @@ def test_hard_ppl_improvement() -> bool:
 
     # Create 4-layer model
     set_seed(SEED)
-    model = LEGOTransformer(
+    model = DeepSupervisionTransformer(
         vocab_size=VOCAB_SIZE, dim=DIM, num_layers=4, num_heads=NUM_HEADS,
         exit_layer=2, routing_threshold=0.5
     )
 
-    # Define LEGO config
+    # Define LEGO config with more epochs for reliable improvement
     config = LEGOConfig(
         phases=[
             PhaseConfig(layers=(1, 2), lr=1e-3, patience=1, max_epochs=3),
@@ -277,7 +283,7 @@ def test_hard_ppl_improvement() -> bool:
     # Validation
     errors = []
     if phase2_final_ppl >= phase2_first_ppl:
-        errors.append(f"Hard PPL should improve: {phase2_first_ppl:.2f} -> {phase2_final_ppl:.2f}")
+        errors.append(f"Hard PPL should improve during Phase 2: {phase2_first_ppl:.2f} -> {phase2_final_ppl:.2f}")
 
     if errors:
         for e in errors:
@@ -297,8 +303,13 @@ def main() -> bool:
 
     results = []
 
+    # Test 1: LEGOTrainer API
     results.append(("LEGOTrainer", test_lego_trainer()))
+
+    # Test 2: Hard Example Collection
     results.append(("Hard Example Collection", test_hard_example_collection()))
+
+    # Test 3: Hard PPL improvement
     results.append(("Hard PPL Improvement", test_hard_ppl_improvement()))
 
     # Summary
