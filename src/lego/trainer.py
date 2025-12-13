@@ -71,7 +71,7 @@ class Trainer:
         model.eval()
 
         total_loss = 0.0
-        total_correct = 0
+        total_correct: float = 0
         total_tokens = 0
         total_shallow = 0.0
         total_compute = 0.0
@@ -223,7 +223,6 @@ class Trainer:
         optimizer: torch.optim.Optimizer,
         max_epochs: int = 100,
         patience: int = 5,
-        min_delta: float = 0.0,
         grad_clip: float = 1.0,
         verbose: bool = True
     ) -> Dict[str, Any]:

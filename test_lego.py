@@ -40,7 +40,7 @@ def test_training_config():
 
     # Standard config (no routing)
     std_config = TrainingConfig()
-    assert std_config.has_routing == False
+    assert not std_config.has_routing
     print("  Standard config: OK")
 
     # Routing config
@@ -48,7 +48,7 @@ def test_training_config():
         routing_threshold=0.15,
         exit_layer=2
     )
-    assert routing_config.has_routing == True
+    assert routing_config.has_routing
     print("  Routing config: OK")
 
 

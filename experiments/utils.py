@@ -10,7 +10,6 @@ sys.path.insert(0, 'src')
 import torch
 from typing import List, Tuple
 
-from lego import set_seed, get_device  # Re-export from lego
 
 
 def create_wikitext_dataloaders(

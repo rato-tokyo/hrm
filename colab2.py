@@ -256,7 +256,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
 
     trainable = sum(p.numel() for p in model_extended.parameters() if p.requires_grad)
     total = sum(p.numel() for p in model_extended.parameters())
-    print(f"\n✓ Frozen lower layers")
+    print("\n✓ Frozen lower layers")
     print(f"  Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.1f}%)")
 
     # Create hard example loader
@@ -269,7 +269,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
         base_lr=config.phase2_lr
     )
 
-    print(f"\n📊 Training Configuration:")
+    print("\n📊 Training Configuration:")
     print(f"  Learning rate: {config.phase2_lr:.1e}")
     print(f"  Patience: {config.phase2_patience}")
     print(f"  Max epochs: {config.phase2_epochs}")

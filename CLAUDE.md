@@ -2,64 +2,35 @@
 
 ## コア概念
 
-LEGOは、複数のブロック（Block）を組み合わせて効率的なTransformer訓練を実現するフレームワークです。
+LEGOは、2フェーズ訓練とEarly Exit推論を組み合わせた効率的なTransformer訓練フレームワークです。
 
-### Blockとは
+### 基本アイデア
 
-- **Block**: 1つ以上の連続した層で構成される独立したstandard LLM
-- 各BlockはStandard Transformerと同じ：最終層だけで損失計算
-- 例：
-  - Block 1 = Layer 1-2 → Layer 2で損失計算
-  - Block 2 = Layer 3-4 → Layer 4で損失計算
+1. **Phase 1**: 浅いモデル（2層）を全データで訓練
+2. **Hard Example収集**: 信頼度の低いトークンを特定
+3. **Phase 2**: 深いモデル（4層）の上位層のみをHard Examplesで訓練
+4. **推論**: Early Exitで簡単なトークンは浅い層、難しいトークンは深い層で処理
 
-## トークンの分類
+## 信頼度とルーティング
 
 ### 信頼度（Confidence）
 
-- **信頼度** = そのトークンの予測確率の最大値（max probability）
-- 実装: `compute_confidence(model, hidden_state)` → `F.softmax(logits, dim=-1).max(dim=-1).values`
+- **信頼度** = 予測確率の最大値（max probability）
+- 実装: `model.compute_confidence(hidden_state)` → `F.softmax(logits, dim=-1).max(dim=-1).values`
 
 ### 閾値の決定
 
-- **自動調整**: 難しいトークンと簡単なトークンが指定比率になるように閾値を計算
+- **自動調整**: 指定比率のトークンがHard Examplesになるよう閾値を計算
 - 実装: `compute_confidence_threshold(model, val_batches, target_ratio, device)`
 - 例：`hard_example_ratio=0.5` → 信頼度の低い方から50%を「難しいトークン」とする閾値を自動算出
 
-## 2つのコアオプション
-
-### 1. StageConfig(layers=(x, y), loss_weight=w)
-
-どの層で損失を計算するかを指定：
-
-- `layers=(2, 2)`: Layer 2で損失計算 → Block 1（Layer 1-2）を訓練
-- `layers=(4, 4)`: Layer 4で損失計算 → Block 2（Layer 3-4）を訓練
-
-### 2. routing_threshold + exit_layer
-
-推論時にどのBlockで止めるかを制御：
-
-- `exit_layer`: 早期終了判定を行う層（例：2）
-- `routing_threshold`: 信頼度の閾値
-- 信頼度 ≥ threshold → Block 1で終了（簡単なトークン）
-- 信頼度 < threshold → Block 2まで処理（難しいトークン）
-
-## LEGOConfig
+## TrainingConfig
 
 ```python
 @dataclass
-class LEGOConfig:
-    # Phase 1: Shallow model
-    phase1_layers: int = 2
-    phase1_lr: float = 1e-3
-    phase1_patience: int = 1
-
-    # Hard example collection
-    hard_example_ratio: float = 0.5  # Target 50% as hard examples
-
-    # Phase 2: Deep model
-    phase2_layers: int = 4  # Total layers
-    phase2_lr: float = 1e-4  # Lower LR for fine-tuning
-    phase2_patience: int = 3  # Higher patience for new layers
+class TrainingConfig:
+    routing_threshold: float = 0.0  # Early Exit閾値（0=無効）
+    exit_layer: int = 1             # Early Exit判定層
 ```
 
 ## 2フェーズ訓練の実装
@@ -70,7 +41,7 @@ class LEGOConfig:
 model = LEGOTransformer(
     vocab_size=vocab_size, dim=dim, num_layers=2, num_heads=num_heads
 )
-config = create_standard_config(num_layers=2)
+config = TrainingConfig()
 trainer = Trainer(config, vocab_size=vocab_size, device=device)
 result = trainer.train_with_early_stopping(model, train_loader, val_loader, optimizer)
 ```
@@ -98,9 +69,9 @@ model_extended = LEGOTransformer.extend_from(
 
 # Hard examplesで上位層のみ訓練
 hard_batches = create_hard_example_loader(hard_examples, batch_size=64)
-train_loss = train_upper_layers(
-    model_extended, hard_batches, optimizer,
-    vocab_size, device, num_lower_layers=2
+result = trainer.train_upper_layers_with_early_stopping(
+    model_extended, hard_batches, val_loader, hard_examples,
+    optimizer, num_lower_layers=2
 )
 ```
 
@@ -108,7 +79,6 @@ train_loss = train_upper_layers(
 
 ```python
 eval_config = TrainingConfig(
-    stages=[StageConfig(layers=(4, 4), loss_weight=1.0)],
     routing_threshold=confidence_threshold,
     exit_layer=2
 )
@@ -122,21 +92,22 @@ stats = eval_trainer.evaluate(model_extended, val_loader)
 ### モデル
 - `LEGOTransformer` - 統一モデル（standard/early exitの両モード対応）
   - `forward()` - 標準推論
-  - `forward_all_layers()` - 全層出力（Deep Supervision用）
+  - `forward_all_layers()` - 全層出力
   - `forward_train()` - 訓練用（shallow/deep両出力）
   - `forward_inference()` - 推論用（ルーティング付き）
   - `extend_from()` - 浅いモデルから拡張モデルを作成
+  - `compute_confidence()` - hidden stateから信頼度を計算
 
 ### 訓練設定
-- `StageConfig` - 個別ステージの設定
-- `TrainingConfig` - 訓練全体の設定
+- `TrainingConfig` - 訓練設定（routing_threshold, exit_layer）
 - `Trainer` - 訓練・評価を実行
-- `create_standard_config()` - 標準LLM設定を生成
-- `create_deep_supervision_config()` - Deep Supervision設定を生成
 
 ### ユーティリティ関数（削除禁止）
 | 関数 | 用途 |
 |------|------|
+| `set_seed()` | 再現性のためのシード設定 |
+| `get_device()` | 利用可能なデバイス取得 |
+| `create_synthetic_data()` | テスト用合成データ生成 |
 | `compute_confidence_threshold()` | 指定比率で閾値を自動計算 |
 | `collect_hard_examples()` | 閾値未満のトークンを収集（トークン単位） |
 | `create_hard_example_loader()` | Hard examplesをバッチ化 |
@@ -159,7 +130,7 @@ stats = eval_trainer.evaluate(model_extended, val_loader)
 
 3. **変更時の必須手順**
    - 変更後に `python3 test_lego.py` を実行
-   - 14テストすべて合格を確認
+   - 13テストすべて合格を確認
    - 数値が異なればコードを修正（テストを変更しない）
 
 ### 削除禁止の要素
@@ -173,7 +144,7 @@ stats = eval_trainer.evaluate(model_extended, val_loader)
 
 ### コード変更時のチェックリスト
 
-- [ ] `python3 test_lego.py` で14テストすべて合格
+- [ ] `python3 test_lego.py` で13テストすべて合格
 - [ ] `python3 -m mypy src/lego/ --ignore-missing-imports` でエラーなし
 - [ ] `python3 -m ruff check src/lego/` でエラーなし
 - [ ] メソッド名・シグネチャを変更していない

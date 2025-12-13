@@ -7,7 +7,6 @@ Provides deterministic test utilities for reproducible testing.
 import sys
 sys.path.insert(0, 'src')
 
-from lego import set_seed, create_synthetic_data  # Re-export from lego
 
 
 def assert_close(actual: float, expected: float, name: str, rtol: float = 1e-4) -> None:
