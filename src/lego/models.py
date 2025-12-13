@@ -321,67 +321,6 @@ class LEGOTransformer(nn.Module):
 
         return generated, stats
 
-    def _forward_early_exit(
-        self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Core early exit forward pass.
-
-        Returns:
-            shallow_logits: Output after exit_layer
-            deep_logits: Output after all layers
-            confidence: Confidence at exit point
-        """
-        h = self.embedding(x)
-
-        # Process up to exit layer
-        for i in range(self.exit_layer):
-            h = self.layers[i](h)
-
-        # Shallow output and confidence (reuse logits for efficiency)
-        shallow_logits = self.output_head(h)
-        probs = F.softmax(shallow_logits, dim=-1)
-        confidence = probs.max(dim=-1).values
-
-        # Continue to deep output
-        h_deep = h
-        for i in range(self.exit_layer, self.num_layers):
-            h_deep = self.layers[i](h_deep)
-        deep_logits = self.output_head(h_deep)
-
-        return shallow_logits, deep_logits, confidence
-
-    def forward_inference(self, x: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, float]]:
-        """
-        Inference forward: hard routing based on confidence.
-
-        Returns:
-            output: Routed output
-            stats: Dictionary with routing statistics
-        """
-        batch_size, seq_len = x.shape
-
-        shallow_logits, deep_logits, confidence = self._forward_early_exit(x)
-
-        # Hard routing
-        mask = (confidence >= self.routing_threshold).unsqueeze(-1)
-        output = torch.where(mask, shallow_logits, deep_logits)
-
-        # Compute cost
-        shallow_count = mask.sum().item()
-        total_count = batch_size * seq_len
-        deep_count = total_count - shallow_count
-
-        compute_cost = (shallow_count * self.exit_layer + deep_count * self.num_layers) / (total_count * self.num_layers)
-
-        stats = {
-            'mean_confidence': confidence.mean().item(),
-            'shallow_ratio': shallow_count / total_count,
-            'compute_cost': compute_cost,
-        }
-
-        return output, stats
-
     def forward_upper_layers(
         self,
         h: torch.Tensor,

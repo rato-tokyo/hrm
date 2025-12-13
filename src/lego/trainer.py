@@ -24,6 +24,58 @@ class Trainer:
         self.vocab_size = vocab_size
         self.device = device
 
+    def _forward_with_routing(
+        self,
+        model: nn.Module,
+        x: torch.Tensor,
+        routing_threshold: float
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """
+        Forward pass with routing statistics (for evaluation).
+
+        Computes both shallow and deep outputs, then routes based on confidence.
+        This is used for evaluation metrics only - for actual inference,
+        use model.generate_with_early_exit() for true computation savings.
+        """
+        batch_size, seq_len = x.shape
+        exit_layer = getattr(model, 'exit_layer', model.num_layers)
+
+        h = model.embedding(x)
+
+        # Process up to exit layer
+        for i in range(exit_layer):
+            h = model.layers[i](h)
+
+        # Shallow output and confidence
+        shallow_logits = model.output_head(h)
+        probs = F.softmax(shallow_logits, dim=-1)
+        confidence = probs.max(dim=-1).values
+
+        # Continue to deep output
+        h_deep = h
+        for i in range(exit_layer, model.num_layers):
+            h_deep = model.layers[i](h_deep)
+        deep_logits = model.output_head(h_deep)
+
+        # Hard routing
+        mask = (confidence >= routing_threshold).unsqueeze(-1)
+        output = torch.where(mask, shallow_logits, deep_logits)
+
+        # Compute statistics
+        shallow_count = mask.sum().item()
+        total_count = batch_size * seq_len
+        deep_count = total_count - shallow_count
+
+        compute_cost = (shallow_count * exit_layer + deep_count * model.num_layers) / (total_count * model.num_layers)
+
+        stats = {
+            'mean_confidence': confidence.mean().item(),
+            'shallow_ratio': shallow_count / total_count,
+            'compute_cost': compute_cost,
+        }
+
+        return output, stats
+
     @torch.no_grad()
     def evaluate(
         self,
@@ -46,8 +98,7 @@ class Trainer:
             x, y = x.to(self.device), y.to(self.device)
 
             if use_routing:
-                # Use forward_inference for consistent routing
-                logits, stats = model.forward_inference(x)
+                logits, stats = self._forward_with_routing(model, x, routing_threshold)
                 total_shallow += stats['shallow_ratio'] * x.numel()
                 total_compute += stats['compute_cost']
             else:
