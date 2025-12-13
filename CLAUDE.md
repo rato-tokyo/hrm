@@ -133,15 +133,17 @@ generated, stats = model_extended.generate(
 
 | メソッド | 用途 |
 |---------|------|
-| `forward(x)` | 標準推論（全層通過） |
+| `forward(x)` | 標準推論（全層通過、訓練用） |
 | `forward_with_cache(x, past_kv_cache, use_cache)` | KVキャッシュ付き推論 |
-| `forward_with_cache_partial(h, cache, start, end)` | 指定層範囲の処理 |
-| `generate(input_ids, max_new_tokens, ...)` | 標準生成（KVキャッシュ使用） |
-| `generate_with_early_exit(input_ids, max_new_tokens, routing_threshold, ...)` | **TRUE Early Exit生成** |
+| `generate(input_ids, max_new_tokens, routing_threshold, ...)` | **統一生成API**（Early Exit対応） |
 | `forward_upper_layers(h, start_layer)` | 上位層のみ処理（Phase 2訓練用） |
 | `extend(num_layers, routing_threshold, freeze_lower)` | モデル拡張 |
-| `compute_confidence(h)` | 信頼度計算 |
+| `compute_confidence(h)` | 信頼度計算（logits, confidence を返す） |
 | `get_hidden_states(x)` | hidden states取得 |
+
+**generate() の使い分け**:
+- `routing_threshold < 1.0`: TRUE Early Exit有効
+- `routing_threshold >= 1.0`: 標準生成（全トークンdeepパス）
 
 ### Trainer
 
