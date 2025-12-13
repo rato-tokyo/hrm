@@ -5,7 +5,7 @@ Shared type definitions for the LEGO framework.
 """
 
 import torch
-from typing import Tuple, List
+from typing import Tuple, List, Optional
 from typing_extensions import TypedDict
 
 
@@ -16,17 +16,17 @@ from typing_extensions import TypedDict
 # Standard data batch: (input_ids, target_ids)
 DataBatch = Tuple[torch.Tensor, torch.Tensor]
 
-# Hard example batch: (hidden_states, targets) - used in Phase 2 training
+# Hard example batch: (hidden_states, targets) - used in Phase 2+ training
 HardBatch = Tuple[torch.Tensor, torch.Tensor]
 
 
 # ==============================================================================
-# Result Types
+# Hard Examples
 # ==============================================================================
 
 class HardExamples(TypedDict):
     """
-    Collection of hard examples for Phase 2 training.
+    Collection of hard examples for deeper phase training.
 
     Hard examples are tokens where the shallow model has low confidence.
     These benefit most from deeper processing.
@@ -43,6 +43,10 @@ class HardExamples(TypedDict):
     confidences: torch.Tensor
 
 
+# ==============================================================================
+# Evaluation Statistics
+# ==============================================================================
+
 class EvalStats(TypedDict):
     """
     Evaluation statistics returned by Trainer.evaluate().
@@ -58,6 +62,10 @@ class EvalStats(TypedDict):
     shallow_ratio: float
     compute_cost: float
 
+
+# ==============================================================================
+# Training History Types
+# ==============================================================================
 
 class TrainingHistory(TypedDict):
     """
@@ -77,3 +85,33 @@ class TrainingHistory(TypedDict):
     best_epoch: int
     total_epochs: int
     stopped_early: bool
+
+
+class PhaseHistory(TypedDict):
+    """
+    Training history for a single LEGO phase.
+
+    Attributes:
+        train_losses: Training loss per epoch
+        val_ppls: Validation PPL per epoch
+        best_epoch: Epoch with best validation performance (0-indexed)
+        total_epochs: Total epochs trained
+    """
+    train_losses: List[float]
+    val_ppls: List[float]
+    best_epoch: int
+    total_epochs: int
+
+
+class LEGOResult(TypedDict):
+    """
+    Result from LEGOTrainer.train().
+
+    Attributes:
+        thresholds: Confidence thresholds for each phase transition
+        phase_histories: Training history for each phase
+        hard_examples: Final hard examples (from last phase, if applicable)
+    """
+    thresholds: List[float]
+    phase_histories: List[PhaseHistory]
+    hard_examples: Optional[HardExamples]

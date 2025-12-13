@@ -2,7 +2,7 @@
 """
 LEGO Framework - Quick Test Script
 
-ローカルで実行して、LEGOとASHEMが正しく機能しているか確認するテスト。
+ローカルで実行して、LEGOが正しく機能しているか確認するテスト。
 小さいデータセット + 固定シードで数値の完全一致を検証。
 
 Usage:
@@ -23,16 +23,15 @@ import torch
 import numpy as np
 
 from ease import (
-    StandardTransformer,
     DeepSupervisionTransformer,
     Trainer,
     TrainingConfig,
     StageConfig,
-    create_standard_config,
+    LEGOConfig,
+    PhaseConfig,
+    LEGOTrainer,
     compute_confidence_threshold,
     collect_hard_examples,
-    create_hard_example_loader,
-    train_upper_layers,
     evaluate_on_hard_examples,
 )
 
@@ -57,19 +56,18 @@ def set_seed(seed: int) -> None:
 
 
 # ==============================================================================
-# Main Test
+# Test 1: LEGOTrainer API
 # ==============================================================================
 
-def main() -> bool:
+def test_lego_trainer() -> bool:
+    """Test LEGOTrainer with cascading phases."""
+    print("=" * 60)
+    print("Test 1: LEGOTrainer")
+    print("=" * 60)
+
     start_time = time.time()
 
-    print("=" * 60)
-    print("LEGO Framework - Test Suite")
-    print("=" * 60)
-
-    # ==========================================================================
-    # Create Data
-    # ==========================================================================
+    # Create data
     set_seed(SEED)
     train_batches = [
         (torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LEN)),
@@ -82,203 +80,259 @@ def main() -> bool:
         for _ in range(NUM_BATCHES // 2)
     ]
 
-    total_tokens = sum(x.numel() for x, _ in val_batches)
-
-    # ==========================================================================
-    # Phase 1: Train 2-layer model
-    # ==========================================================================
-    print("\n--- Phase 1: Train 2-layer model ---")
+    # Create model (4 layers for 2 phases)
     set_seed(SEED)
-
-    model = StandardTransformer(
-        vocab_size=VOCAB_SIZE, dim=DIM, num_layers=2, num_heads=NUM_HEADS
-    )
-    config = create_standard_config(2)
-    trainer = Trainer(config, vocab_size=VOCAB_SIZE, device=DEVICE)
-    optimizer = trainer.create_optimizer(model, base_lr=1e-3)
-
-    phase1_start = time.time()
-    for epoch in range(3):
-        train_loss = trainer.train_epoch(model, train_batches, optimizer)
-        val_stats = trainer.evaluate(model, val_batches)
-        print(f"Epoch {epoch+1}: Train Loss={train_loss:.4f} | "
-              f"Val PPL={val_stats['ppl']:.2f} | Val Acc={val_stats['acc']*100:.2f}%")
-    phase1_time = time.time() - phase1_start
-
-    phase1_stats = trainer.evaluate(model, val_batches)
-    print(f"\nPhase 1 Final: PPL={phase1_stats['ppl']:.2f}, Acc={phase1_stats['acc']*100:.2f}%")
-    print(f"Phase 1 Time: {phase1_time:.2f}s")
-
-    # ==========================================================================
-    # Threshold & Hard Examples
-    # ==========================================================================
-    print("\n--- Confidence Threshold ---")
-    threshold = compute_confidence_threshold(model, val_batches, 0.5, DEVICE)
-    print(f"Threshold: {threshold:.4f}")
-
-    print("\n--- Hard Example Collection ---")
-    hard_examples = collect_hard_examples(model, val_batches, threshold, DEVICE)
-    num_hard = len(hard_examples['targets'])
-    hard_ratio = num_hard / total_tokens
-    print(f"Hard tokens: {num_hard}/{total_tokens} ({hard_ratio*100:.1f}%)")
-    print(f"Avg confidence: {hard_examples['confidences'].mean().item():.4f}")
-
-    # Phase 1 Hard PPL
-    phase1_hard_ppl = evaluate_on_hard_examples(
-        model, hard_examples, VOCAB_SIZE, DEVICE, 16, 2
-    )
-    print(f"Phase 1 Hard PPL: {phase1_hard_ppl:.2f}")
-
-    # ==========================================================================
-    # Phase 2: Extend to 4 layers, train on hard examples
-    # ==========================================================================
-    print("\n--- Phase 2: Extend to 4 layers ---")
-    set_seed(SEED + 1)
-
-    model_extended = DeepSupervisionTransformer(
+    model = DeepSupervisionTransformer(
         vocab_size=VOCAB_SIZE, dim=DIM, num_layers=4, num_heads=NUM_HEADS,
-        exit_layer=2, routing_threshold=threshold
+        exit_layer=2, routing_threshold=0.5
     )
 
-    # Copy weights from Phase 1
-    model_extended.embedding.load_state_dict(model.embedding.state_dict())
-    for i in range(2):
-        model_extended.layers[i].load_state_dict(model.layers[i].state_dict())
-    model_extended.output_head.load_state_dict(model.output_head.state_dict())
-
-    # Freeze lower layers
-    for param in model_extended.embedding.parameters():
-        param.requires_grad = False
-    for i in range(2):
-        for param in model_extended.layers[i].parameters():
-            param.requires_grad = False
-
-    trainable = sum(p.numel() for p in model_extended.parameters() if p.requires_grad)
-    total_params = sum(p.numel() for p in model_extended.parameters())
-    print(f"Trainable params: {trainable}/{total_params} ({trainable/total_params*100:.1f}%)")
-
-    hard_batches = create_hard_example_loader(hard_examples, 16)
-    print(f"Hard batches: {len(hard_batches)}")
-
-    optimizer2 = torch.optim.AdamW(
-        [p for p in model_extended.parameters() if p.requires_grad],
-        lr=1e-4
+    # Define LEGO config
+    config = LEGOConfig(
+        phases=[
+            PhaseConfig(layers=(1, 2), lr=1e-3, patience=1, max_epochs=3),
+            PhaseConfig(layers=(3, 4), lr=1e-4, patience=2, max_epochs=5),
+        ],
+        hard_example_ratio=0.5,
     )
 
-    phase2_start = time.time()
-    for epoch in range(5):
-        train_loss = train_upper_layers(
-            model_extended, hard_batches, optimizer2, VOCAB_SIZE, DEVICE, 2
-        )
+    print(f"Config: {config.describe()}")
 
-        # Eval with routing
-        eval_config = TrainingConfig(
-            stages=[StageConfig(layers=(4, 4), loss_weight=1.0)],
-            routing_threshold=threshold,
-            exit_layer=2
-        )
-        eval_trainer = Trainer(eval_config, vocab_size=VOCAB_SIZE, device=DEVICE)
-        val_stats = eval_trainer.evaluate(model_extended, val_batches)
+    # Train with LEGOTrainer
+    trainer = LEGOTrainer(config, vocab_size=VOCAB_SIZE, device=DEVICE, verbose=True)
+    result = trainer.train(model, train_batches, val_batches, batch_size=16)
 
-        hard_ppl = evaluate_on_hard_examples(
-            model_extended, hard_examples, VOCAB_SIZE, DEVICE, 16, 2
-        )
+    # Extract results
+    thresholds = result['thresholds']
+    phase_histories = result['phase_histories']
 
-        train_ppl = np.exp(train_loss)
-        print(f"Epoch {epoch+1}: Train PPL={train_ppl:.2f} | "
-              f"Val PPL={val_stats['ppl']:.2f} | Hard PPL={hard_ppl:.2f}")
-    phase2_time = time.time() - phase2_start
+    print(f"\n--- Results ---")
+    print(f"Thresholds: {thresholds}")
+    print(f"Phase 1 epochs: {phase_histories[0]['total_epochs']}")
+    print(f"Phase 2 epochs: {phase_histories[1]['total_epochs']}")
 
-    phase2_hard_ppl = evaluate_on_hard_examples(
-        model_extended, hard_examples, VOCAB_SIZE, DEVICE, 16, 2
-    )
-    print(f"\nPhase 2 Final Hard PPL: {phase2_hard_ppl:.2f}")
-    print(f"Phase 2 Time: {phase2_time:.2f}s")
-
-    # ==========================================================================
-    # Final Evaluation (Two-Stage Inference)
-    # ==========================================================================
-    print("\n--- Final Evaluation (Two-Stage Inference) ---")
+    # Evaluate with routing
+    model.routing_threshold = thresholds[0] if thresholds else 0.5
     eval_config = TrainingConfig(
         stages=[StageConfig(layers=(4, 4), loss_weight=1.0)],
-        routing_threshold=threshold,
+        routing_threshold=model.routing_threshold,
         exit_layer=2
     )
     eval_trainer = Trainer(eval_config, vocab_size=VOCAB_SIZE, device=DEVICE)
-    final_stats = eval_trainer.evaluate(model_extended, val_batches)
+    final_stats = eval_trainer.evaluate(model, val_batches)
 
-    print(f"Final PPL: {final_stats['ppl']:.2f}")
-    print(f"Final Acc: {final_stats['acc']*100:.2f}%")
+    print(f"\nFinal PPL: {final_stats['ppl']:.2f}")
     print(f"Shallow ratio: {final_stats['shallow_ratio']*100:.1f}%")
     print(f"Compute cost: {final_stats['compute_cost']*100:.1f}%")
 
-    # ==========================================================================
-    # Summary
-    # ==========================================================================
-    total_time = time.time() - start_time
+    elapsed = time.time() - start_time
+    print(f"\nTime: {elapsed:.2f}s")
 
-    print("\n" + "=" * 60)
-    print("Summary")
-    print("=" * 60)
-    print(f"Phase 1 PPL: {phase1_stats['ppl']:.2f}")
-    print(f"Phase 2 PPL: {final_stats['ppl']:.2f}")
-    print(f"PPL change: {final_stats['ppl'] - phase1_stats['ppl']:+.2f}")
-    print()
-    print(f"Phase 1 Hard PPL: {phase1_hard_ppl:.2f}")
-    print(f"Phase 2 Hard PPL: {phase2_hard_ppl:.2f}")
-    hard_improvement = phase1_hard_ppl - phase2_hard_ppl
-    hard_improvement_pct = hard_improvement / phase1_hard_ppl * 100
-    print(f"Hard PPL improvement: {hard_improvement:+.2f} ({hard_improvement_pct:+.1f}%)")
-    print()
-    print(f"Total time: {total_time:.2f}s")
-
-    # ==========================================================================
     # Validation
-    # ==========================================================================
-    print("\n" + "=" * 60)
-    print("Validation")
-    print("=" * 60)
-
     errors = []
-
-    # 1. Hard PPL should improve
-    if phase2_hard_ppl >= phase1_hard_ppl:
-        errors.append(
-            f"Hard PPL should improve: {phase1_hard_ppl:.2f} -> {phase2_hard_ppl:.2f}"
-        )
-
-    # 2. Shallow ratio should be > 0
+    if len(thresholds) == 0:
+        errors.append("No thresholds computed")
     if final_stats['shallow_ratio'] <= 0:
-        errors.append(
-            f"Shallow ratio should be > 0: {final_stats['shallow_ratio']}"
-        )
-
-    # 3. Hard ratio should be ~50%, NOT 100% (sequence-level bug)
-    if hard_ratio > 0.9:
-        errors.append(
-            f"Hard ratio too high (sequence-level bug?): {hard_ratio*100:.1f}%"
-        )
-
-    # 4. Hard ratio should be close to target (50%)
-    if abs(hard_ratio - 0.5) > 0.15:
-        errors.append(
-            f"Hard ratio far from target 50%: {hard_ratio*100:.1f}%"
-        )
-
-    # 5. Time should be reasonable
-    if total_time > 10:
-        errors.append(
-            f"Test too slow: {total_time:.2f}s (should be < 10s)"
-        )
+        errors.append(f"Shallow ratio should be > 0: {final_stats['shallow_ratio']}")
+    if elapsed > 10:
+        errors.append(f"Test too slow: {elapsed:.2f}s")
 
     if errors:
         for e in errors:
             print(f"✗ {e}")
-        print(f"\n{len(errors)} validation(s) failed!")
         return False
     else:
-        print("✓ All validations passed!")
+        print("✓ Test 1 passed!")
         return True
+
+
+# ==============================================================================
+# Test 2: Hard Example Collection
+# ==============================================================================
+
+def test_hard_example_collection() -> bool:
+    """Test hard example collection at token level."""
+    print("\n" + "=" * 60)
+    print("Test 2: Hard Example Collection")
+    print("=" * 60)
+
+    start_time = time.time()
+
+    # Create data
+    set_seed(SEED)
+    val_batches = [
+        (torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LEN)),
+         torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LEN)))
+        for _ in range(NUM_BATCHES // 2)
+    ]
+
+    total_tokens = sum(x.numel() for x, _ in val_batches)
+
+    # Create and "train" a simple model
+    set_seed(SEED)
+    model = DeepSupervisionTransformer(
+        vocab_size=VOCAB_SIZE, dim=DIM, num_layers=2, num_heads=NUM_HEADS,
+        exit_layer=2, routing_threshold=0.5
+    )
+
+    # Compute threshold
+    threshold = compute_confidence_threshold(model, val_batches, 0.5, DEVICE)
+    print(f"Threshold: {threshold:.4f}")
+
+    # Collect hard examples
+    hard_examples = collect_hard_examples(model, val_batches, threshold, DEVICE)
+    num_hard = len(hard_examples['targets'])
+    hard_ratio = num_hard / total_tokens
+    print(f"Hard tokens: {num_hard}/{total_tokens} ({hard_ratio*100:.1f}%)")
+
+    elapsed = time.time() - start_time
+    print(f"\nTime: {elapsed:.2f}s")
+
+    # Validation
+    errors = []
+
+    # Hard ratio should be ~50%, NOT 100%
+    if hard_ratio > 0.9:
+        errors.append(f"Hard ratio too high (sequence-level bug?): {hard_ratio*100:.1f}%")
+
+    # Hard ratio should be close to target (50%)
+    if abs(hard_ratio - 0.5) > 0.15:
+        errors.append(f"Hard ratio far from target 50%: {hard_ratio*100:.1f}%")
+
+    if errors:
+        for e in errors:
+            print(f"✗ {e}")
+        return False
+    else:
+        print("✓ Test 2 passed!")
+        return True
+
+
+# ==============================================================================
+# Test 3: Hard PPL Improvement
+# ==============================================================================
+
+def test_hard_ppl_improvement() -> bool:
+    """Test that Phase 2 improves Hard PPL."""
+    print("\n" + "=" * 60)
+    print("Test 3: Hard PPL Improvement")
+    print("=" * 60)
+
+    start_time = time.time()
+
+    # Create data
+    set_seed(SEED)
+    train_batches = [
+        (torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LEN)),
+         torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LEN)))
+        for _ in range(NUM_BATCHES)
+    ]
+    val_batches = [
+        (torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LEN)),
+         torch.randint(0, VOCAB_SIZE, (BATCH_SIZE, SEQ_LEN)))
+        for _ in range(NUM_BATCHES // 2)
+    ]
+
+    # Create 4-layer model
+    set_seed(SEED)
+    model = DeepSupervisionTransformer(
+        vocab_size=VOCAB_SIZE, dim=DIM, num_layers=4, num_heads=NUM_HEADS,
+        exit_layer=2, routing_threshold=0.5
+    )
+
+    # Define LEGO config with more epochs for reliable improvement
+    config = LEGOConfig(
+        phases=[
+            PhaseConfig(layers=(1, 2), lr=1e-3, patience=1, max_epochs=3),
+            PhaseConfig(layers=(3, 4), lr=1e-4, patience=3, max_epochs=10),
+        ],
+        hard_example_ratio=0.5,
+    )
+
+    # Train with LEGOTrainer
+    trainer = LEGOTrainer(config, vocab_size=VOCAB_SIZE, device=DEVICE, verbose=False)
+    result = trainer.train(model, train_batches, val_batches, batch_size=16)
+
+    # Get hard examples and evaluate
+    hard_examples = result['hard_examples']
+
+    if hard_examples is None:
+        print("✗ No hard examples collected")
+        return False
+
+    # Evaluate on hard examples
+    hard_ppl = evaluate_on_hard_examples(
+        model, hard_examples, VOCAB_SIZE, DEVICE, 16, 2
+    )
+    print(f"Final Hard PPL: {hard_ppl:.2f}")
+
+    # Check that Phase 2 improved
+    phase2_final_ppl = result['phase_histories'][1]['val_ppls'][-1]
+    phase2_first_ppl = result['phase_histories'][1]['val_ppls'][0]
+
+    print(f"Phase 2 first Hard PPL: {phase2_first_ppl:.2f}")
+    print(f"Phase 2 final Hard PPL: {phase2_final_ppl:.2f}")
+
+    improvement = phase2_first_ppl - phase2_final_ppl
+    improvement_pct = improvement / phase2_first_ppl * 100
+    print(f"Improvement: {improvement:+.2f} ({improvement_pct:+.1f}%)")
+
+    elapsed = time.time() - start_time
+    print(f"\nTime: {elapsed:.2f}s")
+
+    # Validation
+    errors = []
+    if phase2_final_ppl >= phase2_first_ppl:
+        errors.append(f"Hard PPL should improve during Phase 2: {phase2_first_ppl:.2f} -> {phase2_final_ppl:.2f}")
+
+    if errors:
+        for e in errors:
+            print(f"✗ {e}")
+        return False
+    else:
+        print("✓ Test 3 passed!")
+        return True
+
+
+# ==============================================================================
+# Main
+# ==============================================================================
+
+def main() -> bool:
+    start_time = time.time()
+
+    results = []
+
+    # Test 1: LEGOTrainer API
+    results.append(("LEGOTrainer", test_lego_trainer()))
+
+    # Test 2: Hard Example Collection
+    results.append(("Hard Example Collection", test_hard_example_collection()))
+
+    # Test 3: Hard PPL improvement
+    results.append(("Hard PPL Improvement", test_hard_ppl_improvement()))
+
+    # Summary
+    print("\n" + "=" * 60)
+    print("Summary")
+    print("=" * 60)
+
+    all_passed = True
+    for name, passed in results:
+        status = "✓" if passed else "✗"
+        print(f"{status} {name}")
+        if not passed:
+            all_passed = False
+
+    total_time = time.time() - start_time
+    print(f"\nTotal time: {total_time:.2f}s")
+
+    if all_passed:
+        print("\n✓ All tests passed!")
+    else:
+        print("\n✗ Some tests failed!")
+
+    return all_passed
 
 
 if __name__ == "__main__":

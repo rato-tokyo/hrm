@@ -30,7 +30,6 @@ Usage:
 
 References:
 - LEGO: Layered Ensemble with Gradual Optimization
-- ASHEM: Adaptive Supervision via Hard Example Mining
 """
 
 import torch

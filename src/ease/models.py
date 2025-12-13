@@ -107,6 +107,24 @@ class BaseTransformer(nn.Module):
             outputs.append(self.output_head(h))
         return outputs
 
+    def forward_to_layer(self, x: torch.Tensor, layer_idx: int) -> torch.Tensor:
+        """
+        Forward pass up to specified layer, returning hidden state.
+
+        Used in multi-phase LEGO training to compute confidence at intermediate layers.
+
+        Args:
+            x: Input tensor of shape (batch_size, seq_len)
+            layer_idx: Layer index (1-indexed) to stop at
+
+        Returns:
+            Hidden state tensor of shape (batch_size, seq_len, dim)
+        """
+        h = self.embedding(x)
+        for i in range(min(layer_idx, self.num_layers)):
+            h = self.layers[i](h)
+        return h
+
 
 class StandardTransformer(BaseTransformer):
     """

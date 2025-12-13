@@ -1,36 +1,38 @@
 """
 LEGO: Layered Ensemble with Gradual Optimization
 
-レゴブロックのようにStage（層グループ）を組み合わせる柔軟な訓練アーキテクチャ。
+レゴブロックのようにPhase（層グループ）を組み合わせる柔軟な訓練アーキテクチャ。
 
-Core Options (via TrainingConfig):
-1. stages: Stage-based training configuration (LEGO blocks)
-2. routing_threshold: Early exit at inference
+Core Concepts:
+- PhaseConfig: 1つのフェーズ（層ブロック）の訓練設定
+- LEGOConfig: 複数フェーズの訓練設定（Cascading方式）
+- LEGOTrainer: Cascading LEGO訓練を実行
 
 Training Strategies:
-1. Standard LEGO: Final layer only (create_standard_config)
-2. ASHEM LEGO: Hard example mining with 2-stage blocks
+1. Standard: Final layer only (create_standard_config + Trainer)
+2. LEGO: Multi-phase cascading training (LEGOConfig + LEGOTrainer)
 
 Usage:
     from ease import (
         StandardTransformer,
         DeepSupervisionTransformer,
-        Trainer,
-        TrainingConfig,
-        StageConfig,
-        create_standard_config,
+        LEGOConfig,
+        PhaseConfig,
+        LEGOTrainer,
     )
 
-    # Phase 1: Train shallow model
-    model = StandardTransformer(vocab_size=1000, dim=64, num_layers=2)
-    config = create_standard_config(num_layers=2)
-    trainer = Trainer(config, vocab_size=1000)
+    # Define multi-phase configuration
+    config = LEGOConfig(
+        phases=[
+            PhaseConfig(layers=(1, 2), lr=1e-3, patience=1),
+            PhaseConfig(layers=(3, 4), lr=1e-4, patience=3),
+        ],
+        hard_example_ratio=0.5,
+    )
 
-    # Phase 2: Extend and train on hard examples (see ASHEM functions)
-
-References:
-- LEGO: Layered Ensemble with Gradual Optimization
-- ASHEM: Adaptive Supervision via Hard Example Mining
+    # Train with cascading phases
+    trainer = LEGOTrainer(config, vocab_size=10000, device='cuda')
+    result = trainer.train(model, train_loader, val_loader)
 """
 
 # Types (shared across modules)
@@ -40,6 +42,8 @@ from .types import (
     HardExamples,
     EvalStats,
     TrainingHistory,
+    PhaseHistory,
+    LEGOResult,
 )
 
 # Models
@@ -48,7 +52,7 @@ from .models import (
     DeepSupervisionTransformer,
 )
 
-# Trainer
+# Standard Trainer (for simple training)
 from .trainer import (
     StageConfig,
     TrainingConfig,
@@ -56,9 +60,12 @@ from .trainer import (
     create_standard_config,
 )
 
-# ASHEM
-from .ashem import (
-    ASHEMConfig,
+# LEGO (multi-phase cascading training)
+from .lego import (
+    PhaseConfig,
+    LEGOConfig,
+    LEGOTrainer,
+    # Utility functions (for advanced usage)
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
@@ -66,7 +73,7 @@ from .ashem import (
     evaluate_on_hard_examples,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 __all__ = [
     # Types
@@ -75,16 +82,20 @@ __all__ = [
     'HardExamples',
     'EvalStats',
     'TrainingHistory',
+    'PhaseHistory',
+    'LEGOResult',
     # Models
     'StandardTransformer',
     'DeepSupervisionTransformer',
-    # Trainer
+    # Standard Trainer
     'StageConfig',
     'TrainingConfig',
     'Trainer',
     'create_standard_config',
-    # ASHEM
-    'ASHEMConfig',
+    # LEGO
+    'PhaseConfig',
+    'LEGOConfig',
+    'LEGOTrainer',
     'compute_confidence_threshold',
     'collect_hard_examples',
     'create_hard_example_loader',
