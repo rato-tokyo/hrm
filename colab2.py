@@ -189,7 +189,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     phase1_time = time.time() - start_time
 
     phase1_acc = result_phase1['val_accs'][result_phase1['best_epoch']] * 100
-    phase1_ppl = result_phase1['val_losses'][result_phase1['best_epoch']]
+    phase1_ppl = result_phase1['val_ppls'][result_phase1['best_epoch']]
 
     print("\nPhase 1 Results:")
     print(f"  Best Acc: {phase1_acc:.2f}%")
@@ -295,7 +295,6 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
         optimizer=optimizer_upper,
         num_lower_layers=config.phase1_layers,
         routing_threshold=confidence_threshold,
-        exit_layer=config.phase1_layers,
         max_epochs=config.phase2_epochs,
         patience=config.phase2_patience,
         verbose=True
@@ -306,8 +305,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     phase2_hard_ppl = result_phase2['hard_ppls'][result_phase2['best_epoch']]
     final_val_stats = trainer.evaluate(
         model_extended, val_loader,
-        routing_threshold=confidence_threshold,
-        exit_layer=config.phase1_layers
+        routing_threshold=confidence_threshold
     )
 
     print("\nPhase 2 Results:")
@@ -327,8 +325,7 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     # Evaluate with routing
     stats = trainer.evaluate(
         model_extended, val_loader,
-        routing_threshold=confidence_threshold,
-        exit_layer=config.phase1_layers
+        routing_threshold=confidence_threshold
     )
 
     print("Results:")

@@ -172,8 +172,8 @@ class Trainer:
                 print(f"\nRestored best model from epoch {best_epoch+1}")
 
         result: Dict[str, Any] = {
-            'train_losses': train_ppls,
-            'val_losses': val_ppls,
+            'train_ppls': train_ppls,
+            'val_ppls': val_ppls,
             'val_accs': val_accs,
             'best_epoch': best_epoch,
             'best_val_ppl': best_val_ppl,
@@ -231,14 +231,10 @@ class Trainer:
                 batch_size=64, num_lower_layers=num_lower_layers
             )
 
-        result = self._early_stopping_loop(
+        return self._early_stopping_loop(
             model, val_batches, train_fn, max_epochs, patience, verbose,
             routing_threshold, extra_eval_fn
         )
-        # Rename for backward compatibility
-        result['train_ppls'] = result.pop('train_losses')
-        result['val_ppls'] = result.pop('val_losses')
-        return result
 
     def collect_hard_examples(
         self,
