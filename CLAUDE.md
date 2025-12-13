@@ -73,11 +73,20 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 ### LEGOBlockの責務（シンプル）
 
 ```python
+# LEGOBlockはTransformerBlockを引数で受け取る（明示的コンポジション）
+block = LEGOBlock(TransformerBlock(dim=256, num_heads=8, num_layers=4))
+
 class LEGOBlock(nn.Module):
-    # 属性
-    transformer: TransformerBlock  # 標準Transformer（委譲）
-    exit_classifier: nn.Linear     # LEGO特有（dim → 1）
-    threshold: float               # exit判定閾値（trainerが設定）
+    def __init__(self, transformer: TransformerBlock):
+        self.transformer = transformer  # 外部から注入
+        self.exit_classifier = nn.Linear(transformer.dim, 1)
+        self.threshold = 1.0  # trainerが設定
+
+    # プロパティ（transformerに委譲）
+    @property
+    def dim(self) -> int: return self.transformer.dim
+    @property
+    def num_layers(self) -> int: return self.transformer.num_layers
 
     # メソッド
     forward() → (h, logits, should_exit)  # 推論のみ

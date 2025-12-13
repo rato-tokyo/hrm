@@ -28,31 +28,37 @@ class LEGOBlock(nn.Module):
     - Clear distinction between standard and LEGO-specific functionality
 
     Args:
-        dim: Model dimension
-        num_heads: Number of attention heads
-        num_layers: Number of transformer layers in this block
+        transformer: TransformerBlock to wrap
         output_head: Shared output projection (reference, not owned)
     """
 
     def __init__(
         self,
-        dim: int,
-        num_heads: int,
-        num_layers: int,
+        transformer: TransformerBlock,
         output_head: Optional[nn.Linear] = None,
     ):
         super().__init__()
-        self.dim = dim
-        self.num_heads = num_heads
-        self.num_layers = num_layers
+        self.transformer = transformer
         self.threshold = 1.0  # Set by trainer
         self.output_head = output_head  # Shared reference, not owned
 
-        # Standard transformer block (composition)
-        self.transformer = TransformerBlock(dim, num_heads, num_layers)
-
         # LEGO-specific: Lightweight exit classifier (dim -> 1)
-        self.exit_classifier = nn.Linear(dim, 1)
+        self.exit_classifier = nn.Linear(transformer.dim, 1)
+
+    @property
+    def dim(self) -> int:
+        """Model dimension (delegated to transformer)."""
+        return self.transformer.dim
+
+    @property
+    def num_heads(self) -> int:
+        """Number of attention heads (delegated to transformer)."""
+        return self.transformer.num_heads
+
+    @property
+    def num_layers(self) -> int:
+        """Number of layers (delegated to transformer)."""
+        return self.transformer.num_layers
 
     def forward(
         self, h: torch.Tensor

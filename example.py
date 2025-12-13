@@ -16,6 +16,7 @@ import torch.nn.functional as F
 from lego import (
     LEGOLLM,
     LEGOBlock,
+    TransformerBlock,
     TrainingData,
     ExperimentConfig,
     train_block,
@@ -45,8 +46,8 @@ def main() -> None:
     # Create model with 2 blocks
     # Thresholds are set automatically by train_block() based on hard_ratio
     blocks = [
-        LEGOBlock(config.dim, config.num_heads, config.phase1_layers),
-        LEGOBlock(config.dim, config.num_heads, config.phase2_layers - config.phase1_layers),
+        LEGOBlock(TransformerBlock(config.dim, config.num_heads, config.phase1_layers)),
+        LEGOBlock(TransformerBlock(config.dim, config.num_heads, config.phase2_layers - config.phase1_layers)),
     ]
     model = LEGOLLM(vocab_size, config.dim, blocks).to(device)
 
