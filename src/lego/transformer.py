@@ -258,7 +258,9 @@ class LEGOTransformer(nn.Module):
                     # Check early exit (skip for last block)
                     if block_idx < len(self.blocks) - 1:
                         block_logits, confidence = block.compute_confidence(h)
-                        if block.should_exit(confidence):
+                        # Token-level early exit: check if confidence >= threshold
+                        # For generation with batch_size=1, this is a single token check
+                        if (confidence >= block.threshold).all():
                             logits = block_logits
                             exit_counts[block_idx] += batch_size
                             exited = True
