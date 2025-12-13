@@ -6,6 +6,8 @@ Two-phase training with hard example mining and early exit inference.
 
 from .models import LEGOTransformer
 from .trainer import Trainer
+from .config import ExperimentConfig
+from .data import create_wikitext_dataloaders
 from .utils import (
     set_seed,
     get_device,
@@ -31,6 +33,10 @@ __all__ = [
     'LEGOTransformer',
     # Trainer
     'Trainer',
+    # Config
+    'ExperimentConfig',
+    # Data
+    'create_wikitext_dataloaders',
     # Utilities
     'set_seed',
     'get_device',

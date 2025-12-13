@@ -24,10 +24,6 @@ class Trainer:
         self.vocab_size = vocab_size
         self.device = device
 
-    def create_optimizer(self, model: nn.Module, base_lr: float) -> torch.optim.Optimizer:
-        """Create optimizer with uniform learning rate."""
-        return torch.optim.AdamW(model.parameters(), lr=base_lr)
-
     @torch.no_grad()
     def evaluate(
         self,

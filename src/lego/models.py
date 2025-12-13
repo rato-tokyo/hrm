@@ -17,10 +17,7 @@ class LEGOTransformer(nn.Module):
     """
     LEGO Transformer for language modeling.
 
-    Unified model supporting:
-    - Standard training (final layer loss only)
-    - Deep supervision (loss at all layers)
-    - Early exit inference (confidence-based routing)
+    Supports standard training and early exit inference (confidence-based routing).
 
     Args:
         vocab_size: Vocabulary size

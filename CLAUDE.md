@@ -33,20 +33,19 @@ model = LEGOTransformer(
     vocab_size=vocab_size, dim=dim, num_layers=2, num_heads=num_heads
 )
 trainer = Trainer(vocab_size=vocab_size, device=device)
-optimizer = trainer.create_optimizer(model, base_lr=1e-3)
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 result = trainer.train_with_early_stopping(model, train_loader, val_loader, optimizer)
 ```
 
 ### Hard Examples収集
 
 ```python
-# 方法1: 個別関数を使用
 confidence_threshold = compute_confidence_threshold(
     model, val_loader, target_ratio=0.5, device=device
 )
 hard_examples = collect_hard_examples(model, val_loader, confidence_threshold, device)
 hard_batches = create_hard_example_loader(hard_examples, batch_size=64)
-# Returns: {'hidden_states', 'targets', 'confidences'}
+# Returns: {'hidden_states', 'targets'}
 ```
 
 ### Phase 2: 拡張モデルの訓練
@@ -60,11 +59,11 @@ model_extended = model.extend(
 ).to(device)
 
 # Hard examplesで上位層のみ訓練
-optimizer = trainer.create_optimizer(model_extended, base_lr=1e-4)
+optimizer = torch.optim.AdamW(model_extended.parameters(), lr=1e-4)
 result = trainer.train_upper_layers_with_early_stopping(
     model_extended, hard_batches, val_loader, hard_examples,
     optimizer, num_lower_layers=2,
-    routing_threshold=threshold, exit_layer=2
+    routing_threshold=threshold
 )
 ```
 
