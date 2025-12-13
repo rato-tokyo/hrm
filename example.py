@@ -12,11 +12,11 @@ import sys
 sys.path.insert(0, 'src')
 
 import torch
+import torch.nn.functional as F
 from lego import (
     LEGOBlock,
     LEGOTransformer,
     TrainingData,
-    Trainer,
     ExperimentConfig,
     set_seed,
     get_device,
@@ -117,15 +117,48 @@ def main() -> None:
     print("Evaluation: TRUE Early Exit")
     print("=" * 60)
 
-    trainer = Trainer(vocab_size=vocab_size, device=device)
-    stats = trainer.evaluate(model, val_batches, use_routing=True)
+    model.eval()
+    total_loss = 0.0
+    total_tokens = 0
+    correct = 0
+    all_exit_counts = [0] * len(model.blocks)
+
+    with torch.no_grad():
+        for x, y in val_batches:
+            x, y = x.to(device), y.to(device)
+            logits, stats = model.forward(x, return_stats=True)
+
+            # Accumulate exit counts
+            for i, count in enumerate(stats['exit_counts']):
+                all_exit_counts[i] += count
+
+            # Loss and accuracy
+            logits_flat = logits.view(-1, logits.size(-1))
+            y_flat = y.view(-1)
+            total_loss += F.cross_entropy(logits_flat, y_flat, reduction='sum').item()
+            total_tokens += y_flat.numel()
+            correct += (logits_flat.argmax(dim=-1) == y_flat).sum().item()
+
+    import numpy as np
+    ppl = float(np.exp(total_loss / total_tokens))
+    acc = correct / total_tokens
+    shallow_exits = sum(all_exit_counts[:-1])
+    shallow_ratio = shallow_exits / total_tokens if total_tokens > 0 else 0.0
+
+    # Compute cost
+    total_layers_computed = 0
+    layers_so_far = 0
+    for block_idx, count in enumerate(all_exit_counts):
+        layers_so_far += model.blocks[block_idx].num_layers
+        total_layers_computed += count * layers_so_far
+    compute_cost = total_layers_computed / (total_tokens * model.num_layers) if total_tokens > 0 else 1.0
 
     print(f"\nFinal Results:")
-    print(f"  Accuracy: {stats['acc']*100:.2f}%")
-    print(f"  PPL: {stats['ppl']:.2f}")
-    print(f"  Shallow ratio: {stats['shallow_ratio']*100:.1f}%")
-    print(f"  Compute cost: {stats['compute_cost']*100:.1f}%")
-    print(f"  Compute savings: {(1-stats['compute_cost'])*100:.1f}%")
+    print(f"  Accuracy: {acc*100:.2f}%")
+    print(f"  PPL: {ppl:.2f}")
+    print(f"  Shallow ratio: {shallow_ratio*100:.1f}%")
+    print(f"  Compute cost: {compute_cost*100:.1f}%")
+    print(f"  Compute savings: {(1-compute_cost)*100:.1f}%")
 
     print("\n" + "=" * 60)
     print("Experiment completed!")
