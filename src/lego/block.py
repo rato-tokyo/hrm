@@ -55,51 +55,11 @@ class LEGOBlock(nn.Module):
             TransformerBlock(dim, num_heads) for _ in range(num_layers)
         ])
 
-    def forward(self, h: torch.Tensor) -> torch.Tensor:
-        """
-        Forward pass through all layers in this block.
-
-        Args:
-            h: Hidden states (batch_size, seq_len, dim)
-
-        Returns:
-            Output hidden states (batch_size, seq_len, dim)
-        """
-        for layer in self.layers:
-            h = layer(h)
-        return h
-
-    def set_output_head(self, output_head: nn.Linear) -> None:
-        """Set the shared output head reference."""
-        self.output_head = output_head
-
-    def compute_confidence(self, h: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Compute confidence (max probability) from hidden state.
-
-        Args:
-            h: Hidden states (batch_size, seq_len, dim)
-
-        Returns:
-            logits: Output logits (batch_size, seq_len, vocab_size)
-            confidence: Max probability per token (batch_size, seq_len)
-        """
-        if self.output_head is None:
-            raise RuntimeError("output_head not set. Call set_output_head() first.")
-        logits = self.output_head(h)
-        probs = F.softmax(logits, dim=-1)
-        confidence = probs.max(dim=-1).values
-        return logits, confidence
-
-    def forward_with_exit(
-        self,
-        h: torch.Tensor
+    def forward(
+        self, h: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Forward pass with exit decision.
-
-        Combines forward(), compute_confidence(), and exit mask computation
-        into a single method. This encapsulates the block's exit logic.
+        Forward pass through all layers with exit decision.
 
         Args:
             h: Hidden states (batch_size, seq_len, dim)
@@ -107,12 +67,23 @@ class LEGOBlock(nn.Module):
         Returns:
             h: Output hidden states (batch_size, seq_len, dim)
             logits: Output logits (batch_size, seq_len, vocab_size)
-            exit_mask: Boolean mask where True = should exit (batch_size, seq_len)
+            should_exit: Boolean mask where True = should exit (batch_size, seq_len)
         """
-        h = self.forward(h)
-        logits, confidence = self.compute_confidence(h)
-        exit_mask = confidence >= self.threshold
-        return h, logits, exit_mask
+        if self.output_head is None:
+            raise RuntimeError("output_head not set. Call set_output_head() first.")
+
+        for layer in self.layers:
+            h = layer(h)
+
+        logits = self.output_head(h)
+        confidence = F.softmax(logits, dim=-1).max(dim=-1).values
+        should_exit = confidence >= self.threshold
+
+        return h, logits, should_exit
+
+    def set_output_head(self, output_head: nn.Linear) -> None:
+        """Set the shared output head reference."""
+        self.output_head = output_head
 
     def freeze(self) -> None:
         """Freeze all parameters in this block."""
@@ -189,8 +160,8 @@ class LEGOBlock(nn.Module):
 
             for h, y in train_data.to(str(device)).batches(batch_size):
                 optimizer.zero_grad()
-                h_out = self.forward(h)
-                logits = self.output_head(h_out).squeeze(1)
+                _, logits, _ = self.forward(h)
+                logits = logits.squeeze(1)
                 loss = F.cross_entropy(logits, y)
                 loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
@@ -208,8 +179,8 @@ class LEGOBlock(nn.Module):
 
             with torch.no_grad():
                 for h, y in val_data.to(str(device)).batches(batch_size, shuffle=False):
-                    h_out = self.forward(h)
-                    logits = self.output_head(h_out).squeeze(1)
+                    _, logits, _ = self.forward(h)
+                    logits = logits.squeeze(1)
                     loss = F.cross_entropy(logits, y, reduction='sum')
                     val_loss += loss.item()
                     val_tokens += len(y)
@@ -288,14 +259,11 @@ class LEGOBlock(nn.Module):
             # Process in batches to avoid OOM
             for h, y in data.to(str(device)).batches(batch_size=256, shuffle=False):
                 # Forward through this block
-                h_out = self.forward(h)
+                h_out, _, should_exit = self.forward(h)
+                should_exit = should_exit.squeeze(1)  # (batch_size,)
 
-                # Compute confidence
-                _, confidence = self.compute_confidence(h_out)
-                confidence = confidence.squeeze(1)  # (batch_size,)
-
-                # Find hard tokens (confidence < threshold)
-                hard_mask = confidence < self.threshold
+                # Hard tokens are those that should NOT exit (need more processing)
+                hard_mask = ~should_exit
 
                 if hard_mask.any():
                     # Get output hidden states for hard tokens

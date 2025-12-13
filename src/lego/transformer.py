@@ -164,16 +164,16 @@ class LEGOTransformer(nn.Module):
             is_last_block = (block_idx == len(self.blocks) - 1)
             h_active = h_flat[active_indices].unsqueeze(1)
 
-            h_active, logits_active, exit_mask = block.forward_with_exit(h_active)
+            h_active, logits_active, should_exit = block.forward(h_active)
             logits_active = logits_active.squeeze(1)
-            exit_mask = exit_mask.squeeze(1)
+            should_exit = should_exit.squeeze(1)
 
             if not is_last_block:
-                exiting_indices = active_indices[exit_mask]
-                final_logits[exiting_indices] = logits_active[exit_mask]
+                exiting_indices = active_indices[should_exit]
+                final_logits[exiting_indices] = logits_active[should_exit]
                 exit_blocks[exiting_indices] = block_idx
 
-                continuing_mask = ~exit_mask
+                continuing_mask = ~should_exit
                 h_flat[active_indices[continuing_mask]] = h_active.squeeze(1)[continuing_mask]
                 active_indices = active_indices[continuing_mask]
             else:
