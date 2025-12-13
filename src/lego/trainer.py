@@ -8,24 +8,21 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
-from typing import Tuple, Dict, Any, List, TYPE_CHECKING
+from typing import Tuple, Dict, Any, List, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .block import LEGOBlock
     from .data import TrainingData
+
+from .config import TrainerConfig
 
 
 def train_block(
     block: "LEGOBlock",
     data: "TrainingData",
     optimizer: torch.optim.Optimizer,
-    batch_size: int = 64,
-    max_epochs: int = 50,
-    patience: int = 3,
-    grad_clip: float = 1.0,
-    val_ratio: float = 0.2,
-    hard_ratio: float = 0.5,
-    verbose: bool = True
+    config: Optional[TrainerConfig] = None,
+    verbose: Optional[bool] = None,
 ) -> Tuple["TrainingData", Dict[str, Any]]:
     """
     Train a LEGOBlock and return hard examples for the next block.
@@ -41,13 +38,8 @@ def train_block(
         block: LEGOBlock to train
         data: TrainingData containing (hidden_states, targets)
         optimizer: Optimizer for block's parameters
-        batch_size: Batch size for training
-        max_epochs: Maximum number of epochs
-        patience: Early stopping patience
-        grad_clip: Gradient clipping value
-        val_ratio: Ratio of data for validation (default: 0.2)
-        hard_ratio: Ratio of tokens to collect as hard examples (default: 0.5)
-        verbose: Print training progress
+        config: TrainerConfig with training hyperparameters (default: TrainerConfig())
+        verbose: Override config.verbose if specified
 
     Returns:
         Tuple of:
@@ -56,13 +48,19 @@ def train_block(
     """
     import numpy as np
 
+    if config is None:
+        config = TrainerConfig()
+
+    # Allow verbose override
+    is_verbose = verbose if verbose is not None else config.verbose
+
     if block.output_head is None:
         raise RuntimeError("output_head not set. Call set_output_head() first.")
 
     # Split data
-    train_data, val_data = data.split(train_ratio=1.0 - val_ratio)
+    train_data, val_data = data.split(train_ratio=1.0 - config.val_ratio)
 
-    if verbose:
+    if is_verbose:
         print(f"Training block: {len(train_data)} train, {len(val_data)} val tokens")
 
     # Training state
@@ -77,13 +75,13 @@ def train_block(
 
     device = next(block.parameters()).device
 
-    for epoch in range(max_epochs):
+    for epoch in range(config.max_epochs):
         # Training
         block.train()
         total_loss = 0.0
         num_batches = 0
 
-        for h, y in train_data.to(str(device)).batches(batch_size):
+        for h, y in train_data.to(str(device)).batches(config.batch_size):
             optimizer.zero_grad()
             h_out, logits, _ = block.forward(h)
             logits = logits.squeeze(1)
@@ -103,7 +101,7 @@ def train_block(
             loss = lm_loss + exit_loss
 
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(block.parameters(), grad_clip)
+            torch.nn.utils.clip_grad_norm_(block.parameters(), config.grad_clip)
             optimizer.step()
             total_loss += lm_loss.item()
             num_batches += 1
@@ -117,7 +115,7 @@ def train_block(
         val_tokens = 0
 
         with torch.no_grad():
-            for h, y in val_data.to(str(device)).batches(batch_size, shuffle=False):
+            for h, y in val_data.to(str(device)).batches(config.batch_size, shuffle=False):
                 _, logits, _ = block.forward(h)
                 logits = logits.squeeze(1)
                 loss = F.cross_entropy(logits, y, reduction='sum')
@@ -137,12 +135,12 @@ def train_block(
         else:
             patience_counter += 1
 
-        if verbose:
-            status = "best" if is_best else f"{patience_counter}/{patience}"
-            print(f"  Epoch {epoch+1}/{max_epochs}: train_ppl={train_ppl:.2f}, val_ppl={val_ppl:.2f} [{status}]")
+        if is_verbose:
+            status = "best" if is_best else f"{patience_counter}/{config.patience}"
+            print(f"  Epoch {epoch+1}/{config.max_epochs}: train_ppl={train_ppl:.2f}, val_ppl={val_ppl:.2f} [{status}]")
 
-        if patience_counter >= patience:
-            if verbose:
+        if patience_counter >= config.patience:
+            if is_verbose:
                 print(f"  Early stopping at epoch {epoch+1}")
             break
 
@@ -151,7 +149,7 @@ def train_block(
         block.load_state_dict({k: v.to(device) for k, v in best_state.items()})
 
     # Collect hard examples and set threshold based on confidence distribution
-    hard_examples, threshold = _collect_hard_examples(block, data, device, hard_ratio)
+    hard_examples, threshold = _collect_hard_examples(block, data, device, config.hard_ratio)
     block.threshold = threshold
 
     actual_hard_ratio = len(hard_examples) / len(data) if len(data) > 0 else 0.0
@@ -161,12 +159,12 @@ def train_block(
         'best_epoch': best_epoch,
         'best_val_ppl': best_ppl,
         'total_epochs': epoch + 1,
-        'stopped_early': patience_counter >= patience,
+        'stopped_early': patience_counter >= config.patience,
         'hard_ratio': actual_hard_ratio,
         'threshold': threshold,
     }
 
-    if verbose:
+    if is_verbose:
         print(f"  Threshold: {threshold:.4f}")
         print(f"  Hard examples: {len(hard_examples)} tokens ({actual_hard_ratio*100:.1f}%)")
 

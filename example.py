@@ -19,6 +19,7 @@ from lego import (
     TransformerBlock,
     TrainingData,
     ExperimentConfig,
+    TrainerConfig,
     train_block,
     set_seed,
     get_device,
@@ -28,7 +29,16 @@ from lego import (
 
 def main() -> None:
     """Run LEGO block-wise training example."""
+    # Configuration
     config = ExperimentConfig()
+    trainer_config = TrainerConfig(
+        batch_size=64,
+        max_epochs=50,
+        patience=3,
+        hard_ratio=0.5,
+        lr=1e-3,
+    )
+
     device = get_device()
 
     print("=" * 60)
@@ -36,22 +46,21 @@ def main() -> None:
     print("=" * 60)
     print(f"Device: {device}")
     print(f"Model: dim={config.dim}, heads={config.num_heads}")
+    print(f"Blocks: {config.block_layers}")
 
     # Setup
     set_seed(42)
     train_batches, val_batches, vocab_size = create_wikitext_dataloaders(
-        config.phase1_samples, config.phase1_batch, config.seq_len
+        config.num_samples, trainer_config.batch_size, config.seq_len
     )
 
-    # Create model with 2 blocks
-    # Thresholds are set automatically by train_block() based on hard_ratio
+    # Create model with blocks based on config.block_layers
     blocks = [
-        LEGOBlock(TransformerBlock(config.dim, config.num_heads, config.phase1_layers)),
-        LEGOBlock(TransformerBlock(config.dim, config.num_heads, config.phase2_layers - config.phase1_layers)),
+        LEGOBlock(TransformerBlock(config.dim, config.num_heads, num_layers))
+        for num_layers in config.block_layers
     ]
     model = LEGOLLM(vocab_size, config.dim, blocks).to(device)
 
-    print(f"Blocks: {len(model.blocks)}")
     print(f"Layers per block: {[b.num_layers for b in model.blocks]}")
 
     # Phase 1: Train Block 0 on all data
@@ -77,16 +86,12 @@ def main() -> None:
     print(f"Initial data: {len(initial_data)} tokens")
 
     # Train Block 0
-    optimizer0 = torch.optim.AdamW(model.blocks[0].parameters(), lr=config.phase1_lr)
+    optimizer0 = torch.optim.AdamW(model.blocks[0].parameters(), lr=trainer_config.lr)
     hard_data, stats0 = train_block(
         block=model.blocks[0],
         data=initial_data,
         optimizer=optimizer0,
-        batch_size=config.phase1_batch,
-        max_epochs=config.phase1_epochs,
-        patience=config.phase1_patience,
-        hard_ratio=config.hard_example_ratio,
-        verbose=True
+        config=trainer_config,
     )
 
     print(f"\nBlock 0 Results:")
@@ -100,15 +105,20 @@ def main() -> None:
     print("=" * 60)
 
     if len(hard_data) > 0:
-        optimizer1 = torch.optim.AdamW(model.blocks[1].parameters(), lr=config.phase2_lr)
+        # Use lower learning rate for deeper block
+        phase2_config = TrainerConfig(
+            batch_size=trainer_config.batch_size,
+            max_epochs=trainer_config.max_epochs,
+            patience=trainer_config.patience,
+            hard_ratio=trainer_config.hard_ratio,
+            lr=trainer_config.lr * 0.1,  # Lower LR for phase 2
+        )
+        optimizer1 = torch.optim.AdamW(model.blocks[1].parameters(), lr=phase2_config.lr)
         _, stats1 = train_block(
             block=model.blocks[1],
             data=hard_data,
             optimizer=optimizer1,
-            batch_size=config.phase2_batch,
-            max_epochs=config.phase2_epochs,
-            patience=config.phase2_patience,
-            verbose=True
+            config=phase2_config,
         )
         print(f"\nBlock 1 Results:")
         print(f"  Best PPL: {stats1['best_val_ppl']:.2f}")

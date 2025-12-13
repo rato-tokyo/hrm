@@ -8,7 +8,7 @@ from .model import LEGOLLM
 from .block import LEGOBlock
 from .modules import TransformerBlock, TransformerLayer
 from .trainer import train_block
-from .config import ExperimentConfig
+from .config import TrainerConfig, ExperimentConfig
 from .data import TrainingData, create_wikitext_dataloaders
 from .utils import (
     set_seed,
@@ -16,7 +16,7 @@ from .utils import (
     create_synthetic_data,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.6.0"
 
 __all__ = [
     # Core - LEGO components
@@ -27,6 +27,7 @@ __all__ = [
     'TransformerLayer',
     # Training
     'train_block',
+    'TrainerConfig',
     # Config
     'ExperimentConfig',
     # Data
