@@ -45,7 +45,6 @@ from .trainer import (
 )
 from .utils import (
     set_seed,
-    LEGOConfig,
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
@@ -70,7 +69,6 @@ __all__ = [
     'Trainer',
     # Utilities
     'set_seed',
-    'LEGOConfig',
     'compute_confidence_threshold',
     'collect_hard_examples',
     'create_hard_example_loader',

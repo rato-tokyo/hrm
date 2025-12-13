@@ -18,7 +18,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Tuple
-from dataclasses import dataclass
 
 
 def set_seed(seed: int) -> None:
@@ -28,39 +27,6 @@ def set_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-
-
-@dataclass
-class LEGOConfig:
-    """
-    Configuration for LEGO two-phase training strategy.
-
-    Two-phase training:
-    1. Phase 1: Train shallow model on all data
-    2. Phase 2: Extend model with additional layers, train only on hard examples
-
-    Args:
-        phase1_layers: Number of layers for shallow model in Phase 1
-        phase1_lr: Learning rate for Phase 1 training
-        phase1_patience: Early stopping patience for Phase 1 (default: 1)
-        hard_example_ratio: Target ratio of hard examples to collect (0.0-1.0).
-                           e.g., 0.5 means target 50% of examples as hard
-        phase2_layers: Total number of layers after extension (must be > phase1_layers)
-        phase2_lr: Learning rate for Phase 2 (typically lower for fine-tuning)
-        phase2_patience: Early stopping patience for Phase 2 (default: 3)
-    """
-    # Phase 1: Shallow model
-    phase1_layers: int = 2
-    phase1_lr: float = 1e-3
-    phase1_patience: int = 1
-
-    # Hard example collection
-    hard_example_ratio: float = 0.5  # Target 50% as hard examples
-
-    # Phase 2: Deep model
-    phase2_layers: int = 4  # Total layers
-    phase2_lr: float = 1e-4  # Lower LR for fine-tuning
-    phase2_patience: int = 3  # Higher patience for new layers
 
 
 # ==============================================================================

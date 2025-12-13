@@ -20,7 +20,6 @@ from lego import (
     LEGOTransformer,
     Trainer,
     TrainingConfig,
-    LEGOConfig,
     compute_confidence_threshold,
     collect_hard_examples,
     create_hard_example_loader,
@@ -29,27 +28,6 @@ from lego import (
 )
 
 from helpers import set_seed, create_synthetic_data, assert_close
-
-
-# ==============================================================================
-# Test: LEGOConfig
-# ==============================================================================
-
-def test_lego_config():
-    """Test LEGOConfig default values."""
-    print("\n[TEST] LEGOConfig defaults")
-
-    config = LEGOConfig()
-
-    assert config.phase1_layers == 2, f"phase1_layers: expected 2, got {config.phase1_layers}"
-    assert config.phase1_lr == 1e-3, f"phase1_lr: expected 1e-3, got {config.phase1_lr}"
-    assert config.phase1_patience == 1, f"phase1_patience: expected 1, got {config.phase1_patience}"
-    assert config.hard_example_ratio == 0.5, f"hard_example_ratio: expected 0.5, got {config.hard_example_ratio}"
-    assert config.phase2_layers == 4, f"phase2_layers: expected 4, got {config.phase2_layers}"
-    assert config.phase2_lr == 1e-4, f"phase2_lr: expected 1e-4, got {config.phase2_lr}"
-    assert config.phase2_patience == 3, f"phase2_patience: expected 3, got {config.phase2_patience}"
-
-    print("  All defaults verified")
 
 
 # ==============================================================================
@@ -526,7 +504,6 @@ def main():
     print("=" * 60)
 
     tests = [
-        test_lego_config,
         test_training_config,
         test_lego_transformer_standard,
         test_lego_transformer_early_exit,
