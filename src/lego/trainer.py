@@ -119,6 +119,57 @@ class Trainer:
             'compute_cost': total_compute / len(val_batches) if use_routing else 1.0,
         }
 
+    def _log_epoch(
+        self,
+        epoch: int,
+        max_epochs: int,
+        train_ppl: float,
+        val_ppl: float,
+        val_acc: float,
+        hard_ppl: Optional[float],
+        is_best: bool,
+        patience_counter: int,
+        patience: int
+    ) -> None:
+        """Log training progress for one epoch."""
+        msg = (f"Epoch {epoch+1}/{max_epochs} - "
+               f"Train PPL: {train_ppl:.4f} | "
+               f"Val PPL: {val_ppl:.2f} | "
+               f"Val Acc: {val_acc*100:.2f}%")
+        if hard_ppl is not None:
+            msg += f" | Hard PPL: {hard_ppl:.2f}"
+        print(msg)
+
+        if is_best:
+            print(f"  → New best (val_ppl: {val_ppl:.2f})")
+        else:
+            print(f"  → No improvement ({patience_counter}/{patience})")
+
+    def _build_training_result(
+        self,
+        train_ppls: List[float],
+        val_ppls: List[float],
+        val_accs: List[float],
+        hard_ppls: List[float],
+        best_epoch: int,
+        best_val_ppl: float,
+        total_epochs: int,
+        stopped_early: bool
+    ) -> Dict[str, Any]:
+        """Build training result dictionary."""
+        result: Dict[str, Any] = {
+            'train_ppls': train_ppls,
+            'val_ppls': val_ppls,
+            'val_accs': val_accs,
+            'best_epoch': best_epoch,
+            'best_val_ppl': best_val_ppl,
+            'total_epochs': total_epochs,
+            'stopped_early': stopped_early
+        }
+        if hard_ppls:
+            result['hard_ppls'] = hard_ppls
+        return result
+
     def _early_stopping_loop(
         self,
         model: nn.Module,
@@ -142,13 +193,12 @@ class Trainer:
         hard_ppls: List[float] = []
 
         for epoch in range(max_epochs):
-            train_loss = train_fn()
-            train_ppl = float(np.exp(train_loss))
+            # Train and evaluate
+            train_ppl = float(np.exp(train_fn()))
             train_ppls.append(train_ppl)
 
             val_stats = self.evaluate(model, val_batches, routing_threshold)
-            val_ppl = val_stats['ppl']
-            val_acc = val_stats['acc']
+            val_ppl, val_acc = val_stats['ppl'], val_stats['acc']
             val_ppls.append(val_ppl)
             val_accs.append(val_acc)
 
@@ -156,50 +206,37 @@ class Trainer:
             if hard_ppl is not None:
                 hard_ppls.append(hard_ppl)
 
-            if verbose:
-                msg = (f"Epoch {epoch+1}/{max_epochs} - "
-                       f"Train PPL: {train_ppl:.4f} | "
-                       f"Val PPL: {val_ppl:.2f} | "
-                       f"Val Acc: {val_acc*100:.2f}%")
-                if hard_ppl is not None:
-                    msg += f" | Hard PPL: {hard_ppl:.2f}"
-                print(msg)
-
-            if val_ppl < best_val_ppl:
+            # Check for improvement
+            is_best = val_ppl < best_val_ppl
+            if is_best:
                 best_val_ppl = val_ppl
                 best_model_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
                 patience_counter = 0
                 best_epoch = epoch
-                if verbose:
-                    print(f"  → New best (val_ppl: {val_ppl:.2f})")
             else:
                 patience_counter += 1
-                if verbose:
-                    print(f"  → No improvement ({patience_counter}/{patience})")
 
+            if verbose:
+                self._log_epoch(epoch, max_epochs, train_ppl, val_ppl, val_acc,
+                               hard_ppl, is_best, patience_counter, patience)
+
+            # Early stopping check
             if patience_counter >= patience:
                 if verbose:
                     print(f"\nEarly stopping at epoch {epoch+1}")
                     print(f"Best model was at epoch {best_epoch+1}")
                 break
 
+        # Restore best model
         if best_model_state is not None:
             model.load_state_dict({k: v.to(self.device) for k, v in best_model_state.items()})
             if verbose:
                 print(f"\nRestored best model from epoch {best_epoch+1}")
 
-        result: Dict[str, Any] = {
-            'train_ppls': train_ppls,
-            'val_ppls': val_ppls,
-            'val_accs': val_accs,
-            'best_epoch': best_epoch,
-            'best_val_ppl': best_val_ppl,
-            'total_epochs': epoch + 1,
-            'stopped_early': patience_counter >= patience
-        }
-        if hard_ppls:
-            result['hard_ppls'] = hard_ppls
-        return result
+        return self._build_training_result(
+            train_ppls, val_ppls, val_accs, hard_ppls,
+            best_epoch, best_val_ppl, epoch + 1, patience_counter >= patience
+        )
 
     def train_with_early_stopping(
         self,

@@ -214,7 +214,8 @@ def create_hard_example_loader(
     batches = []
     for i in range(0, num_samples, batch_size):
         batch_indices = indices[i:i + batch_size]
-        # Add seq_len dimension: (batch_size, dim) -> (batch_size, 1, dim)
+        # Hard examples are individual tokens (batch, dim).
+        # Add seq_len=1 dimension for compatibility with forward_upper_layers.
         h_batch = hidden_states[batch_indices].unsqueeze(1)
         t_batch = targets[batch_indices]
         batches.append((h_batch, t_batch))
@@ -230,9 +231,13 @@ def _forward_upper_on_hard_batch(
 ) -> torch.Tensor:
     """Forward through upper layers on a hard example batch.
 
+    Hard examples are individual tokens extracted from sequences, stored as (batch, dim).
+    Model's forward_upper_layers expects (batch, seq_len, dim), so we add seq_len=1.
+    Output logits are (batch, 1, vocab), squeezed to (batch, vocab) for loss computation.
+
     Args:
         model: Model with forward_upper_layers method
-        h_batch: Hidden states (batch_size, 1, dim)
+        h_batch: Hidden states (batch_size, 1, dim) - seq_len dimension already added
         num_lower_layers: Number of lower layers to skip
         device: Device to run on
 
@@ -240,6 +245,7 @@ def _forward_upper_on_hard_batch(
         Logits (batch_size, vocab_size)
     """
     h_batch = h_batch.to(device)
+    # forward_upper_layers returns (batch, seq_len=1, vocab), squeeze to (batch, vocab)
     return model.forward_upper_layers(h_batch, num_lower_layers).squeeze(1)
 
 
@@ -285,6 +291,34 @@ def train_upper_layers(
     return total_loss / len(hard_batches)
 
 
+def _iterate_hard_batches(
+    hard_examples: Dict[str, torch.Tensor],
+    batch_size: int
+) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+    """Create sequential batches from hard examples (no shuffling).
+
+    Unlike create_hard_example_loader, this preserves order for deterministic evaluation.
+
+    Args:
+        hard_examples: Dictionary with 'hidden_states' and 'targets'
+        batch_size: Number of examples per batch
+
+    Returns:
+        List of (hidden_states, targets) batches with seq_len=1 dimension added
+    """
+    hidden_states = hard_examples['hidden_states']
+    targets = hard_examples['targets']
+    num_samples = len(targets)
+
+    batches = []
+    for i in range(0, num_samples, batch_size):
+        h_batch = hidden_states[i:i + batch_size].unsqueeze(1)
+        t_batch = targets[i:i + batch_size]
+        batches.append((h_batch, t_batch))
+
+    return batches
+
+
 def evaluate_on_hard_examples(
     model: nn.Module,
     hard_examples: Dict[str, torch.Tensor],
@@ -312,15 +346,11 @@ def evaluate_on_hard_examples(
     total_loss = 0.0
     total_samples = 0
 
-    hidden_states = hard_examples['hidden_states']
-    targets = hard_examples['targets']
-    num_samples = len(targets)
+    batches = _iterate_hard_batches(hard_examples, batch_size)
 
     with torch.no_grad():
-        for i in range(0, num_samples, batch_size):
-            h_batch = hidden_states[i:i + batch_size].unsqueeze(1)
-            y_batch = targets[i:i + batch_size].to(device)
-
+        for h_batch, y_batch in batches:
+            y_batch = y_batch.to(device)
             logits = _forward_upper_on_hard_batch(model, h_batch, num_lower_layers, device)
             loss = F.cross_entropy(logits, y_batch, reduction='sum')
 
