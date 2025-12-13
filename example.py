@@ -8,9 +8,6 @@ Workflow:
 4. Evaluate with TRUE Early Exit
 """
 
-import sys
-sys.path.insert(0, 'src')
-
 import torch
 import torch.nn.functional as F
 from lego import (
