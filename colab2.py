@@ -35,9 +35,8 @@ sys.path.insert(0, 'src')
 
 import time
 import torch
-import torch.nn as nn
 from dataclasses import dataclass, field
-from typing import Dict, Any, Callable, Type
+from typing import Dict, Any
 
 from lego import (
     LEGOTransformer,
@@ -110,12 +109,7 @@ CONFIG = ExperimentConfig()
 # Experiment Runner
 # ==============================================================================
 
-def run_experiment(
-    model_name: str,
-    ModelClass: Type[nn.Module],
-    config_fn: Callable[[int], TrainingConfig],
-    device: str
-) -> Dict[str, Any]:
+def run_experiment(device: str) -> Dict[str, Any]:
     """
     Run complete hard example mining experiment.
 
@@ -126,16 +120,13 @@ def run_experiment(
     4. Evaluate using two-stage inference (Early Exit)
 
     Args:
-        model_name: Name of model architecture for logging
-        ModelClass: Model class to use for Phase 1
-        config_fn: Function to create training config
         device: Device to run experiment on
 
     Returns:
         Dictionary with experiment results and metrics
     """
     print(f"\n{'='*60}")
-    print(f"{model_name} - Hard Example Mining")
+    print("LEGOTransformer - Hard Example Mining")
     print(f"{'='*60}\n")
 
     # ==========================================================================
@@ -151,7 +142,7 @@ def run_experiment(
     CONFIG.vocab_size = vocab_size  # Update vocab size from data
 
     # Create shallow model
-    model = ModelClass(
+    model = LEGOTransformer(
         vocab_size=CONFIG.vocab_size,
         dim=CONFIG.dim,
         num_layers=CONFIG.lego.phase1_layers,
@@ -159,7 +150,7 @@ def run_experiment(
     ).to(device)
 
     # Train with early stopping
-    config = config_fn(CONFIG.lego.phase1_layers)
+    config = create_standard_config(CONFIG.lego.phase1_layers)
     trainer = Trainer(config, vocab_size=CONFIG.vocab_size, device=device)
     optimizer = trainer.create_optimizer(model, base_lr=CONFIG.lego.phase1_lr)
 
@@ -364,7 +355,7 @@ def run_experiment(
     print(f"  Compute cost:            {stats['compute_cost']:.2%} of full model")
 
     return {
-        'model_name': model_name,
+        'model_name': 'LEGOTransformer',
         'phase1_acc': phase1_acc,
         'phase1_ppl': phase1_ppl,
         'phase1_hard_ppl': phase1_hard_ppl,
@@ -402,13 +393,8 @@ def main() -> None:
 
     device = get_device()
 
-    # Run experiment with LEGOTransformer
-    run_experiment(
-        "LEGOTransformer",
-        LEGOTransformer,
-        create_standard_config,
-        device
-    )
+    # Run experiment
+    run_experiment(device)
 
     print("\n" + "="*60)
     print("Experiment completed!")
