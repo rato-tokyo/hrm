@@ -25,13 +25,12 @@ class LEGOBlock(nn.Module):
     Each LEGOBlock:
     - Owns multiple TransformerBlock layers
     - Has a lightweight exit_classifier for confidence prediction
-    - Has a threshold for token-level early exit decision
+    - Has a threshold for token-level early exit decision (set automatically by fit())
 
     Args:
         dim: Model dimension
         num_heads: Number of attention heads
         num_layers: Number of transformer layers in this block
-        threshold: Confidence threshold for early exit (1.0 = no early exit)
         output_head: Shared output projection (reference, not owned)
     """
 
@@ -40,14 +39,13 @@ class LEGOBlock(nn.Module):
         dim: int,
         num_heads: int,
         num_layers: int,
-        threshold: float = 1.0,
         output_head: Optional[nn.Linear] = None,
     ):
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
         self.num_layers = num_layers
-        self.threshold = threshold
+        self.threshold = 1.0  # Set automatically by fit()
         self.output_head = output_head  # Shared reference, not owned
 
         self.layers = nn.ModuleList([
@@ -221,10 +219,11 @@ class LEGOBlock(nn.Module):
         if best_state is not None:
             self.load_state_dict({k: v.to(device) for k, v in best_state.items()})
 
-        # Collect hard examples (ratio-based: bottom X% by confidence)
-        hard_examples = self._collect_hard_examples(data, device, hard_ratio)
+        # Collect hard examples and set threshold based on confidence distribution
+        hard_examples, threshold = self._collect_hard_examples(data, device, hard_ratio)
+        self.threshold = threshold
 
-        hard_ratio = len(hard_examples) / len(data) if len(data) > 0 else 0.0
+        actual_hard_ratio = len(hard_examples) / len(data) if len(data) > 0 else 0.0
         stats: Dict[str, Any] = {
             'train_ppls': train_ppls,
             'val_ppls': val_ppls,
@@ -232,11 +231,13 @@ class LEGOBlock(nn.Module):
             'best_val_ppl': best_ppl,
             'total_epochs': epoch + 1,
             'stopped_early': patience_counter >= patience,
-            'hard_ratio': hard_ratio,
+            'hard_ratio': actual_hard_ratio,
+            'threshold': threshold,
         }
 
         if verbose:
-            print(f"  Hard examples: {len(hard_examples)} tokens ({hard_ratio*100:.1f}%)")
+            print(f"  Threshold: {threshold:.4f}")
+            print(f"  Hard examples: {len(hard_examples)} tokens ({actual_hard_ratio*100:.1f}%)")
 
         return hard_examples, stats
 
@@ -245,12 +246,12 @@ class LEGOBlock(nn.Module):
         data: "TrainingData",
         device: torch.device,
         hard_ratio: float
-    ) -> "TrainingData":
+    ) -> Tuple["TrainingData", float]:
         """
         Collect hard examples (low confidence tokens) after training.
 
         Uses ratio-based selection: collects the bottom X% tokens by confidence.
-        Returns the output hidden states (after this block) for hard tokens.
+        Also computes the threshold based on the confidence distribution.
 
         Args:
             data: Input TrainingData
@@ -258,7 +259,9 @@ class LEGOBlock(nn.Module):
             hard_ratio: Ratio of tokens to collect (0.0-1.0)
 
         Returns:
-            TrainingData with hard examples (output hidden states and targets)
+            Tuple of:
+            - TrainingData with hard examples (output hidden states and targets)
+            - threshold: Confidence threshold for early exit (quantile-based)
         """
         from .data import TrainingData
 
@@ -283,17 +286,21 @@ class LEGOBlock(nn.Module):
                 all_confidences.append(confidence)
 
         if not all_hidden_out:
-            return TrainingData.empty(self.dim, str(device))
+            return TrainingData.empty(self.dim, str(device)), 1.0
 
         # Concatenate all
         all_hidden_out = torch.cat(all_hidden_out)  # (num_tokens, dim)
         all_targets = torch.cat(all_targets)  # (num_tokens,)
         all_confidences = torch.cat(all_confidences)  # (num_tokens,)
 
+        # Compute threshold: quantile such that (1 - hard_ratio) tokens exit
+        # e.g., hard_ratio=0.5 means top 50% exit, so threshold = 50th percentile
+        threshold = float(torch.quantile(all_confidences, 1.0 - hard_ratio).item())
+
         # Select bottom X% by confidence (ratio-based)
         num_hard = int(len(all_confidences) * hard_ratio)
         if num_hard == 0:
-            return TrainingData.empty(self.dim, str(device))
+            return TrainingData.empty(self.dim, str(device)), threshold
 
         # Get indices of tokens with lowest confidence
         _, hard_indices = torch.topk(all_confidences, num_hard, largest=False)
@@ -301,4 +308,4 @@ class LEGOBlock(nn.Module):
         return TrainingData(
             all_hidden_out[hard_indices],
             all_targets[hard_indices]
-        )
+        ), threshold

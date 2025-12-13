@@ -42,17 +42,15 @@ def main() -> None:
     )
 
     # Create model with 2 blocks
-    # Block 0: threshold=0.8 (easy tokens exit here)
-    # Block 1: threshold=1.0 (all remaining tokens processed)
+    # Thresholds are set automatically by fit() based on hard_ratio
     blocks = [
-        LEGOBlock(config.dim, config.num_heads, config.phase1_layers, threshold=0.8),
-        LEGOBlock(config.dim, config.num_heads, config.phase2_layers - config.phase1_layers, threshold=1.0),
+        LEGOBlock(config.dim, config.num_heads, config.phase1_layers),
+        LEGOBlock(config.dim, config.num_heads, config.phase2_layers - config.phase1_layers),
     ]
     model = LEGOTransformer(vocab_size, config.dim, blocks).to(device)
 
     print(f"Blocks: {len(model.blocks)}")
     print(f"Layers per block: {[b.num_layers for b in model.blocks]}")
-    print(f"Thresholds: {[b.threshold for b in model.blocks]}")
 
     # Phase 1: Train Block 0 on all data
     print(f"\n{'=' * 60}")
@@ -90,6 +88,7 @@ def main() -> None:
 
     print(f"\nBlock 0 Results:")
     print(f"  Best PPL: {stats0['best_val_ppl']:.2f}")
+    print(f"  Threshold: {stats0['threshold']:.4f}")
     print(f"  Hard examples: {len(hard_data)} ({stats0['hard_ratio']*100:.1f}%)")
 
     # Phase 2: Train Block 1 on hard examples only

@@ -66,6 +66,22 @@ _, hard_indices = torch.topk(all_confidences, num_hard, largest=False)
 
 threshold方式（`confidence < threshold`）ではない。ratio方式は訓練データ量を制御可能にする。
 
+### Threshold自動設定方式（重要：削除禁止）
+
+**thresholdは`fit()`内で自動計算される**：外部からハードコードしない。
+
+```python
+# 正しい実装（quantile方式）
+# hard_ratio=0.5なら、上位50%がexitするthresholdを計算
+threshold = torch.quantile(all_confidences, 1.0 - hard_ratio)
+self.threshold = threshold
+```
+
+これにより：
+- 訓練後の`exit_classifier`の出力分布に基づいた適切なthreshold
+- `hard_ratio`と推論時のexit率が一致
+- 外部での手動調整が不要
+
 ---
 
 ## 過去の設計ミスと教訓
