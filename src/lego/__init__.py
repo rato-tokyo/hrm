@@ -4,7 +4,7 @@ LEGO: Layered Ensemble with Gradual Optimization
 Two-phase training with hard example mining and early exit inference.
 """
 
-from .models import LEGOTransformer
+from .models import LEGOBlock, LEGOTransformer
 from .trainer import Trainer
 from .config import ExperimentConfig
 from .data import create_wikitext_dataloaders
@@ -31,6 +31,7 @@ __version__ = "0.2.1"
 
 __all__ = [
     # Models
+    'LEGOBlock',
     'LEGOTransformer',
     # Trainer
     'Trainer',
