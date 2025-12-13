@@ -36,7 +36,7 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 ## 核心機能（削除禁止）
 
 1. `LEGOBlock.forward()` - レイヤー処理 + exit判定（h, logits, should_exit）
-2. `LEGOBlock.train_block()` - Block訓練 + hard example収集
+2. `LEGOBlock.train()` - Block訓練 + hard example収集
 3. `LEGOTransformer.forward()` - TRUE Early Exit推論
 4. `TrainingData` - hidden states + targetsのコンテナ
 
