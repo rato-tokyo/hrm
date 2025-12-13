@@ -1,7 +1,8 @@
 """
-LEGO Framework - LEGOTransformer
+LEGO Framework - LEGOLLM
 
-Manages LEGOBlocks and handles inter-block routing with early exit.
+The complete LEGO language model with multi-block early exit capability.
+Manages LEGOBlocks and handles inter-block routing.
 """
 
 from __future__ import annotations
@@ -14,14 +15,19 @@ from typing import Tuple, Dict, List, Any, Union, overload, Literal
 from .block import LEGOBlock
 
 
-class LEGOTransformer(nn.Module):
+class LEGOLLM(nn.Module):
     """
-    LEGO Transformer for language modeling with multi-block early exit.
+    LEGO Language Model with multi-block early exit.
 
-    Manages LEGOBlocks and handles:
-    - Embedding and output head (shared across blocks)
+    The complete model architecture:
+    - Embedding layer (token -> hidden states)
+    - Multiple LEGOBlocks with early exit capability
+    - Shared output head (hidden states -> logits)
+
+    Manages:
     - Inter-block routing based on confidence
-    - Hard token collection and forwarding to next block
+    - TRUE early exit (exited tokens skip subsequent blocks)
+    - Exit statistics computation
 
     Args:
         vocab_size: Vocabulary size

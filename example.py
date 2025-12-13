@@ -14,8 +14,8 @@ sys.path.insert(0, 'src')
 import torch
 import torch.nn.functional as F
 from lego import (
+    LEGOLLM,
     LEGOBlock,
-    LEGOTransformer,
     TrainingData,
     ExperimentConfig,
     set_seed,
@@ -47,7 +47,7 @@ def main() -> None:
         LEGOBlock(config.dim, config.num_heads, config.phase1_layers),
         LEGOBlock(config.dim, config.num_heads, config.phase2_layers - config.phase1_layers),
     ]
-    model = LEGOTransformer(vocab_size, config.dim, blocks).to(device)
+    model = LEGOLLM(vocab_size, config.dim, blocks).to(device)
 
     print(f"Blocks: {len(model.blocks)}")
     print(f"Layers per block: {[b.num_layers for b in model.blocks]}")

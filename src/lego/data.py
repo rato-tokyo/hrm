@@ -77,16 +77,16 @@ class TrainingData:
         self,
         batch_size: int,
         shuffle: bool = True
-    ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
+    ) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
         """
-        Create batched data for training.
+        Iterate over batched data for training.
 
         Args:
             batch_size: Number of tokens per batch
             shuffle: Whether to shuffle before batching
 
-        Returns:
-            List of (hidden_states, targets) tuples
+        Yields:
+            Tuple of (hidden_states, targets)
             - hidden_states: (batch_size, 1, dim) for LEGOBlock.forward()
             - targets: (batch_size,)
         """
@@ -96,15 +96,12 @@ class TrainingData:
         else:
             indices = torch.arange(num_samples)
 
-        batches = []
         for i in range(0, num_samples, batch_size):
             batch_indices = indices[i:i + batch_size]
             # Add seq_len=1 dimension for LEGOBlock.forward()
             h_batch = self._hidden_states[batch_indices].unsqueeze(1)
             t_batch = self._targets[batch_indices]
-            batches.append((h_batch, t_batch))
-
-        return batches
+            yield h_batch, t_batch
 
     def split(self, train_ratio: float = 0.8) -> Tuple["TrainingData", "TrainingData"]:
         """

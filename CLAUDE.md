@@ -10,6 +10,32 @@
 
 ---
 
+## アーキテクチャ
+
+```
+TransformerLayer    → 1層（Attention + FFN）
+TransformerBlock    → 複数層のスタック（標準Transformer）
+LEGOBlock           → TransformerBlock + early exit機能
+LEGOLLM             → LEGOBlock × N（モデル全体）
+```
+
+### ファイル構成
+
+```
+src/lego/
+├── modules/
+│   ├── transformer.py  # TransformerLayer, TransformerBlock
+│   ├── attention.py    # MultiHeadAttention
+│   ├── ffn.py          # GatedLinearUnit
+│   └── norm.py         # RMSNorm
+├── block.py            # LEGOBlock
+├── model.py            # LEGOLLM
+├── data.py             # TrainingData
+└── config.py           # ExperimentConfig
+```
+
+---
+
 ## コア概念
 
 LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を組み合わせた効率的なTransformer訓練フレームワークです。
@@ -26,18 +52,19 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 ## 設計原則
 
 1. **事前学習専用** - generate、KVキャッシュは実装しない
-2. **LEGOBlockがレイヤーとexit判定を所有** - 各Blockは自身のTransformerLayerを持ち、exit判定もBlockの責務
-3. **LEGOTransformerはルーティングのみ** - Block間のインデックス管理と統計計算
-4. **トークン単位のEarly Exit** - すべての処理でearly exitはトークン単位（バッチ単位ではない）
-5. **TRUE Early Exit** - exitしたトークンの後続blockは処理しない
+2. **コンポジション方式** - LEGOBlockはTransformerBlockをラップ（継承ではない）
+3. **LEGOBlockがexit判定を所有** - 各Blockはexit_classifierとthresholdを持つ
+4. **LEGOLLMはルーティングのみ** - Block間のインデックス管理と統計計算
+5. **トークン単位のEarly Exit** - すべての処理でearly exitはトークン単位（バッチ単位ではない）
+6. **TRUE Early Exit** - exitしたトークンの後続blockは処理しない
 
 ---
 
 ## 核心機能（削除禁止）
 
-1. `LEGOBlock.forward()` - レイヤー処理 + exit判定（h, logits, should_exit）
+1. `LEGOBlock.forward()` - Transformer処理 + exit判定（h, logits, should_exit）
 2. `LEGOBlock.fit()` - Block訓練 + hard example収集
-3. `LEGOTransformer.forward()` - TRUE Early Exit推論
+3. `LEGOLLM.forward()` - TRUE Early Exit推論
 4. `TrainingData` - hidden states + targetsのコンテナ
 
 ### 信頼度計算方式（重要：削除禁止）

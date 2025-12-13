@@ -1,8 +1,8 @@
 """
 LEGO Framework - LEGOBlock
 
-A block of transformer layers with early exit capability at the final layer.
-Each block owns its layers and handles forward pass through them.
+TransformerBlock wrapper with early exit capability.
+Separates standard transformer functionality from LEGO-specific features.
 """
 
 from __future__ import annotations
@@ -20,12 +20,16 @@ from .modules import TransformerBlock
 
 class LEGOBlock(nn.Module):
     """
-    A block of transformer layers with early exit capability.
+    TransformerBlock with early exit capability.
 
-    Each LEGOBlock:
-    - Owns multiple TransformerBlock layers
-    - Has a lightweight exit_classifier for confidence prediction
-    - Has a threshold for token-level early exit decision (set automatically by fit())
+    Wraps a standard TransformerBlock and adds:
+    - Lightweight exit_classifier for confidence prediction
+    - Threshold for token-level early exit decision (set automatically by fit())
+
+    This separation allows:
+    - Standard TransformerBlock to be used independently
+    - Easy replacement of transformer implementation (e.g., Flash Attention)
+    - Clear distinction between standard and LEGO-specific functionality
 
     Args:
         dim: Model dimension
@@ -48,18 +52,17 @@ class LEGOBlock(nn.Module):
         self.threshold = 1.0  # Set automatically by fit()
         self.output_head = output_head  # Shared reference, not owned
 
-        self.layers = nn.ModuleList([
-            TransformerBlock(dim, num_heads) for _ in range(num_layers)
-        ])
+        # Standard transformer block (composition)
+        self.transformer = TransformerBlock(dim, num_heads, num_layers)
 
-        # Lightweight exit classifier (dim -> 1)
+        # LEGO-specific: Lightweight exit classifier (dim -> 1)
         self.exit_classifier = nn.Linear(dim, 1)
 
     def forward(
         self, h: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Forward pass through all layers with exit decision.
+        Forward pass through transformer with exit decision.
 
         Args:
             h: Hidden states (batch_size, seq_len, dim)
@@ -72,12 +75,13 @@ class LEGOBlock(nn.Module):
         if self.output_head is None:
             raise RuntimeError("output_head not set. Call set_output_head() first.")
 
-        for layer in self.layers:
-            h = layer(h)
+        # Standard transformer forward
+        h = self.transformer(h)
 
+        # Output logits
         logits = self.output_head(h)
 
-        # Lightweight confidence from exit_classifier (not softmax over vocab)
+        # LEGO-specific: Lightweight confidence from exit_classifier
         confidence = torch.sigmoid(self.exit_classifier(h)).squeeze(-1)
         should_exit = confidence >= self.threshold
 
@@ -289,23 +293,23 @@ class LEGOBlock(nn.Module):
             return TrainingData.empty(self.dim, str(device)), 1.0
 
         # Concatenate all
-        all_hidden_out = torch.cat(all_hidden_out)  # (num_tokens, dim)
-        all_targets = torch.cat(all_targets)  # (num_tokens,)
-        all_confidences = torch.cat(all_confidences)  # (num_tokens,)
+        hidden_out_cat = torch.cat(all_hidden_out)  # (num_tokens, dim)
+        targets_cat = torch.cat(all_targets)  # (num_tokens,)
+        confidences_cat = torch.cat(all_confidences)  # (num_tokens,)
 
         # Compute threshold: quantile such that (1 - hard_ratio) tokens exit
         # e.g., hard_ratio=0.5 means top 50% exit, so threshold = 50th percentile
-        threshold = float(torch.quantile(all_confidences, 1.0 - hard_ratio).item())
+        threshold = float(torch.quantile(confidences_cat, 1.0 - hard_ratio).item())
 
         # Select bottom X% by confidence (ratio-based)
-        num_hard = int(len(all_confidences) * hard_ratio)
+        num_hard = int(len(confidences_cat) * hard_ratio)
         if num_hard == 0:
             return TrainingData.empty(self.dim, str(device)), threshold
 
         # Get indices of tokens with lowest confidence
-        _, hard_indices = torch.topk(all_confidences, num_hard, largest=False)
+        _, hard_indices = torch.topk(confidences_cat, num_hard, largest=False)
 
         return TrainingData(
-            all_hidden_out[hard_indices],
-            all_targets[hard_indices]
+            hidden_out_cat[hard_indices],
+            targets_cat[hard_indices]
         ), threshold
