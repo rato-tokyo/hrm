@@ -77,12 +77,12 @@ def run_experiment(config: ExperimentConfig, device: str) -> Dict[str, Any]:
     print(f"{'='*60}\n")
 
     confidence_threshold = compute_confidence_threshold(
-        model, val_loader, config.hard_example_ratio, device
+        model, val_loader, config.hard_example_ratio, device, block_idx=0
     )
     print(f"Threshold: {confidence_threshold:.4f}")
 
     # Collect Hard Examples
-    hard_examples = collect_hard_examples(model, val_loader, confidence_threshold, device)
+    hard_examples = collect_hard_examples(model, val_loader, confidence_threshold, device, block_idx=0)
     num_hard = len(hard_examples['targets'])
     total_samples = config.phase1_samples * 0.2 * config.seq_len
     print(f"Collected {num_hard:,} hard examples ({num_hard / total_samples * 100:.1f}%)")

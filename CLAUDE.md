@@ -29,8 +29,10 @@ class LEGOBlock(nn.Module):
         self.layers = nn.ModuleList([...])  # TransformerBlockのリスト
         self.threshold = threshold          # Early Exit閾値
 
-    def forward(self, h) -> h                    # 全レイヤー処理
+    def forward(h) -> h                    # 全レイヤー処理
     def forward_with_cache(h, cache) -> (h, cache)  # KVキャッシュ対応
+    def forward_with_routing(h) -> (h, logits, confidence, should_exit)  # ルーティング判定
+    def compute_confidence(h) -> (logits, confidence)  # 信頼度計算
     def should_exit(confidence) -> bool          # Early Exit判定
     def freeze() / unfreeze()                    # パラメータ凍結
 ```
@@ -49,12 +51,12 @@ class LEGOTransformer(nn.Module):
     def create(vocab_size, dim, num_layers, num_heads, threshold) -> LEGOTransformer
         # 単一Blockモデルを作成
 
-    def forward(x) -> logits                     # 標準推論
+    def forward(x) -> logits                     # 標準推論（全ブロック通過）
+    def get_hidden_states(x, up_to_block) -> h   # 指定ブロックまでのhidden states
     def forward_from_block(h, start_block_idx)   # 指定Blockから処理
-    def forward_with_routing(x) -> (logits, stats)  # ルーティング評価
+    def forward_with_routing(x) -> (logits, stats)  # TRUE Early Exit評価
     def generate(...) -> (tokens, stats)         # TRUE Early Exit生成
     def extend(num_new_layers, threshold) -> LEGOTransformer  # Block追加
-    def compute_confidence(h) -> (logits, confidence)
 ```
 
 ---
@@ -167,58 +169,24 @@ src/lego/
 
 ---
 
-## 開発ルール
-
-### 変更時の必須手順
-
-1. `python3 test_lego.py` で全テスト合格を確認
-
-### 設計原則
+## 設計原則
 
 1. **LEGOBlockがレイヤーを所有** - 各Blockは自身のTransformerLayerを持つ
 2. **LEGOTransformerは橋渡し役** - Block間のルーティングと管理
 3. **start_block_idx / block_idx** - 常に明示的に指定（0-indexed）
-
-### デフォルト引数値の禁止
-
-**⚠️ 重要**: 関数やメソッドにおいて、`block_idx`、`start_block_idx`、`up_to_block`などのブロック指定引数には**デフォルト値を設定しない**こと。
-
-**理由**:
-- デフォルト値は暗黙の仮定を作り、予期せぬ動作の原因となる
-- 3ブロック以上の場合、どのブロックを対象とするか明示すべき
-- 呼び出し側で常に意図を明確にすることでバグを防ぐ
-
-**禁止例**:
-```python
-def compute_confidence_threshold(..., block_idx: int = 0):  # NG
-def collect_hard_examples(..., block_idx: int = 0):  # NG
-def get_hidden_states(x, up_to_block: int = 0):  # NG
-```
-
-**正しい例**:
-```python
-def compute_confidence_threshold(..., block_idx: int):  # OK
-def collect_hard_examples(..., block_idx: int):  # OK
-def get_hidden_states(x, up_to_block: int):  # OK
-```
-
-### Git操作
-
-```bash
-git add .
-git commit -m "適切なコミットメッセージ"
-git push origin main
-```
+4. **デフォルト引数値禁止** - block_idx等のブロック指定引数にはデフォルト値を設定しない
 
 ---
 
 ## 注意事項
 
-### テスト閾値
+### KVキャッシュとEarly Exit
 
-未訓練モデルは信頼度が低いため、テスト時は低い閾値（0.02程度）を使用
+- Early exitした場合、後続BlockのKVキャッシュは**更新されない**（これが正しい動作）
+- 例：Block 1でexit → Block 2のKVキャッシュは変更なし
+- 次トークンでBlock 2まで処理が必要になれば、その時点で更新される
 
-### KVキャッシュとRoPE
+### RoPE
 
 位置インデックスは累積位置を使用
 
