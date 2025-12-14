@@ -56,9 +56,10 @@ def train_exit_classifier(
     num_tokens = hidden_states.shape[0]
 
     # Compute exit labels from logits (detached, no gradient)
+    # logits and targets may be on CPU to save GPU memory
     with torch.no_grad():
         per_token_loss = F.cross_entropy(logits, targets, reduction='none')
-        exit_labels = torch.exp(-per_token_loss)
+        exit_labels = torch.exp(-per_token_loss).to(hidden_states.device)
 
     # Setup optimizer
     exit_optimizer = torch.optim.Adam(exit_classifier.parameters(), lr=lr)
@@ -135,6 +136,9 @@ def collect_hard_examples(
 
     # Token-level hard mask: confidence < threshold
     hard_token_mask = confidences < threshold  # (num_sequences, seq_len)
+
+    # Ensure targets is on same device as hidden_states
+    targets = targets.to(device)
 
     # Extract only hard tokens
     hard_hidden = hidden_states[hard_token_mask]  # (num_hard_tokens, dim)

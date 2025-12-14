@@ -71,13 +71,14 @@ def train_block(
     with torch.no_grad():
         for h, y in data.to(str(device)).batches(config.batch_size, shuffle=False):
             h_out, logits, _ = block.forward(h)
-            all_hidden.append(h_out)
-            all_logits.append(logits)
-            all_targets.append(y)
+            # Move to CPU to save GPU memory
+            all_hidden.append(h_out.cpu())
+            all_logits.append(logits.cpu())
+            all_targets.append(y.cpu())
 
-    hidden_states = torch.cat(all_hidden)  # (num_sequences, seq_len, dim)
-    logits_all = torch.cat(all_logits)     # (num_sequences, seq_len, vocab_size)
-    targets_all = torch.cat(all_targets)   # (num_sequences, seq_len)
+    hidden_states = torch.cat(all_hidden).to(device)  # (num_sequences, seq_len, dim)
+    logits_all = torch.cat(all_logits)  # Keep on CPU, only used for label computation
+    targets_all = torch.cat(all_targets)  # Keep on CPU
 
     # 4. Train exit_classifier
     num_exit_epochs = min(10, config.max_epochs)
