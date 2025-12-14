@@ -185,18 +185,43 @@ def main():
         val = np.percentile(per_token_loss_flat, q)
         print(f"  {q:3d}%: {val:.4f}")
 
+    # Get output_head weight matrix W (for low-rank approximation experiments)
+    # W shape: (vocab_size, dim) - maps hidden states to logits
+    W = model.output_head.weight.detach().cpu().numpy()  # (vocab_size, dim)
+    print(f"\n{'=' * 60}")
+    print("Output Head (W matrix)")
+    print("=" * 60)
+    print(f"  W shape: {W.shape} (vocab_size x dim)")
+    print(f"  W size: {W.nbytes / (1024 * 1024):.1f} MB")
+
+    # SVD analysis for low-rank approximation feasibility
+    print(f"\nSVD Analysis:")
+    U, S, Vt = np.linalg.svd(W, full_matrices=False)
+    print(f"  Singular values shape: {S.shape}")
+    print(f"  Top 10 singular values: {S[:10].round(2)}")
+
+    # Coverage ratio for different ranks
+    total_var = np.sum(S ** 2)
+    print(f"\n  Coverage by rank:")
+    for r in [5, 10, 20, 32, 64]:
+        if r <= len(S):
+            coverage = np.sum(S[:r] ** 2) / total_var * 100
+            print(f"    r={r:2d}: {coverage:.1f}%")
+
     # Save
     output_path = Path("hidden_states_data.npz")
-    size_mb = (hidden_states_flat.nbytes + per_token_loss_flat.nbytes) / (1024 * 1024)
+    size_mb = (hidden_states_flat.nbytes + per_token_loss_flat.nbytes + W.nbytes) / (1024 * 1024)
     print(f"\nSaving to {output_path} ({size_mb:.1f} MB)...")
 
     np.savez(
         output_path,
         hidden_states=hidden_states_flat.astype(np.float32),
         per_token_loss=per_token_loss_flat.astype(np.float32),
+        output_head_W=W.astype(np.float32),
         dim=dim,
         seq_len=seq_len,
         num_sequences=num_sequences,
+        vocab_size=vocab_size,
         best_val_ppl=stats['best_val_ppl'],
         threshold=stats['threshold'],
     )
