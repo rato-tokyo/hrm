@@ -29,9 +29,11 @@ lego/
 │   ├── attention.py    # MultiHeadAttention
 │   ├── ffn.py          # GatedLinearUnit
 │   └── norm.py         # RMSNorm
-├── block.py            # LEGOBlock（推論のみ、約90行）
+├── block.py            # LEGOBlock（推論のみ）
+├── exit_classifier.py  # ExitClassifier（信頼度計算・exit判定）
 ├── model.py            # LEGOLLM
-├── trainer.py          # train_block()（訓練ロジック）
+├── trainer.py          # train_block(), _train_lm()（LM訓練）
+├── exit_trainer.py     # train_exit_classifier(), collect_hard_examples()
 ├── data.py             # SequenceData
 └── config.py           # ExperimentConfig, TrainerConfig
 ```
@@ -49,6 +51,24 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 3. **Hard Sequence収集**: 信頼度の低いトークンを含むシーケンスを自動出力
 4. **Block 1+**: Hard Sequencesのみで訓練
 5. **推論**: TRUE Early Exitで高信頼度トークンは後続Blockを**実際にスキップ**
+
+### train_block()の内部フロー（重要）
+
+**exit_classifierの訓練はLM訓練完了後に行う**：
+
+```
+train_block()
+├── 1. データ分割 (train/val)
+├── 2. _train_lm()               ← Transformer + output_head の訓練（early stopping付き）
+├── 3. train_exit_classifier()   ← LM訓練完了後、exit_classifier のみ訓練
+├── 4. collect_hard_examples()   ← threshold設定 + hard example収集
+└── 5. 統計をまとめてreturn
+```
+
+**この順序の理由**：
+- exit_classifierの訓練ラベルはLMの出力（logits）に依存する
+- `exit_labels = torch.exp(-cross_entropy_loss)` を計算するため、LMが収束してからでないと適切なラベルが得られない
+- train_exit_classifier()ではTransformerとoutput_headを**凍結**し、exit_classifierのみを訓練する
 
 ---
 
@@ -77,23 +97,36 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 
 ```python
 # LEGOBlockはTransformerBlockを引数で受け取る（明示的コンポジション）
-block = LEGOBlock(TransformerBlock(dim=256, num_heads=8, num_layers=4))
+block = LEGOBlock(TransformerBlock(dim=256, num_heads=8, num_layers=4, ...))
 
 class LEGOBlock(nn.Module):
     def __init__(self, transformer: TransformerBlock):
-        self.transformer = transformer  # 外部から注入
-        self.exit_classifier = nn.Linear(transformer.dim, 1)  # 信頼度計算用
-        self.threshold = 1.0  # trainerが設定
+        self.transformer = transformer           # 外部から注入
+        self.exit_classifier = ExitClassifier(transformer.dim)  # 信頼度計算用
+        self.output_head: nn.Linear | None = None  # LEGOLLMが設定
 
     # プロパティ（transformerに委譲）
     @property
     def dim(self) -> int: return self.transformer.dim
     @property
-    def num_layers(self) -> int: return self.transformer.num_layers
+    def threshold(self) -> float: return self.exit_classifier.threshold
 
     # メソッド
     forward() → (h, logits, should_exit)  # 推論のみ
     set_output_head()                      # 共有出力層の設定
+```
+
+### ExitClassifierの責務
+
+```python
+class ExitClassifier(nn.Module):
+    def __init__(self, dim: int):
+        self.linear = nn.Linear(dim, 1)
+        self.threshold = 1.0  # trainerが設定
+
+    # メソッド
+    forward(h) → (confidence, should_exit)
+    compute_confidence(h) → confidence
 ```
 
 ---
@@ -103,10 +136,11 @@ class LEGOBlock(nn.Module):
 **exit_classifier + loss方式を使用する**：
 
 ```python
-# 信頼度計算（推論時）
-confidence = torch.sigmoid(block.exit_classifier(h)).squeeze(-1)
+# 信頼度計算（推論時）- ExitClassifierが担当
+confidence = block.exit_classifier.compute_confidence(h)
+# 内部: torch.sigmoid(self.linear(h)).squeeze(-1)
 
-# exit_classifierの訓練ラベル（LM訓練完了後）
+# exit_classifierの訓練ラベル（LM訓練完了後）- exit_trainer.pyで使用
 per_token_loss = F.cross_entropy(logits, y, reduction='none')
 exit_labels = torch.exp(-per_token_loss)  # loss方式
 ```
@@ -136,9 +170,9 @@ exit_labels = torch.exp(-per_token_loss)  # loss方式
 **トークン単位で収集**：`hard_ratio=0.5`なら信頼度下位50%のトークンのみをhard exampleとして収集。
 
 ```python
-# 正しい実装（トークン単位）
+# 正しい実装（トークン単位）- exit_trainer.py の collect_hard_examples()
 # 1. exit_classifierで信頼度を計算
-confidence = torch.sigmoid(block.exit_classifier(h_out)).squeeze(-1)
+confidence = block.exit_classifier.compute_confidence(h_out)
 
 # 2. 全トークンのconfidenceからthresholdを計算
 threshold = torch.quantile(all_confidences_flat, hard_ratio)

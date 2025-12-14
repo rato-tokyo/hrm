@@ -12,6 +12,7 @@ import torch.nn as nn
 from typing import Tuple
 
 from .modules import TransformerBlock
+from .exit_classifier import ExitClassifier
 
 
 class LEGOBlock(nn.Module):
@@ -19,8 +20,8 @@ class LEGOBlock(nn.Module):
     TransformerBlock with early exit capability.
 
     Wraps a standard TransformerBlock and adds:
-    - exit_classifier for confidence computation (lightweight Linear layer)
-    - Threshold for token-level early exit decision (set by trainer)
+    - ExitClassifier for confidence computation and exit decision
+    - Shared output_head for logits computation
 
     Exit classifier is trained with loss-based labels: exp(-cross_entropy_loss).
     This approach showed best results in experiments.
@@ -37,8 +38,7 @@ class LEGOBlock(nn.Module):
     def __init__(self, transformer: TransformerBlock):
         super().__init__()
         self.transformer = transformer
-        self.exit_classifier = nn.Linear(transformer.dim, 1)
-        self.threshold = 1.0  # Set by trainer
+        self.exit_classifier = ExitClassifier(transformer.dim)
         self.output_head: nn.Linear | None = None  # Set by LEGOLLM
 
     @property
@@ -55,6 +55,16 @@ class LEGOBlock(nn.Module):
     def num_layers(self) -> int:
         """Number of layers (delegated to transformer)."""
         return self.transformer.num_layers
+
+    @property
+    def threshold(self) -> float:
+        """Threshold for early exit (delegated to exit_classifier)."""
+        return self.exit_classifier.threshold
+
+    @threshold.setter
+    def threshold(self, value: float) -> None:
+        """Set threshold for early exit."""
+        self.exit_classifier.threshold = value
 
     def forward(
         self, h: torch.Tensor
@@ -79,10 +89,8 @@ class LEGOBlock(nn.Module):
         # Output logits
         logits = self.output_head(h)
 
-        # Compute confidence using exit_classifier
-        confidence = torch.sigmoid(self.exit_classifier(h)).squeeze(-1)
-
-        should_exit = confidence >= self.threshold
+        # Compute confidence and exit decision
+        _, should_exit = self.exit_classifier(h)
 
         return h, logits, should_exit
 
