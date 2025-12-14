@@ -3,10 +3,10 @@ LEGO Framework - Utility Functions
 
 Basic utilities for LEGO training.
 
-Note: Hard example collection and splitting are now handled by:
-- LEGOBlock.fit() - Train block and return hard examples
-- TrainingData.split() - Split into train/val
-- TrainingData.batches() - Create batched data
+Note: Hard example collection and splitting are handled by:
+- train_block() - Train block and return hard examples
+- SequenceData.split() - Split into train/val
+- SequenceData.batches() - Create batched data
 """
 
 import random
@@ -30,10 +30,10 @@ def get_device() -> str:
 
 
 def create_synthetic_data(
-    num_batches: int = 4,
-    batch_size: int = 8,
-    seq_len: int = 16,
-    vocab_size: int = 100
+    num_batches: int,
+    batch_size: int,
+    seq_len: int,
+    vocab_size: int
 ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
     """Create deterministic synthetic data for testing."""
     batches = []
@@ -43,5 +43,3 @@ def create_synthetic_data(
         y = torch.randint(0, vocab_size, (batch_size, seq_len))
         batches.append((x, y))
     return batches
-
-

@@ -32,7 +32,7 @@ lego/
 ├── block.py            # LEGOBlock（推論のみ、約90行）
 ├── model.py            # LEGOLLM
 ├── trainer.py          # train_block()（訓練ロジック）
-├── data.py             # TrainingData
+├── data.py             # SequenceData
 └── config.py           # ExperimentConfig, TrainerConfig
 ```
 
@@ -45,8 +45,8 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 ### 訓練フロー
 
 1. **Block 0**: 最初のブロックを全データで訓練
-2. **Hard Token収集**: 訓練後、信頼度の低いトークンを自動出力
-3. **Block 1+**: Hard Tokensのみで訓練
+2. **Hard Sequence収集**: 訓練後、信頼度の低いトークンを含むシーケンスを自動出力
+3. **Block 1+**: Hard Sequencesのみで訓練
 4. **推論**: TRUE Early Exitで高信頼度トークンは後続Blockを**実際にスキップ**
 
 ---
@@ -57,10 +57,11 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 2. **コンポジション方式** - LEGOBlockはTransformerBlockをラップ（継承ではない）
 3. **LEGOBlockがexit判定を所有** - 各Blockはthresholdを持ち、softmax maxで信頼度計算
 4. **LEGOLLMはルーティングのみ** - Block間のインデックス管理と統計計算
-5. **トークン単位のEarly Exit** - すべての処理でearly exitはトークン単位（バッチ単位ではない）
+5. **トークン単位のEarly Exit** - exit判定はトークン単位（バッチ単位ではない）
 6. **TRUE Early Exit** - exitしたトークンの後続blockは処理しない
 7. **訓練と推論の分離** - LEGOBlockは推論のみ、訓練は`train_block()`関数
 8. **デフォルト値禁止** - 関数・クラスの引数にデフォルト値を設定しない（意図しない動作の原因）
+9. **シーケンス単位処理** - Attention計算のためシーケンス全体を処理、exit判定のみトークン単位
 
 ---
 
@@ -69,7 +70,7 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 1. `LEGOBlock.forward()` - Transformer処理 + exit判定（h, logits, should_exit）
 2. `train_block()` - Block訓練 + hard example収集（trainer.py）
 3. `LEGOLLM.forward()` - TRUE Early Exit推論
-4. `TrainingData` - hidden states + targetsのコンテナ
+4. `SequenceData` - hidden states + targetsのコンテナ（シーケンス単位）
 
 ### LEGOBlockの責務（シンプル）
 
@@ -108,15 +109,20 @@ confidence = F.softmax(logits, dim=-1).max(dim=-1).values
 
 ### Hard Example収集方式（重要：削除禁止）
 
-**ratio方式を使用する**：`hard_ratio=0.5`なら信頼度下位50%のトークンをhard exampleとして収集。
+**シーケンス単位で収集**：`hard_ratio=0.5`なら信頼度下位50%のトークンを含むシーケンスをhard exampleとして収集。
 
 ```python
-# 正しい実装（ratio方式）
-num_hard = int(len(all_confidences) * hard_ratio)
-_, hard_indices = torch.topk(all_confidences, num_hard, largest=False)
-```
+# 正しい実装（シーケンス単位）
+# 1. 全トークンのconfidenceからthresholdを計算
+threshold = torch.quantile(all_confidences_flat, 1.0 - hard_ratio)
 
-threshold方式（`confidence < threshold`）ではない。ratio方式は訓練データ量を制御可能にする。
+# 2. 各シーケンス内の最小confidenceがthreshold未満なら、そのシーケンスはhard
+min_confidence_per_seq = confidences.min(dim=1).values
+hard_sequence_mask = min_confidence_per_seq < threshold
+
+# 3. hard sequenceのみを返す（Block 0の出力hidden statesとtargets）
+return SequenceData(hidden_out[hard_sequence_mask], targets[hard_sequence_mask])
+```
 
 ### Threshold自動設定方式（重要：削除禁止）
 
@@ -133,6 +139,24 @@ block.threshold = threshold
 - 訓練後のsoftmax出力分布に基づいた適切なthreshold
 - `hard_ratio`と推論時のexit率が一致
 - 外部での手動調整が不要
+
+---
+
+## シーケンス単位処理の重要性（重要：削除禁止）
+
+**Attentionはシーケンス全体を必要とする**：
+
+```python
+# 正しい実装（シーケンス単位）
+h = block.forward(sequences)  # (batch, seq_len, dim)
+# Attention: 各トークンが他のトークンを参照可能
+
+# 間違った実装（トークン単位）
+h = block.forward(tokens)  # (batch, 1, dim)
+# Attention: 各トークンが自分自身のみ参照 → 文脈なし
+```
+
+訓練時も推論時も、シーケンス全体を処理してからexit判定を行う。
 
 ---
 
@@ -167,3 +191,9 @@ block.threshold = threshold
 **問題：** LEGOBlockに`fit()`メソッドを実装し、300行超のクラスになっていた。
 
 **教訓：** 訓練と推論を分離する。モデルは推論のみ、訓練は外部関数で。
+
+### 6. トークン単位でAttention処理
+
+**問題：** 訓練時にトークンを独立して `(batch, 1, dim)` で処理し、Attentionが機能していなかった。
+
+**教訓：** Attentionはシーケンス全体を必要とする。シーケンス単位で処理し、exit判定のみトークン単位にする。

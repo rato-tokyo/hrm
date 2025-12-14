@@ -3,7 +3,7 @@ LEGO Framework Example - Block-wise Training with TRUE Early Exit
 
 Workflow:
 1. Create LEGOLLM with multiple blocks
-2. Train Block 0 on all data, collect hard examples
+2. Train Block 0 on all data, collect hard examples (sequences with low confidence tokens)
 3. Train Block 1 on hard examples only
 4. Evaluate with TRUE Early Exit
 """
@@ -14,7 +14,7 @@ from lego import (
     LEGOLLM,
     LEGOBlock,
     TransformerBlock,
-    TrainingData,
+    SequenceData,
     ExperimentConfig,
     TrainerConfig,
     train_block,
@@ -81,22 +81,22 @@ def main() -> None:
     print("Phase 1: Train Block 0 on all data")
     print("=" * 60)
 
-    # Create initial TrainingData from train batches
-    # Embed tokens and flatten to (num_tokens, dim)
+    # Create initial SequenceData from train batches
+    # Embed tokens to get hidden states: (num_sequences, seq_len, dim)
     all_hidden = []
     all_targets = []
     with torch.no_grad():
         for x, y in train_batches:
             x, y = x.to(device), y.to(device)
-            h = model.embedding(x)  # (batch, seq, dim)
-            all_hidden.append(h.view(-1, config.dim))
-            all_targets.append(y.view(-1))
+            h = model.embedding(x)  # (batch, seq_len, dim)
+            all_hidden.append(h)
+            all_targets.append(y)
 
-    initial_data = TrainingData(
-        torch.cat(all_hidden),
-        torch.cat(all_targets)
+    initial_data = SequenceData(
+        torch.cat(all_hidden),  # (num_sequences, seq_len, dim)
+        torch.cat(all_targets)  # (num_sequences, seq_len)
     )
-    print(f"Initial data: {len(initial_data)} tokens")
+    print(f"Initial data: {len(initial_data)} sequences ({initial_data.num_tokens} tokens)")
 
     # Train Block 0
     optimizer0 = torch.optim.AdamW(model.blocks[0].parameters(), lr=trainer_config.lr)
@@ -110,9 +110,11 @@ def main() -> None:
     print(f"\nBlock 0 Results:")
     print(f"  Best PPL: {stats0['best_val_ppl']:.2f}")
     print(f"  Threshold: {stats0['threshold']:.4f}")
-    print(f"  Hard examples: {len(hard_data)} ({stats0['hard_ratio']*100:.1f}%)")
+    print(f"  Hard examples: {len(hard_data)} sequences ({hard_data.num_tokens} tokens, {stats0['hard_ratio']*100:.1f}%)")
 
     # Phase 2: Train Block 1 on hard examples only
+    # hard_data contains Block 0's output hidden states and targets
+    # Ready to use directly as Block 1's input
     print(f"\n{'=' * 60}")
     print("Phase 2: Train Block 1 on hard examples")
     print("=" * 60)
@@ -126,7 +128,7 @@ def main() -> None:
             grad_clip=trainer_config.grad_clip,
             val_ratio=trainer_config.val_ratio,
             hard_ratio=trainer_config.hard_ratio,
-            lr=trainer_config.lr * 0.1,  # Lower LR for phase 2
+            lr=trainer_config.lr * 0.1,
             verbose=trainer_config.verbose,
         )
         optimizer1 = torch.optim.AdamW(model.blocks[1].parameters(), lr=phase2_config.lr)

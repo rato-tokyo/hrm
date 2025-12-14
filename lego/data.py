@@ -1,55 +1,58 @@
 """
 LEGO Framework - Data Utilities
 
-WikiText-2 dataloader and LearningData class for LEGO training.
+WikiText-2 dataloader and SequenceData class for LEGO training.
 """
 
 import torch
 from typing import Dict, Iterator, List, Tuple, Optional
 
 
-class TrainingData:
+class SequenceData:
     """
-    Container for LEGO block training data.
+    Container for LEGO block training data (sequence-based).
 
-    Holds (hidden_states, target) pairs collected from hard examples.
-    Provides iteration, batching, and train/val split functionality.
+    Holds sequences of (hidden_states, targets) for block training.
+    Maintains sequence structure for proper Attention computation.
 
     Args:
-        hidden_states: Hidden states tensor (num_tokens, dim)
-        targets: Target labels tensor (num_tokens,)
+        hidden_states: Hidden states tensor (num_sequences, seq_len, dim)
+        targets: Target labels tensor (num_sequences, seq_len)
 
     Usage:
         # Create from tensors
-        data = TrainingData(hidden_states, targets)
+        data = SequenceData(hidden_states, targets)
 
-        # Iterate in batches
-        for h, y in data.batches(batch_size=64):
+        # Iterate in batches (preserving sequences)
+        for h, y in data.batches(batch_size=8):
+            # h: (batch_size, seq_len, dim)
+            # y: (batch_size, seq_len)
             ...
 
         # Split into train/val
         train_data, val_data = data.split(train_ratio=0.8)
-
-        # Get statistics
-        print(f"Tokens: {len(data)}, Dim: {data.dim}")
     """
 
     def __init__(self, hidden_states: torch.Tensor, targets: torch.Tensor):
-        if len(hidden_states) != len(targets):
+        if hidden_states.shape[0] != targets.shape[0]:
             raise ValueError(
-                f"Length mismatch: hidden_states={len(hidden_states)}, targets={len(targets)}"
+                f"Batch size mismatch: hidden_states={hidden_states.shape[0]}, targets={targets.shape[0]}"
             )
-        self._hidden_states = hidden_states
-        self._targets = targets
+        if hidden_states.shape[1] != targets.shape[1]:
+            raise ValueError(
+                f"Seq len mismatch: hidden_states={hidden_states.shape[1]}, targets={targets.shape[1]}"
+            )
+        self._hidden_states = hidden_states  # (num_sequences, seq_len, dim)
+        self._targets = targets  # (num_sequences, seq_len)
 
     @property
     def hidden_states(self) -> torch.Tensor:
-        """Hidden states tensor (num_tokens, dim)."""
+        """Hidden states tensor (num_sequences, seq_len, dim)."""
         return self._hidden_states
 
     @property
     def targets(self) -> torch.Tensor:
-        """Target labels tensor (num_tokens,)."""
+        """Target labels tensor (num_sequences, seq_len)."""
         return self._targets
 
     @property
@@ -57,18 +60,28 @@ class TrainingData:
         """Hidden state dimension."""
         return self._hidden_states.shape[-1]
 
+    @property
+    def seq_len(self) -> int:
+        """Sequence length."""
+        return self._hidden_states.shape[1]
+
+    @property
+    def num_sequences(self) -> int:
+        """Number of sequences."""
+        return self._hidden_states.shape[0]
+
+    @property
+    def num_tokens(self) -> int:
+        """Total number of tokens."""
+        return self._hidden_states.shape[0] * self._hidden_states.shape[1]
+
     def __len__(self) -> int:
-        """Number of tokens."""
-        return len(self._targets)
+        """Number of sequences."""
+        return self.num_sequences
 
-    def __iter__(self) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
-        """Iterate over individual (hidden_state, target) pairs."""
-        for i in range(len(self)):
-            yield self._hidden_states[i], self._targets[i]
-
-    def to(self, device: str) -> "TrainingData":
+    def to(self, device: str) -> "SequenceData":
         """Move data to specified device."""
-        return TrainingData(
+        return SequenceData(
             self._hidden_states.to(device),
             self._targets.to(device)
         )
@@ -79,31 +92,30 @@ class TrainingData:
         shuffle: bool
     ) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
         """
-        Iterate over batched data for training.
+        Iterate over batched sequences for training.
 
         Args:
-            batch_size: Number of tokens per batch
+            batch_size: Number of sequences per batch
             shuffle: Whether to shuffle before batching
 
         Yields:
             Tuple of (hidden_states, targets)
-            - hidden_states: (batch_size, 1, dim) for LEGOBlock.forward()
-            - targets: (batch_size,)
+            - hidden_states: (batch_size, seq_len, dim)
+            - targets: (batch_size, seq_len)
         """
-        num_samples = len(self)
+        num_sequences = len(self)
         if shuffle:
-            indices = torch.randperm(num_samples)
+            indices = torch.randperm(num_sequences)
         else:
-            indices = torch.arange(num_samples)
+            indices = torch.arange(num_sequences)
 
-        for i in range(0, num_samples, batch_size):
+        for i in range(0, num_sequences, batch_size):
             batch_indices = indices[i:i + batch_size]
-            # Add seq_len=1 dimension for LEGOBlock.forward()
-            h_batch = self._hidden_states[batch_indices].unsqueeze(1)
-            t_batch = self._targets[batch_indices]
+            h_batch = self._hidden_states[batch_indices]  # (batch, seq_len, dim)
+            t_batch = self._targets[batch_indices]  # (batch, seq_len)
             yield h_batch, t_batch
 
-    def split(self, train_ratio: float) -> Tuple["TrainingData", "TrainingData"]:
+    def split(self, train_ratio: float) -> Tuple["SequenceData", "SequenceData"]:
         """
         Split into training and validation sets.
 
@@ -113,18 +125,18 @@ class TrainingData:
         Returns:
             Tuple of (train_data, val_data)
         """
-        num_samples = len(self)
-        num_train = int(num_samples * train_ratio)
+        num_sequences = len(self)
+        num_train = int(num_sequences * train_ratio)
 
-        indices = torch.randperm(num_samples)
+        indices = torch.randperm(num_sequences)
         train_indices = indices[:num_train]
         val_indices = indices[num_train:]
 
-        train_data = TrainingData(
+        train_data = SequenceData(
             self._hidden_states[train_indices],
             self._targets[train_indices]
         )
-        val_data = TrainingData(
+        val_data = SequenceData(
             self._hidden_states[val_indices],
             self._targets[val_indices]
         )
@@ -132,10 +144,10 @@ class TrainingData:
         return train_data, val_data
 
     @classmethod
-    def empty(cls, dim: int, device: Optional[str] = None) -> "TrainingData":
-        """Create an empty TrainingData instance."""
-        hidden_states = torch.empty(0, dim)
-        targets = torch.empty(0, dtype=torch.long)
+    def empty(cls, seq_len: int, dim: int, device: Optional[str]) -> "SequenceData":
+        """Create an empty SequenceData instance."""
+        hidden_states = torch.empty(0, seq_len, dim)
+        targets = torch.empty(0, seq_len, dtype=torch.long)
         if device:
             hidden_states = hidden_states.to(device)
             targets = targets.to(device)

@@ -77,11 +77,14 @@ class LEGOLLM(nn.Module):
         self, x: torch.Tensor, *, return_stats: bool = False
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Dict[str, Any]]]:
         """
-        Forward pass with TRUE token-level early exit.
+        Forward pass with TRUE token-level early exit (sequence-based processing).
 
         Each token independently exits at the first block where its confidence
         exceeds the threshold. Tokens that exit early do NOT pass through
         subsequent blocks (TRUE early exit).
+
+        Processing is done sequence-wise to maintain proper Attention computation.
+        Exit decisions are made per-token within each sequence.
 
         Args:
             x: Input token ids (batch_size, seq_len)
@@ -94,40 +97,47 @@ class LEGOLLM(nn.Module):
         """
         batch_size, seq_len = x.shape
         device = x.device
-        dim = self.embedding.embedding_dim
-
-        h = self.embedding(x)
-        h_flat = h.view(-1, dim)
-        total_tokens = batch_size * seq_len
-
         vocab_size = self.embedding.num_embeddings
-        final_logits = torch.zeros(total_tokens, vocab_size, device=device)
-        exit_blocks = torch.full((total_tokens,), len(self.blocks) - 1, device=device)
-        active_indices = torch.arange(total_tokens, device=device)
+
+        # Embedding
+        h = self.embedding(x)  # (batch_size, seq_len, dim)
+
+        # Initialize output tensors
+        final_logits = torch.zeros(batch_size, seq_len, vocab_size, device=device)
+        exit_blocks = torch.full((batch_size, seq_len), len(self.blocks) - 1, device=device)
+        exited_mask = torch.zeros(batch_size, seq_len, dtype=torch.bool, device=device)
 
         for block_idx, block in enumerate(self.blocks):
-            if len(active_indices) == 0:
-                break
-
             is_last_block = (block_idx == len(self.blocks) - 1)
-            h_active = h_flat[active_indices].unsqueeze(1)
 
-            h_active, logits_active, should_exit = block.forward(h_active)
-            logits_active = logits_active.squeeze(1)
-            should_exit = should_exit.squeeze(1)
+            # Process full sequences through block (for proper Attention)
+            h_out, logits, should_exit = block.forward(h)
+            # h_out: (batch_size, seq_len, dim)
+            # logits: (batch_size, seq_len, vocab_size)
+            # should_exit: (batch_size, seq_len)
 
             if not is_last_block:
-                exiting_indices = active_indices[should_exit]
-                final_logits[exiting_indices] = logits_active[should_exit]
-                exit_blocks[exiting_indices] = block_idx
+                # Tokens that should exit now (and haven't exited before)
+                new_exits = should_exit & ~exited_mask
 
-                continuing_mask = ~should_exit
-                h_flat[active_indices[continuing_mask]] = h_active.squeeze(1)[continuing_mask]
-                active_indices = active_indices[continuing_mask]
+                # Store logits for newly exiting tokens
+                final_logits[new_exits] = logits[new_exits]
+                exit_blocks[new_exits] = block_idx
+
+                # Update exited mask
+                exited_mask = exited_mask | should_exit
+
+                # Update hidden states for next block
+                # Only update tokens that haven't exited
+                h = torch.where(
+                    exited_mask.unsqueeze(-1).expand_as(h_out),
+                    h,  # Keep old hidden states for exited tokens
+                    h_out  # Use new hidden states for continuing tokens
+                )
             else:
-                final_logits[active_indices] = logits_active
-
-        final_logits = final_logits.view(batch_size, seq_len, vocab_size)
+                # Last block: store logits for all remaining tokens
+                remaining_mask = ~exited_mask
+                final_logits[remaining_mask] = logits[remaining_mask]
 
         if return_stats:
             exit_counts = [
