@@ -26,13 +26,14 @@ def load_data(path: str = "analysis_data.npz") -> dict:
 
 def analyze_hard_easy_separation(data: dict) -> None:
     """Analyze if Hard/Easy separation is working."""
-    confidences = data['confidences']
+    confidences = data['confidences']  # BDR: this is predicted_loss
     per_token_loss = data['per_token_loss']
     actual_probs = data['actual_probs']
     exit_labels = data['exit_labels']
     threshold = data['threshold']
 
-    hard_mask = confidences < threshold
+    # BDR-style: high predicted_loss > threshold = hard token
+    hard_mask = confidences > threshold
     easy_mask = ~hard_mask
 
     print("=" * 60)
@@ -70,12 +71,13 @@ def analyze_hard_easy_separation(data: dict) -> None:
 
 def plot_hard_easy_comparison(data: dict) -> None:
     """Create visualization comparing Hard and Easy tokens."""
-    confidences = data['confidences']
+    confidences = data['confidences']  # BDR: this is predicted_loss
     per_token_loss = data['per_token_loss']
     actual_probs = data['actual_probs']
     threshold = data['threshold']
 
-    hard_mask = confidences < threshold
+    # BDR-style: high predicted_loss > threshold = hard token
+    hard_mask = confidences > threshold
     easy_mask = ~hard_mask
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
