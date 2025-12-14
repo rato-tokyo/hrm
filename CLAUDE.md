@@ -131,6 +131,44 @@ return SequenceData(hard_hidden, hard_targets)
 
 **重要**: Block 1が受け取るのはhardトークンのみ。easyトークンのhidden statesはBlock 1に流れない。
 
+---
+
+## ⛔ シーケンス単位収集は使用禁止
+
+### 定義
+
+| 用語 | 対象 | 選択基準 | 結果 |
+|------|------|----------|------|
+| **トークン単位収集** | 個々のトークン | 各トークンのconfidence < threshold | hardトークンのみ抽出、repackして新シーケンス作成 |
+| **シーケンス単位収集** | シーケンス全体 | シーケンス内の最小confidenceで判定 | hardシーケンス全体を選択（easyトークンも含む） |
+
+### シーケンス単位収集の詳細（⚠️ 使用禁止）
+
+```python
+# シーケンス単位収集（使用禁止）
+# 対象: シーケンス全体
+# 選択基準: シーケンス内の最小confidence（= 最も難しいトークンのconfidence）
+min_confidence_per_seq = confidences.min(dim=-1).values  # (num_sequences,)
+hard_seq_mask = min_confidence_per_seq < threshold  # (num_sequences,)
+
+# 結果: 難しいトークンを1つでも含むシーケンス全体を選択
+hard_hidden = hidden_out[hard_seq_mask]  # シーケンス全体（easyトークンも含む）
+hard_targets = targets[hard_seq_mask]
+```
+
+### 禁止理由
+
+1. **easyトークンがBlock 1に流れる**: シーケンス内の簡単なトークンも一緒に訓練される
+2. **訓練効率の低下**: Block 0で十分処理できるトークンを再度訓練する無駄
+3. **LEGOの設計思想に反する**: 「難しいものだけを深い層で処理」が核心
+
+### 永続的な方針
+
+**トークン単位収集のみを使用する**。シーケンス単位収集は今後一切実装しない。
+
+文脈が失われる問題は、repack後のシーケンスでAttentionが新たな文脈を構築することで対処する。
+元のシーケンス境界を維持する必要はない。
+
 ### Threshold自動設定方式（重要：削除禁止）
 
 **thresholdは`train_block()`内で自動計算される**：外部からハードコードしない。
