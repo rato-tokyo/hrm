@@ -200,6 +200,12 @@ print("Experiment 1b: Low-Rank for Logit-based Metrics")
 print("=" * 60)
 print("(softmaxを使わず、logitsの統計量を直接近似)")
 
+# Move exact metrics to CPU for comparison
+max_z_cpu = max_z.cpu().numpy()
+max_minus_mean_cpu = max_minus_mean.cpu().numpy()
+margin_cpu = margin.cpu().numpy()
+loss_cpu = loss.cpu().numpy()
+
 print(f"\n{'Rank':<6} {'Coverage':<10} {'max_z Corr':<12} {'max-mean Corr':<14} {'margin Corr':<12}")
 print("-" * 70)
 
@@ -305,12 +311,8 @@ print(f"\n{'=' * 60}")
 print("Experiment 2: Correlation with Loss")
 print("=" * 60)
 
-# Move to CPU for correlation analysis
+# Move to CPU for correlation analysis (softmax_conf only - others already moved)
 softmax_conf_cpu = softmax_conf.cpu().numpy()
-max_z_cpu = max_z.cpu().numpy()
-max_minus_mean_cpu = max_minus_mean.cpu().numpy()
-margin_cpu = margin.cpu().numpy()
-loss_cpu = loss.cpu().numpy()
 
 metrics = {
     "softmax_conf": softmax_conf_cpu,
