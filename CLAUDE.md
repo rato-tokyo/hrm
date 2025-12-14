@@ -55,7 +55,7 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 
 1. **事前学習専用** - generate、KVキャッシュは実装しない
 2. **コンポジション方式** - LEGOBlockはTransformerBlockをラップ（継承ではない）
-3. **LEGOBlockがexit判定を所有** - 各Blockはexit_classifierとthresholdを持つ
+3. **LEGOBlockがexit判定を所有** - 各Blockはthresholdを持ち、softmax maxで信頼度計算
 4. **LEGOLLMはルーティングのみ** - Block間のインデックス管理と統計計算
 5. **トークン単位のEarly Exit** - すべての処理でearly exitはトークン単位（バッチ単位ではない）
 6. **TRUE Early Exit** - exitしたトークンの後続blockは処理しない
@@ -80,7 +80,6 @@ block = LEGOBlock(TransformerBlock(dim=256, num_heads=8, num_layers=4))
 class LEGOBlock(nn.Module):
     def __init__(self, transformer: TransformerBlock):
         self.transformer = transformer  # 外部から注入
-        self.exit_classifier = nn.Linear(transformer.dim, 1)
         self.threshold = 1.0  # trainerが設定
 
     # プロパティ（transformerに委譲）
@@ -96,17 +95,16 @@ class LEGOBlock(nn.Module):
 
 ### 信頼度計算方式（重要：削除禁止）
 
-**軽量線形分類器（exit_classifier）を使用する**：
+**softmax max方式を使用する**：
 
 ```python
-# 正しい実装（exit_classifier方式）
-self.exit_classifier = nn.Linear(dim, 1)
-confidence = torch.sigmoid(self.exit_classifier(h)).squeeze(-1)
+# 正しい実装（softmax max方式）
+confidence = F.softmax(logits, dim=-1).max(dim=-1).values
 ```
 
-softmax方式（`F.softmax(logits, dim=-1).max()`）ではない。線形分類器は：
-- 計算コストが大幅に削減（dim→1 vs dim→vocab_size）
-- 「正解を予測できたか」を直接学習
+- 訓練完了後の言語モデル出力に基づく信頼度
+- 追加パラメータ不要
+- 訓練は言語モデリング損失のみ
 
 ### Hard Example収集方式（重要：削除禁止）
 
@@ -132,7 +130,7 @@ block.threshold = threshold
 ```
 
 これにより：
-- 訓練後の`exit_classifier`の出力分布に基づいた適切なthreshold
+- 訓練後のsoftmax出力分布に基づいた適切なthreshold
 - `hard_ratio`と推論時のexit率が一致
 - 外部での手動調整が不要
 

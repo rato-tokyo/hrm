@@ -77,27 +77,16 @@ def train_block(
 
         for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=True):
             optimizer.zero_grad()
-            h_out, logits, _ = block.forward(h)
+            _, logits, _ = block.forward(h)
             logits = logits.squeeze(1)
 
-            # Language modeling loss
-            lm_loss = F.cross_entropy(logits, y)
-
-            # Exit classifier loss: predict if token is correct
-            with torch.no_grad():
-                predicted = logits.argmax(dim=-1)
-                is_correct = (predicted == y).float()
-
-            exit_logits = block.exit_classifier(h_out).squeeze(-1).squeeze(-1)
-            exit_loss = F.binary_cross_entropy_with_logits(exit_logits, is_correct)
-
-            # Combined loss
-            loss = lm_loss + exit_loss
+            # Language modeling loss only
+            loss = F.cross_entropy(logits, y)
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(block.parameters(), config.grad_clip)
             optimizer.step()
-            total_loss += lm_loss.item()
+            total_loss += loss.item()
             num_batches += 1
 
         train_ppl = float(np.exp(total_loss / num_batches))
@@ -200,11 +189,12 @@ def _collect_hard_examples(
         # Process in batches to avoid OOM
         for h, y in data.to(str(device)).batches(batch_size=256, shuffle=False):
             # Forward through this block
-            h_out, _, _ = block.forward(h)
+            h_out, logits, _ = block.forward(h)
             h_out = h_out.squeeze(1)  # (batch_size, dim)
+            logits = logits.squeeze(1)  # (batch_size, vocab_size)
 
-            # Compute confidence from exit_classifier
-            confidence = torch.sigmoid(block.exit_classifier(h_out)).squeeze(-1)  # (batch_size,)
+            # Compute confidence from softmax max
+            confidence = F.softmax(logits, dim=-1).max(dim=-1).values  # (batch_size,)
 
             all_hidden_out.append(h_out)
             all_targets.append(y)
