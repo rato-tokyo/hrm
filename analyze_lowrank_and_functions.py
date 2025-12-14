@@ -206,6 +206,12 @@ max_minus_mean_cpu = max_minus_mean.cpu().numpy()
 margin_cpu = margin.cpu().numpy()
 loss_cpu = loss.cpu().numpy()
 
+# Compute Oracle diff for later use
+oracle_threshold = np.median(loss_cpu)
+oracle_easy = loss_cpu <= oracle_threshold
+oracle_diff = loss_cpu[~oracle_easy].mean() - loss_cpu[oracle_easy].mean()
+print(f"Oracle diff (for reference): {oracle_diff:.2f}")
+
 print(f"\n{'Rank':<6} {'Coverage':<10} {'max_z Corr':<12} {'max-mean Corr':<14} {'margin Corr':<12}")
 print("-" * 70)
 
@@ -299,10 +305,13 @@ for r in [5, 10, 20, 32, 64]:
 
     print(f"{r:<6} {coverage:<10.1f}% {easy_loss:<12.2f} {hard_loss:<12.2f} {diff:<12.2f} {oracle_pct:<12.1f}%")
 
-print(f"{'Exact':<6} {'100.0':<10}% {metrics['max_minus_mean'][metrics['max_minus_mean'] >= np.median(metrics['max_minus_mean'])].mean():<12.2f}", end="")
+# Exact (full rank) row
 exact_easy = max_minus_mean_cpu >= np.median(max_minus_mean_cpu)
-print(f" {loss_cpu[exact_easy].mean():<12.2f} {loss_cpu[~exact_easy].mean():<12.2f} {loss_cpu[~exact_easy].mean() - loss_cpu[exact_easy].mean():<12.2f} ", end="")
-print(f"{(loss_cpu[~exact_easy].mean() - loss_cpu[exact_easy].mean()) / oracle_diff * 100:<12.1f}%")
+exact_easy_loss = loss_cpu[exact_easy].mean()
+exact_hard_loss = loss_cpu[~exact_easy].mean()
+exact_diff = exact_hard_loss - exact_easy_loss
+exact_oracle_pct = (exact_diff / oracle_diff) * 100
+print(f"{'Exact':<6} {'100.0':<10}% {exact_easy_loss:<12.2f} {exact_hard_loss:<12.2f} {exact_diff:<12.2f} {exact_oracle_pct:<12.1f}%")
 
 # ============================================================
 # Experiment 2: Correlation with Loss
@@ -439,9 +448,7 @@ print("\nUsing median threshold:")
 print(f"{'Metric':<20} {'Easy Loss':<12} {'Hard Loss':<12} {'Loss Diff':<12} {'Oracle %':<12}")
 print("-" * 70)
 
-oracle_threshold = np.median(loss_cpu)
-oracle_easy = loss_cpu <= oracle_threshold
-oracle_diff = loss_cpu[~oracle_easy].mean() - loss_cpu[oracle_easy].mean()
+# oracle_diff already computed in Experiment 1b
 
 for name, metric in metrics.items():
     threshold = np.median(metric)
