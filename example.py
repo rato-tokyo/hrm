@@ -39,7 +39,7 @@ def main() -> None:
         block_layers=(2, 2),
     )
     # exit_label_mode: "correct" (binary), "distill" (softmax confidence), "loss" (exp(-loss))
-    exit_label_mode = "distill"  # Change to "loss" for second experiment
+    exit_label_mode = "loss"  # Changed from "distill" for second experiment
 
     trainer_config = TrainerConfig(
         batch_size=64,
