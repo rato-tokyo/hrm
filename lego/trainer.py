@@ -87,12 +87,15 @@ def train_block(
     targets_all = torch.cat(all_targets)  # Keep on CPU
 
     # 4. Train exit_classifier
-    num_exit_epochs = min(10, config.max_epochs)
+    # BDR-style needs more epochs to converge (predicting loss values 0-15)
+    # Higher LR for exit_classifier since it's a simple linear layer
+    num_exit_epochs = min(50, config.max_epochs)
+    exit_lr = config.lr * 10  # 10x higher LR for faster convergence
     train_exit_classifier(
         block.exit_classifier,
         hidden_states,
         exit_labels_all,
-        config.lr,
+        exit_lr,
         num_exit_epochs,
         is_verbose,
     )

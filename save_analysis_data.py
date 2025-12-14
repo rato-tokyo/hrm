@@ -124,7 +124,8 @@ def main() -> None:
             ).view(h_out.size(0), h_out.size(1))
 
             # Exit labels (what exit_classifier was trained on)
-            exit_labels = torch.exp(-per_token_loss)
+            # BDR-style: exit_labels = loss directly (not exp(-loss))
+            exit_labels = per_token_loss
 
             all_confidences.append(confidence.cpu())
             all_actual_probs.append(actual_prob.cpu())
@@ -157,8 +158,9 @@ def main() -> None:
     print(f"  Per-token loss: mean={per_token_loss.mean():.4f}, std={per_token_loss.std():.4f}")
 
     # Quick sanity check: Hard/Easy separation
+    # BDR-style: predicted_loss > threshold = hard token
     threshold = stats['threshold']
-    hard_mask = confidences < threshold
+    hard_mask = confidences > threshold  # BDR: high predicted_loss = hard
     easy_mask = ~hard_mask
 
     print(f"\n{'=' * 60}")
