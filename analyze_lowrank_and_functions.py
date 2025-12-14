@@ -67,6 +67,11 @@ max_z = torch.zeros(num_tokens, device=device)
 max_minus_mean = torch.zeros(num_tokens, device=device)
 margin = torch.zeros(num_tokens, device=device)
 
+# Normalized versions (z-score normalization per token)
+max_z_norm = torch.zeros(num_tokens, device=device)
+max_minus_mean_norm = torch.zeros(num_tokens, device=device)  # = (max - mean) / std
+margin_norm = torch.zeros(num_tokens, device=device)
+
 start_time = time.time()
 print(f"Processing {num_chunks} chunks (chunk_size={chunk_size})...")
 
@@ -91,6 +96,20 @@ with torch.no_grad():
         # Margin (max - second_max)
         top2 = z_chunk.topk(2, dim=1).values
         margin[start:end] = top2[:, 0] - top2[:, 1]
+
+        # Normalized versions
+        z_std = z_chunk.std(dim=1)
+        z_mean = z_chunk.mean(dim=1)
+        z_max = z_chunk.max(dim=1).values
+
+        # (max - mean) / std (z-score of max)
+        max_minus_mean_norm[start:end] = (z_max - z_mean) / (z_std + 1e-8)
+
+        # max / std (normalized max)
+        max_z_norm[start:end] = z_max / (z_std + 1e-8)
+
+        # margin / std (normalized margin)
+        margin_norm[start:end] = (top2[:, 0] - top2[:, 1]) / (z_std + 1e-8)
 
         # Progress
         if (i + 1) % 5 == 0 or i == num_chunks - 1:
@@ -320,14 +339,21 @@ print(f"\n{'=' * 60}")
 print("Experiment 2: Correlation with Loss")
 print("=" * 60)
 
-# Move to CPU for correlation analysis (softmax_conf only - others already moved)
+# Move to CPU for correlation analysis
 softmax_conf_cpu = softmax_conf.cpu().numpy()
+max_z_norm_cpu = max_z_norm.cpu().numpy()
+max_minus_mean_norm_cpu = max_minus_mean_norm.cpu().numpy()
+margin_norm_cpu = margin_norm.cpu().numpy()
 
 metrics = {
     "softmax_conf": softmax_conf_cpu,
     "max_z": max_z_cpu,
     "max_minus_mean": max_minus_mean_cpu,
     "margin": margin_cpu,
+    # Normalized versions
+    "max_z_norm": max_z_norm_cpu,
+    "max-mean_norm": max_minus_mean_norm_cpu,
+    "margin_norm": margin_norm_cpu,
 }
 
 print(f"\n{'Metric':<20} {'Corr with Loss':<15} {'Direction':<12} {'Mean':<12} {'Std':<12}")
@@ -462,6 +488,10 @@ metrics_gpu = {
     "max_z": max_z,
     "max_minus_mean": max_minus_mean,
     "margin": margin,
+    # Normalized versions
+    "max_z_norm": max_z_norm,
+    "max-mean_norm": max_minus_mean_norm,
+    "margin_norm": margin_norm,
 }
 
 for name, metric in metrics_gpu.items():
