@@ -2,14 +2,14 @@
 Exit Classifier Score Distribution Analysis
 
 Trains Block 0 and visualizes the distribution of exit classifier scores
-on validation data with GMM (Gaussian Mixture Model) fitting.
+on validation data with Beta Mixture Model and KDE fitting.
 """
 
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.mixture import GaussianMixture
 from scipy import stats as scipy_stats
+from scipy.optimize import minimize
 
 from lego import (
     LEGOLLM,
@@ -23,6 +23,109 @@ from lego import (
     train_block,
     create_sequence_data,
 )
+
+
+def fit_beta_mixture(
+    data: np.ndarray,
+    n_components: int,
+    max_iter: int,
+    tol: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Fit a Beta Mixture Model using EM algorithm.
+
+    Args:
+        data: 1D array of values in (0, 1)
+        n_components: Number of beta components
+        max_iter: Maximum EM iterations
+        tol: Convergence tolerance
+
+    Returns:
+        Tuple of (alphas, betas, weights) for each component
+    """
+    n_samples = len(data)
+
+    # Clip data to avoid numerical issues at boundaries
+    data = np.clip(data, 1e-6, 1 - 1e-6)
+
+    # Initialize parameters using k-means style initialization
+    sorted_data = np.sort(data)
+    split_points = np.linspace(0, n_samples, n_components + 1, dtype=int)
+    alphas = np.zeros(n_components)
+    betas = np.zeros(n_components)
+    weights = np.ones(n_components) / n_components
+
+    for k in range(n_components):
+        segment = sorted_data[split_points[k]:split_points[k + 1]]
+        if len(segment) > 0:
+            mean = segment.mean()
+            var = segment.var() + 1e-6
+            # Method of moments for beta distribution
+            common = mean * (1 - mean) / var - 1
+            common = max(common, 2.0)  # Ensure valid parameters
+            alphas[k] = mean * common
+            betas[k] = (1 - mean) * common
+
+    # EM algorithm
+    prev_log_likelihood = -np.inf
+    for iteration in range(max_iter):
+        # E-step: compute responsibilities
+        log_probs = np.zeros((n_samples, n_components))
+        for k in range(n_components):
+            log_probs[:, k] = np.log(weights[k] + 1e-10) + scipy_stats.beta.logpdf(
+                data, alphas[k], betas[k]
+            )
+
+        # Log-sum-exp for numerical stability
+        max_log_probs = log_probs.max(axis=1, keepdims=True)
+        log_sum = max_log_probs + np.log(np.exp(log_probs - max_log_probs).sum(axis=1, keepdims=True))
+        log_responsibilities = log_probs - log_sum
+        responsibilities = np.exp(log_responsibilities)
+
+        # Compute log-likelihood
+        log_likelihood = log_sum.sum()
+
+        # Check convergence
+        if abs(log_likelihood - prev_log_likelihood) < tol:
+            break
+        prev_log_likelihood = log_likelihood
+
+        # M-step: update parameters
+        Nk = responsibilities.sum(axis=0) + 1e-10
+        weights = Nk / n_samples
+
+        for k in range(n_components):
+            resp_k = responsibilities[:, k]
+            weighted_data = resp_k * data
+            weighted_log_data = resp_k * np.log(data)
+            weighted_log_1_minus_data = resp_k * np.log(1 - data)
+
+            mean_k = weighted_data.sum() / Nk[k]
+            mean_log_k = weighted_log_data.sum() / Nk[k]
+            mean_log_1_minus_k = weighted_log_1_minus_data.sum() / Nk[k]
+
+            # Update alpha and beta using fixed-point iteration
+            def neg_expected_log_likelihood(params: np.ndarray) -> float:
+                a, b = params
+                if a <= 0 or b <= 0:
+                    return 1e10
+                return -(
+                    (a - 1) * mean_log_k
+                    + (b - 1) * mean_log_1_minus_k
+                    - np.log(scipy_stats.beta(a, b).expect(lambda x: 1) + 1e-10)
+                )
+
+            # Simple optimization
+            result = minimize(
+                neg_expected_log_likelihood,
+                [alphas[k], betas[k]],
+                method='L-BFGS-B',
+                bounds=[(0.1, 100), (0.1, 100)],
+            )
+            if result.success:
+                alphas[k], betas[k] = result.x
+
+    return alphas, betas, weights
 
 
 def main() -> None:
@@ -115,32 +218,41 @@ def main() -> None:
     print(f"Score mean: {all_scores_flat.mean():.4f}")
     print(f"Score std: {all_scores_flat.std():.4f}")
 
-    # Fit GMM with 2 components
-    print("\nFitting Gaussian Mixture Model (2 components)...")
-    gmm = GaussianMixture(n_components=2, random_state=42)
-    gmm.fit(all_scores_flat.reshape(-1, 1))
+    # Fit Beta Mixture Model
+    print("\nFitting Beta Mixture Model (2 components)...")
+    alphas, betas, weights = fit_beta_mixture(
+        all_scores_flat,
+        n_components=2,
+        max_iter=100,
+        tol=1e-4,
+    )
 
-    # Extract GMM parameters
-    means = gmm.means_.flatten()
-    stds = np.sqrt(gmm.covariances_.flatten())
-    weights = gmm.weights_
-
-    # Sort by mean (low confidence first)
-    sort_idx = np.argsort(means)
-    means = means[sort_idx]
-    stds = stds[sort_idx]
+    # Sort by mode (low confidence first)
+    modes = (alphas - 1) / (alphas + betas - 2 + 1e-10)
+    modes = np.clip(modes, 0, 1)
+    sort_idx = np.argsort(modes)
+    alphas = alphas[sort_idx]
+    betas = betas[sort_idx]
     weights = weights[sort_idx]
+    modes = modes[sort_idx]
 
     # Calculate separation metrics
-    separation = abs(means[1] - means[0]) / np.sqrt(stds[0]**2 + stds[1]**2)
+    # For beta distribution, use mode distance normalized by combined spread
+    var1 = (alphas[0] * betas[0]) / ((alphas[0] + betas[0])**2 * (alphas[0] + betas[0] + 1))
+    var2 = (alphas[1] * betas[1]) / ((alphas[1] + betas[1])**2 * (alphas[1] + betas[1] + 1))
+    separation = abs(modes[1] - modes[0]) / np.sqrt(var1 + var2)
 
-    print("\nGMM Results:")
-    print(f"  Component 1 (Hard):  μ={means[0]:.4f}, σ={stds[0]:.4f}, weight={weights[0]:.2%}")
-    print(f"  Component 2 (Easy):  μ={means[1]:.4f}, σ={stds[1]:.4f}, weight={weights[1]:.2%}")
+    print("\nBeta Mixture Model Results:")
+    print(f"  Component 1 (Hard):  α={alphas[0]:.2f}, β={betas[0]:.2f}, mode={modes[0]:.4f}, weight={weights[0]:.2%}")
+    print(f"  Component 2 (Easy):  α={alphas[1]:.2f}, β={betas[1]:.2f}, mode={modes[1]:.4f}, weight={weights[1]:.2%}")
     print(f"  Separation index: {separation:.4f}")
-    print(f"  Peak distance: {means[1] - means[0]:.4f}")
+    print(f"  Mode distance: {modes[1] - modes[0]:.4f}")
 
-    # Create histogram with GMM overlay
+    # Fit KDE
+    print("\nFitting Kernel Density Estimation...")
+    kde = scipy_stats.gaussian_kde(all_scores_flat, bw_method='scott')
+
+    # Create histogram with Beta Mixture and KDE overlay
     num_bins = 50
     fig, ax = plt.subplots(figsize=(12, 7))
 
@@ -149,48 +261,59 @@ def main() -> None:
         all_scores_flat,
         bins=num_bins,
         density=True,
-        alpha=0.6,
+        alpha=0.5,
         color='steelblue',
         edgecolor='black',
         linewidth=0.5,
         label='Observed distribution',
     )
 
-    # Plot GMM components
-    x_range = np.linspace(all_scores_flat.min() - 0.05, all_scores_flat.max() + 0.05, 500)
+    # Plot range
+    x_range = np.linspace(0.01, 0.99, 500)
 
-    # Individual Gaussian components
-    for i, (mean, std, weight) in enumerate(zip(means, stds, weights)):
-        gaussian = weight * scipy_stats.norm.pdf(x_range, mean, std)
-        label = f"Component {i+1} ({'Hard' if i == 0 else 'Easy'}): μ={mean:.3f}, σ={std:.3f}"
-        color = 'darkorange' if i == 0 else 'forestgreen'
-        ax.plot(x_range, gaussian, color=color, linewidth=2.5, linestyle='--', label=label)
+    # Individual Beta components
+    colors = ['darkorange', 'forestgreen']
+    labels = ['Hard', 'Easy']
+    for i in range(2):
+        beta_pdf = weights[i] * scipy_stats.beta.pdf(x_range, alphas[i], betas[i])
+        ax.plot(
+            x_range, beta_pdf,
+            color=colors[i],
+            linewidth=2.5,
+            linestyle='--',
+            label=f"Beta {labels[i]}: α={alphas[i]:.1f}, β={betas[i]:.1f}",
+        )
 
-    # Combined GMM
-    gmm_combined = np.zeros_like(x_range)
-    for mean, std, weight in zip(means, stds, weights):
-        gmm_combined += weight * scipy_stats.norm.pdf(x_range, mean, std)
-    ax.plot(x_range, gmm_combined, color='crimson', linewidth=3, label='GMM combined')
+    # Combined Beta Mixture
+    beta_combined = np.zeros_like(x_range)
+    for i in range(2):
+        beta_combined += weights[i] * scipy_stats.beta.pdf(x_range, alphas[i], betas[i])
+    ax.plot(x_range, beta_combined, color='crimson', linewidth=3, label='Beta Mixture')
+
+    # KDE
+    kde_values = kde(x_range)
+    ax.plot(x_range, kde_values, color='navy', linewidth=2.5, linestyle=':', label='KDE')
 
     # Add threshold line
     ax.axvline(
         x=stats['threshold'],
         color='purple',
-        linestyle=':',
+        linestyle='-.',
         linewidth=2.5,
         label=f"Threshold = {stats['threshold']:.4f}",
     )
 
-    # Add vertical lines at GMM means
-    ax.axvline(x=means[0], color='darkorange', linestyle='-.', linewidth=1.5, alpha=0.7)
-    ax.axvline(x=means[1], color='forestgreen', linestyle='-.', linewidth=1.5, alpha=0.7)
+    # Add vertical lines at Beta modes
+    ax.axvline(x=modes[0], color='darkorange', linestyle='-.', linewidth=1.5, alpha=0.7)
+    ax.axvline(x=modes[1], color='forestgreen', linestyle='-.', linewidth=1.5, alpha=0.7)
 
     # Labels and title
     ax.set_xlabel('Exit Classifier Score (Confidence)', fontsize=12)
     ax.set_ylabel('Density', fontsize=12)
-    ax.set_title('Exit Classifier Score Distribution with GMM Fitting', fontsize=14)
+    ax.set_title('Exit Classifier Score Distribution: Beta Mixture + KDE', fontsize=14)
     ax.legend(loc='upper right', fontsize=9)
     ax.grid(True, alpha=0.3)
+    ax.set_xlim(0, 1)
 
     # Add statistics text box (left side)
     basic_stats_text = (
@@ -208,17 +331,17 @@ def main() -> None:
         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
     )
 
-    # Add GMM stats text box (right side, below legend)
-    gmm_stats_text = (
-        f"GMM Analysis\n"
-        f"───────────\n"
+    # Add Beta Mixture stats text box (right side, below legend)
+    bmm_stats_text = (
+        f"Beta Mixture Analysis\n"
+        f"─────────────────\n"
         f"Hard tokens: {weights[0]:.1%}\n"
         f"Easy tokens: {weights[1]:.1%}\n"
-        f"Peak distance: {means[1] - means[0]:.4f}\n"
+        f"Mode distance: {modes[1] - modes[0]:.4f}\n"
         f"Separation: {separation:.4f}"
     )
     ax.text(
-        0.98, 0.55, gmm_stats_text,
+        0.98, 0.55, bmm_stats_text,
         transform=ax.transAxes,
         fontsize=9,
         verticalalignment='top',
