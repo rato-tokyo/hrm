@@ -62,22 +62,30 @@ def train_block(
     # 2. Train LM with early stopping
     lm_stats = _train_lm(block, train_data, val_data, optimizer, config, device, is_verbose)
 
-    # 3. Compute hidden_states and logits for exit_classifier training
+    # 3. Compute hidden_states and exit_labels for exit_classifier training
+    # Note: We compute exit_labels (exp(-loss)) per batch to avoid storing huge logits tensor
     block.eval()
     all_hidden: List[torch.Tensor] = []
-    all_logits: List[torch.Tensor] = []
+    all_exit_labels: List[torch.Tensor] = []
     all_targets: List[torch.Tensor] = []
 
     with torch.no_grad():
         for h, y in data.to(str(device)).batches(config.batch_size, shuffle=False):
             h_out, logits, _ = block.forward(h)
+            # Compute exit_labels immediately to avoid storing logits (vocab_size dim is huge)
+            per_token_loss = F.cross_entropy(
+                logits.view(-1, logits.size(-1)),
+                y.view(-1),
+                reduction='none'
+            ).view(h_out.size(0), h_out.size(1))
+            exit_labels = torch.exp(-per_token_loss)
             # Move to CPU to save GPU memory
             all_hidden.append(h_out.cpu())
-            all_logits.append(logits.cpu())
+            all_exit_labels.append(exit_labels.cpu())
             all_targets.append(y.cpu())
 
     hidden_states = torch.cat(all_hidden).to(device)  # (num_sequences, seq_len, dim)
-    logits_all = torch.cat(all_logits)  # Keep on CPU, only used for label computation
+    exit_labels_all = torch.cat(all_exit_labels).to(device)  # (num_sequences, seq_len)
     targets_all = torch.cat(all_targets)  # Keep on CPU
 
     # 4. Train exit_classifier
@@ -85,8 +93,7 @@ def train_block(
     train_exit_classifier(
         block.exit_classifier,
         hidden_states,
-        logits_all,
-        targets_all,
+        exit_labels_all,
         config.lr,
         num_exit_epochs,
         is_verbose,

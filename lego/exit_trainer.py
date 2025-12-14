@@ -5,7 +5,7 @@ Functions for training exit classifiers and collecting hard examples.
 Exit classifier uses loss-based labels: exp(-cross_entropy_loss).
 
 These functions are decoupled from LEGOBlock internals - they only need
-the exit_classifier, hidden_states, logits, and targets.
+the exit_classifier, hidden_states, and precomputed exit_labels.
 """
 
 from __future__ import annotations
@@ -22,23 +22,18 @@ if TYPE_CHECKING:
 def train_exit_classifier(
     exit_classifier: "ExitClassifier",
     hidden_states: torch.Tensor,
-    logits: torch.Tensor,
-    targets: torch.Tensor,
+    exit_labels: torch.Tensor,
     lr: float,
     num_epochs: int,
     is_verbose: bool,
 ) -> None:
     """
-    Train exit_classifier using loss-based labels.
-
-    Labels are computed as exp(-cross_entropy_loss) for each token.
-    Higher confidence = lower loss = easier token.
+    Train exit_classifier using precomputed exit labels.
 
     Args:
         exit_classifier: ExitClassifier to train
-        hidden_states: Hidden states from block.forward() (num_tokens, dim) or (batch, seq_len, dim)
-        logits: Logits from block.forward() (num_tokens, vocab_size) or (batch, seq_len, vocab_size)
-        targets: Target token IDs (num_tokens,) or (batch, seq_len)
+        hidden_states: Hidden states (batch, seq_len, dim)
+        exit_labels: Precomputed exit labels (batch, seq_len), values in [0, 1]
         lr: Learning rate
         num_epochs: Number of training epochs
         is_verbose: Print progress
@@ -46,20 +41,13 @@ def train_exit_classifier(
     if is_verbose:
         print("  Training exit_classifier...")
 
-    # Flatten if needed
+    # Flatten to (num_tokens, dim) and (num_tokens,)
     if hidden_states.dim() == 3:
         dim = hidden_states.shape[-1]
         hidden_states = hidden_states.view(-1, dim)
-        logits = logits.view(-1, logits.shape[-1])
-        targets = targets.view(-1)
+        exit_labels = exit_labels.view(-1)
 
     num_tokens = hidden_states.shape[0]
-
-    # Compute exit labels from logits (detached, no gradient)
-    # logits and targets may be on CPU to save GPU memory
-    with torch.no_grad():
-        per_token_loss = F.cross_entropy(logits, targets, reduction='none')
-        exit_labels = torch.exp(-per_token_loss).to(hidden_states.device)
 
     # Setup optimizer
     exit_optimizer = torch.optim.Adam(exit_classifier.parameters(), lr=lr)
@@ -69,8 +57,7 @@ def train_exit_classifier(
     for epoch in range(num_epochs):
         exit_optimizer.zero_grad()
 
-        # Forward pass - need to reshape for exit_classifier which expects (batch, seq_len, dim)
-        # Use (num_tokens, 1, dim) to process all tokens
+        # Forward pass - reshape for exit_classifier
         h_reshaped = hidden_states.unsqueeze(1)  # (num_tokens, 1, dim)
         exit_preds = exit_classifier.compute_confidence(h_reshaped).squeeze(1)  # (num_tokens,)
 
@@ -126,8 +113,6 @@ def collect_hard_examples(
         confidences = exit_classifier.compute_confidence(hidden_states)  # (num_sequences, seq_len)
 
     # Compute threshold: quantile such that hard_ratio tokens are collected as hard
-    # e.g., hard_ratio=0.5 means bottom 50% are hard, so threshold = 50th percentile
-    # confidence < threshold -> hard token
     all_confidences_flat = confidences.view(-1)
     if hard_ratio >= 1.0:
         threshold = float('inf')  # All tokens are hard
