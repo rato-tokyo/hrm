@@ -92,6 +92,15 @@ def main() -> None:
         config.num_samples, batch_size, config.seq_len, seed=42
     )
 
+    # Combine train batches and split same as LEGO (80/20)
+    # This ensures fair comparison with LEGO's data.split()
+    all_batches = train_batches  # Use only train split for fair comparison
+    num_train = int(len(all_batches) * (1.0 - val_ratio))
+    train_batches = all_batches[:num_train]
+    val_batches = all_batches[num_train:]
+
+    print(f"Data: {len(train_batches)} train batches, {len(val_batches)} val batches")
+
     # Create model with 4 layers (same as LEGO 2+2)
     total_layers = sum(config.block_layers)
     transformer = TransformerBlock(
