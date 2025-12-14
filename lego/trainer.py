@@ -61,7 +61,7 @@ def train_block(
     lm_stats = _train_lm(block, train_data, val_data, optimizer, config, device, is_verbose)
 
     # 3. Compute hidden_states and exit_labels for exit_classifier training
-    # Note: We compute exit_labels (exp(-loss)) per batch to avoid storing huge logits tensor
+    # BDR-style: use per-token loss directly as labels (no exp(-loss))
     block.eval()
     all_hidden: List[torch.Tensor] = []
     all_exit_labels: List[torch.Tensor] = []
@@ -70,13 +70,13 @@ def train_block(
     with torch.no_grad():
         for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=False):
             h_out, logits, _ = block.forward(h)
-            # Compute exit_labels immediately to avoid storing logits (vocab_size dim is huge)
+            # Compute per-token loss as exit_labels (BDR-style)
             per_token_loss = F.cross_entropy(
                 logits.view(-1, logits.size(-1)),
                 y.view(-1),
                 reduction='none'
             ).view(h_out.size(0), h_out.size(1))
-            exit_labels = torch.exp(-per_token_loss)
+            exit_labels = per_token_loss  # Direct loss prediction
             # Move to CPU to save GPU memory
             all_hidden.append(h_out.cpu())
             all_exit_labels.append(exit_labels.cpu())

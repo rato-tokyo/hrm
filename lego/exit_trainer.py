@@ -2,10 +2,10 @@
 LEGO Framework - Exit Classifier Training
 
 Functions for training exit classifiers and collecting hard examples.
-Exit classifier uses loss-based labels: exp(-cross_entropy_loss).
+Exit classifier predicts per-token loss directly (BDR-style approach).
 
 These functions are decoupled from LEGOBlock internals - they only need
-the exit_classifier, hidden_states, and precomputed exit_labels.
+the exit_classifier, hidden_states, and precomputed loss values.
 """
 
 from __future__ import annotations
@@ -28,18 +28,21 @@ def train_exit_classifier(
     is_verbose: bool,
 ) -> None:
     """
-    Train exit_classifier using precomputed exit labels.
+    Train exit_classifier to predict per-token loss.
+
+    BDR-style approach: directly predict loss values, no sigmoid.
+    Lower predicted loss = easier token = should exit early.
 
     Args:
         exit_classifier: ExitClassifier to train
         hidden_states: Hidden states (batch, seq_len, dim)
-        exit_labels: Precomputed exit labels (batch, seq_len), values in [0, 1]
+        exit_labels: Per-token loss values (batch, seq_len)
         lr: Learning rate
         num_epochs: Number of training epochs
         is_verbose: Print progress
     """
     if is_verbose:
-        print("  Training exit_classifier...")
+        print("  Training exit_classifier (BDR-style: predict loss)...")
 
     # Flatten to (num_tokens, dim) and (num_tokens,)
     if hidden_states.dim() == 3:
@@ -68,8 +71,10 @@ def train_exit_classifier(
 
         avg_loss = loss.item() / num_tokens
         avg_label = exit_labels.mean().item()
+        avg_pred = exit_preds.mean().item()
         if is_verbose:
-            print(f"    Exit epoch {epoch+1}/{num_epochs}: loss={avg_loss:.4f}, avg_label={avg_label:.3f}")
+            print(f"    Exit epoch {epoch+1}/{num_epochs}: mse={avg_loss:.4f}, "
+                  f"avg_label={avg_label:.2f}, avg_pred={avg_pred:.2f}")
 
     exit_classifier.eval()
 
@@ -85,9 +90,12 @@ def collect_hard_examples(
     hard_ratio: float,
 ) -> Tuple["SequenceData", float]:
     """
-    Collect hard examples (token-level) based on exit_classifier confidence.
+    Collect hard examples (token-level) based on predicted loss.
 
-    Uses ratio-based selection: extracts only tokens with confidence in the bottom X%.
+    BDR-style: uses predicted loss for selection.
+    High predicted loss = hard token = should NOT exit.
+
+    Uses ratio-based selection: extracts tokens with predicted loss in the top X%.
     Hard tokens are then repacked into new sequences of the specified seq_len.
 
     Args:
@@ -100,7 +108,7 @@ def collect_hard_examples(
     Returns:
         Tuple of:
         - SequenceData with hard examples only (output hidden states and targets)
-        - threshold: Confidence threshold for early exit (quantile-based)
+        - threshold: Predicted loss threshold for early exit (quantile-based)
     """
     from .data import SequenceData
 
@@ -108,19 +116,24 @@ def collect_hard_examples(
     device = hidden_states.device
     dim = hidden_states.shape[-1]
 
-    # Compute confidence for all tokens
+    # Compute predicted loss for all tokens
     with torch.no_grad():
-        confidences = exit_classifier.compute_confidence(hidden_states)  # (num_sequences, seq_len)
+        predicted_loss = exit_classifier.compute_confidence(hidden_states)  # (num_sequences, seq_len)
 
     # Compute threshold: quantile such that hard_ratio tokens are collected as hard
-    all_confidences_flat = confidences.view(-1)
+    # Hard tokens have HIGH predicted loss, so we use (1 - hard_ratio) quantile
+    all_preds_flat = predicted_loss.view(-1)
     if hard_ratio >= 1.0:
-        threshold = float('inf')  # All tokens are hard
+        threshold = float('-inf')  # All tokens are hard
+    elif hard_ratio <= 0.0:
+        threshold = float('inf')  # No tokens are hard
     else:
-        threshold = float(torch.quantile(all_confidences_flat, hard_ratio).item())
+        # Threshold = (1 - hard_ratio) quantile
+        # Tokens with predicted_loss > threshold are hard
+        threshold = float(torch.quantile(all_preds_flat, 1.0 - hard_ratio).item())
 
-    # Token-level hard mask: confidence < threshold
-    hard_token_mask = confidences < threshold  # (num_sequences, seq_len)
+    # Token-level hard mask: predicted_loss > threshold (high loss = hard)
+    hard_token_mask = predicted_loss > threshold  # (num_sequences, seq_len)
 
     # Ensure targets is on same device as hidden_states
     targets = targets.to(device)

@@ -168,49 +168,47 @@ class ExitClassifier(nn.Module):
 **exit_classifier + loss方式を使用する**：
 
 ```python
-# 信頼度計算（推論時）- ExitClassifierが担当
-confidence = block.exit_classifier.compute_confidence(h)
-# 内部: torch.sigmoid(self.linear(h)).squeeze(-1)
+# BDR-style: exit_classifierはlossを直接予測（sigmoidなし）
+predicted_loss = block.exit_classifier.compute_confidence(h)
+# 内部: self.linear(h).squeeze(-1)  # 生の出力
 
 # exit_classifierの訓練ラベル（LM訓練完了後）- exit_trainer.pyで使用
 per_token_loss = F.cross_entropy(logits, y, reduction='none')
-exit_labels = torch.exp(-per_token_loss)  # loss方式
+exit_labels = per_token_loss  # lossそのもの（exp(-loss)ではない）
 ```
 
-### 方式の根拠（実験結果）
+### BDR-style方式の理由
 
-| 方式 | Final PPL | Block 1 val_ppl |
-|------|-----------|-----------------|
-| **loss（採用）** | **1071** | **445** |
-| distill | 1095 | 522 |
-| softmax | 1219 | 736 |
+**問題**: 以前の `exp(-loss)` 方式では、ラベルがほぼ0に集中（mean=0.06）し、
+sigmoid出力（0.5付近）との乖離が大きく、学習が機能しなかった。
 
-- **loss方式**が最良の精度（PPL 1071）
-- 正解ラベルを考慮した信頼度推定のため、hard example収集が正確
-- 詳細: `docs/experiments/exit_classifier_comparison.md`
+**解決**: BDR（Bimodal Distribution Removal）研究に倣い、lossを直接予測。
+- **低い predicted_loss = easy token = early exit**
+- **高い predicted_loss = hard token = 次のBlockへ**
 
 ### 訓練フロー
 
 1. **LM訓練**: 言語モデリング損失でTransformerを訓練（early stopping付き）
-2. **exit_classifier訓練**: LM訓練完了後、Transformerを凍結してexit_classifierのみ訓練
-3. **threshold設定**: exit_classifierの出力からquantileでthresholdを計算
+2. **exit_classifier訓練**: LM訓練完了後、hidden_statesからlossを予測するよう訓練
+3. **threshold設定**: predicted_lossの分布からquantileでthresholdを計算
 
 ---
 
 ## Hard Example収集方式（重要：削除禁止）
 
-**トークン単位で収集**：`hard_ratio=0.5`なら信頼度下位50%のトークンのみをhard exampleとして収集。
+**トークン単位で収集**：`hard_ratio=0.5`ならpredicted_loss上位50%のトークンのみをhard exampleとして収集。
 
 ```python
 # 正しい実装（トークン単位）- exit_trainer.py の collect_hard_examples()
-# 1. exit_classifierで信頼度を計算
-confidence = block.exit_classifier.compute_confidence(h_out)
+# 1. exit_classifierでpredicted_lossを計算
+predicted_loss = block.exit_classifier.compute_confidence(h_out)
 
-# 2. 全トークンのconfidenceからthresholdを計算
-threshold = torch.quantile(all_confidences_flat, hard_ratio)
+# 2. thresholdを計算（上位hard_ratio%がhard）
+# high predicted_loss = hard token
+threshold = torch.quantile(all_preds_flat, 1.0 - hard_ratio)
 
 # 3. 各トークンがhardかどうか判定
-hard_token_mask = confidences < threshold  # (num_sequences, seq_len)
+hard_token_mask = predicted_loss > threshold  # (num_sequences, seq_len)
 
 # 4. hardトークンのみを抽出
 hard_hidden = hidden_out[hard_token_mask]  # (num_hard_tokens, dim)
