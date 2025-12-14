@@ -2,12 +2,14 @@
 Exit Classifier Score Distribution Analysis
 
 Trains Block 0 and visualizes the distribution of exit classifier scores
-on validation data.
+on validation data with GMM (Gaussian Mixture Model) fitting.
 """
 
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
+from sklearn.mixture import GaussianMixture
+from scipy import stats as scipy_stats
 
 from lego import (
     LEGOLLM,
@@ -113,38 +115,85 @@ def main() -> None:
     print(f"Score mean: {all_scores_flat.mean():.4f}")
     print(f"Score std: {all_scores_flat.std():.4f}")
 
-    # Create histogram
-    num_bins = 50
-    fig, ax = plt.subplots(figsize=(10, 6))
+    # Fit GMM with 2 components
+    print("\nFitting Gaussian Mixture Model (2 components)...")
+    gmm = GaussianMixture(n_components=2, random_state=42)
+    gmm.fit(all_scores_flat.reshape(-1, 1))
 
+    # Extract GMM parameters
+    means = gmm.means_.flatten()
+    stds = np.sqrt(gmm.covariances_.flatten())
+    weights = gmm.weights_
+
+    # Sort by mean (low confidence first)
+    sort_idx = np.argsort(means)
+    means = means[sort_idx]
+    stds = stds[sort_idx]
+    weights = weights[sort_idx]
+
+    # Calculate separation metrics
+    separation = abs(means[1] - means[0]) / np.sqrt(stds[0]**2 + stds[1]**2)
+
+    print("\nGMM Results:")
+    print(f"  Component 1 (Hard):  μ={means[0]:.4f}, σ={stds[0]:.4f}, weight={weights[0]:.2%}")
+    print(f"  Component 2 (Easy):  μ={means[1]:.4f}, σ={stds[1]:.4f}, weight={weights[1]:.2%}")
+    print(f"  Separation index: {separation:.4f}")
+    print(f"  Peak distance: {means[1] - means[0]:.4f}")
+
+    # Create histogram with GMM overlay
+    num_bins = 50
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    # Histogram
     counts, bin_edges, patches = ax.hist(
         all_scores_flat,
         bins=num_bins,
-        density=True,  # Normalize to show proportion
-        alpha=0.7,
+        density=True,
+        alpha=0.6,
         color='steelblue',
         edgecolor='black',
         linewidth=0.5,
+        label='Observed distribution',
     )
+
+    # Plot GMM components
+    x_range = np.linspace(all_scores_flat.min() - 0.05, all_scores_flat.max() + 0.05, 500)
+
+    # Individual Gaussian components
+    for i, (mean, std, weight) in enumerate(zip(means, stds, weights)):
+        gaussian = weight * scipy_stats.norm.pdf(x_range, mean, std)
+        label = f"Component {i+1} ({'Hard' if i == 0 else 'Easy'}): μ={mean:.3f}, σ={std:.3f}"
+        color = 'darkorange' if i == 0 else 'forestgreen'
+        ax.plot(x_range, gaussian, color=color, linewidth=2.5, linestyle='--', label=label)
+
+    # Combined GMM
+    gmm_combined = np.zeros_like(x_range)
+    for mean, std, weight in zip(means, stds, weights):
+        gmm_combined += weight * scipy_stats.norm.pdf(x_range, mean, std)
+    ax.plot(x_range, gmm_combined, color='crimson', linewidth=3, label='GMM combined')
 
     # Add threshold line
     ax.axvline(
         x=stats['threshold'],
-        color='red',
-        linestyle='--',
-        linewidth=2,
+        color='purple',
+        linestyle=':',
+        linewidth=2.5,
         label=f"Threshold = {stats['threshold']:.4f}",
     )
 
+    # Add vertical lines at GMM means
+    ax.axvline(x=means[0], color='darkorange', linestyle='-.', linewidth=1.5, alpha=0.7)
+    ax.axvline(x=means[1], color='forestgreen', linestyle='-.', linewidth=1.5, alpha=0.7)
+
     # Labels and title
     ax.set_xlabel('Exit Classifier Score (Confidence)', fontsize=12)
-    ax.set_ylabel('Density (Proportion)', fontsize=12)
-    ax.set_title('Distribution of Exit Classifier Scores on Validation Data', fontsize=14)
-    ax.legend(loc='upper right')
+    ax.set_ylabel('Density', fontsize=12)
+    ax.set_title('Exit Classifier Score Distribution with GMM Fitting', fontsize=14)
+    ax.legend(loc='upper right', fontsize=9)
     ax.grid(True, alpha=0.3)
 
-    # Add statistics text box
-    stats_text = (
+    # Add statistics text box (left side)
+    basic_stats_text = (
         f"N = {len(all_scores_flat):,}\n"
         f"Mean = {all_scores_flat.mean():.4f}\n"
         f"Std = {all_scores_flat.std():.4f}\n"
@@ -152,11 +201,29 @@ def main() -> None:
         f"Max = {all_scores_flat.max():.4f}"
     )
     ax.text(
-        0.02, 0.98, stats_text,
+        0.02, 0.98, basic_stats_text,
         transform=ax.transAxes,
-        fontsize=10,
+        fontsize=9,
         verticalalignment='top',
         bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5),
+    )
+
+    # Add GMM stats text box (right side, below legend)
+    gmm_stats_text = (
+        f"GMM Analysis\n"
+        f"───────────\n"
+        f"Hard tokens: {weights[0]:.1%}\n"
+        f"Easy tokens: {weights[1]:.1%}\n"
+        f"Peak distance: {means[1] - means[0]:.4f}\n"
+        f"Separation: {separation:.4f}"
+    )
+    ax.text(
+        0.98, 0.55, gmm_stats_text,
+        transform=ax.transAxes,
+        fontsize=9,
+        verticalalignment='top',
+        horizontalalignment='right',
+        bbox=dict(boxstyle='round', facecolor='lightcyan', alpha=0.5),
     )
 
     plt.tight_layout()
