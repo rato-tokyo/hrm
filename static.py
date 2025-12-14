@@ -249,45 +249,47 @@ def main() -> None:
     num_bins = 50
     fig, ax = plt.subplots(figsize=(12, 7))
 
-    # Histogram
-    counts, bin_edges, patches = ax.hist(
-        all_scores_flat,
-        bins=num_bins,
-        density=True,
-        alpha=0.5,
-        color='steelblue',
-        edgecolor='black',
-        linewidth=0.5,
-        label='Observed distribution',
-    )
-
     # Plot range - use actual data range with some padding
     data_min = max(0.001, all_scores_flat.min() - 0.05)
     data_max = min(0.999, all_scores_flat.max() + 0.05)
     x_range = np.linspace(data_min, data_max, 500)
 
-    # Individual Beta components
+    # Histogram (lowest z-order, drawn first)
+    counts, bin_edges, patches = ax.hist(
+        all_scores_flat,
+        bins=num_bins,
+        density=True,
+        alpha=0.4,
+        color='steelblue',
+        edgecolor='black',
+        linewidth=0.5,
+        label='Observed distribution',
+        zorder=1,
+    )
+
+    # KDE (z-order 2)
+    kde_values = kde(x_range)
+    ax.plot(x_range, kde_values, color='navy', linewidth=2, linestyle=':', label='KDE', zorder=2)
+
+    # Combined Beta Mixture (z-order 3)
+    beta_combined = np.zeros_like(x_range)
+    for i in range(2):
+        beta_combined += weights[i] * scipy_stats.beta.pdf(x_range, alphas[i], betas[i])
+    ax.plot(x_range, beta_combined, color='crimson', linewidth=2.5, label='Beta Mixture', zorder=3)
+
+    # Individual Beta components (highest z-order, drawn on top)
     colors = ['darkorange', 'forestgreen']
-    labels = ['Hard', 'Easy']
+    labels_comp = ['Hard', 'Easy']
     for i in range(2):
         beta_pdf = weights[i] * scipy_stats.beta.pdf(x_range, alphas[i], betas[i])
         ax.plot(
             x_range, beta_pdf,
             color=colors[i],
-            linewidth=2.5,
+            linewidth=3,
             linestyle='--',
-            label=f"Beta {labels[i]}: α={alphas[i]:.1f}, β={betas[i]:.1f}",
+            label=f"Beta {labels_comp[i]}: α={alphas[i]:.1f}, β={betas[i]:.1f}",
+            zorder=4 + i,
         )
-
-    # Combined Beta Mixture
-    beta_combined = np.zeros_like(x_range)
-    for i in range(2):
-        beta_combined += weights[i] * scipy_stats.beta.pdf(x_range, alphas[i], betas[i])
-    ax.plot(x_range, beta_combined, color='crimson', linewidth=3, label='Beta Mixture')
-
-    # KDE
-    kde_values = kde(x_range)
-    ax.plot(x_range, kde_values, color='navy', linewidth=2.5, linestyle=':', label='KDE')
 
     # Add threshold line
     ax.axvline(
