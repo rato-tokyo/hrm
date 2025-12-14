@@ -31,111 +31,69 @@ def fit_ggd_mixture(
     tol: float,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Fit a Generalized Gaussian Mixture Model using EM algorithm.
+    Fit a Generalized Gaussian Mixture Model using hard assignment + grid search.
+
+    This approach:
+    1. Uses threshold-based hard assignment (not soft EM)
+    2. Fits each component independently with grid search over beta
 
     Args:
         data: 1D array of values
         n_components: Number of GGD components
-        max_iter: Maximum EM iterations
-        tol: Convergence tolerance
+        max_iter: Maximum iterations (unused, kept for API compatibility)
+        tol: Convergence tolerance (unused, kept for API compatibility)
 
     Returns:
         Tuple of (betas, locs, scales, weights) for each component
     """
-    n_samples = len(data)
+    # Hard assignment: split at median
+    threshold = np.median(data)
+    hard_mask = data < threshold
+    easy_mask = ~hard_mask
 
-    # Initialize parameters using k-means style initialization
-    sorted_data = np.sort(data)
-    split_points = np.linspace(0, n_samples, n_components + 1, dtype=int)
+    hard_data = data[hard_mask]
+    easy_data = data[easy_mask]
 
-    # Start with different beta values for each component
-    # Lower beta = sharper peak, higher beta = flatter
-    betas = np.array([1.5, 0.8])[:n_components]  # Expect peaked distributions
-    locs = np.zeros(n_components)
-    scales = np.ones(n_components)
-    weights = np.ones(n_components) / n_components
+    print(f"  Hard assignment: {len(hard_data)} hard, {len(easy_data)} easy tokens")
 
-    for k in range(n_components):
-        segment = sorted_data[split_points[k]:split_points[k + 1]]
-        if len(segment) > 0:
-            locs[k] = segment.mean()
-            scales[k] = max(segment.std(), 0.01)
+    def fit_single_ggd(subset: np.ndarray) -> tuple[float, float, float]:
+        """Fit single GGD to data subset using grid search."""
+        loc = np.median(subset)  # Use median for robustness
 
-    # EM algorithm
-    prev_log_likelihood = -np.inf
+        best_beta = 2.0
+        best_scale = subset.std()
+        best_ll = -np.inf
 
-    for iteration in range(max_iter):
-        # E-step: compute responsibilities
-        log_probs = np.zeros((n_samples, n_components))
-        for k in range(n_components):
-            try:
-                log_probs[:, k] = np.log(weights[k] + 1e-10) + gennorm.logpdf(
-                    data, betas[k], loc=locs[k], scale=scales[k]
-                )
-            except Exception:
-                log_probs[:, k] = -1e10
+        # Grid search over beta
+        for beta in np.linspace(0.3, 4.0, 20):
+            # Estimate scale using MLE formula for GGD
+            # For GGD, scale relates to: E[|x-μ|^β] = σ^β * Γ(2/β) / Γ(1/β)
+            centered = np.abs(subset - loc)
 
-        # Handle invalid values
-        log_probs = np.nan_to_num(log_probs, nan=-1e10, posinf=-1e10, neginf=-1e10)
-
-        # Log-sum-exp for numerical stability
-        max_log_probs = log_probs.max(axis=1, keepdims=True)
-        log_sum = max_log_probs + np.log(
-            np.exp(log_probs - max_log_probs).sum(axis=1, keepdims=True) + 1e-10
-        )
-        log_responsibilities = log_probs - log_sum
-        responsibilities = np.exp(log_responsibilities)
-        responsibilities = np.nan_to_num(responsibilities, nan=1.0 / n_components)
-
-        # Compute log-likelihood
-        log_likelihood = log_sum.sum()
-
-        # Check convergence
-        if abs(log_likelihood - prev_log_likelihood) < tol:
-            print(f"  Converged at iteration {iteration + 1}")
-            break
-        prev_log_likelihood = log_likelihood
-
-        # M-step: update parameters
-        Nk = responsibilities.sum(axis=0) + 1e-10
-        weights = Nk / n_samples
-
-        for k in range(n_components):
-            resp_k = responsibilities[:, k]
-            weighted_data = resp_k * data
-
-            # Update location (weighted mean)
-            locs[k] = weighted_data.sum() / Nk[k]
-
-            # Optimize beta and scale for this component
-            def neg_log_likelihood(params: np.ndarray) -> float:
-                beta, scale = params
-                if beta <= 0.1 or scale <= 0.001:
-                    return 1e10
+            # Try multiple scale values
+            for scale in np.linspace(0.02, 0.3, 15):
                 try:
-                    ll = (resp_k * gennorm.logpdf(data, beta, loc=locs[k], scale=scale)).sum()
-                    return -ll if np.isfinite(ll) else 1e10
+                    ll = gennorm.logpdf(subset, beta, loc=loc, scale=scale).sum()
+                    if np.isfinite(ll) and ll > best_ll:
+                        best_ll = ll
+                        best_beta = beta
+                        best_scale = scale
                 except Exception:
-                    return 1e10
+                    continue
 
-            # Optimize with multiple restarts to avoid local minima
-            best_result = None
-            best_nll = float('inf')
+        return best_beta, loc, best_scale
 
-            # Try different initial beta values
-            for init_beta in [0.5, 1.0, 1.5, 2.0, 3.0]:
-                result = minimize(
-                    neg_log_likelihood,
-                    x0=[init_beta, scales[k]],
-                    method='L-BFGS-B',
-                    bounds=[(0.3, 5.0), (0.01, 0.5)],  # Narrower bounds for [0,1] data
-                )
-                if result.success and result.fun < best_nll:
-                    best_nll = result.fun
-                    best_result = result
+    # Fit each component
+    beta_hard, loc_hard, scale_hard = fit_single_ggd(hard_data)
+    beta_easy, loc_easy, scale_easy = fit_single_ggd(easy_data)
 
-            if best_result is not None:
-                betas[k], scales[k] = best_result.x
+    print(f"  Hard fit: β={beta_hard:.2f}, μ={loc_hard:.4f}, σ={scale_hard:.4f}")
+    print(f"  Easy fit: β={beta_easy:.2f}, μ={loc_easy:.4f}, σ={scale_easy:.4f}")
+
+    betas = np.array([beta_hard, beta_easy])
+    locs = np.array([loc_hard, loc_easy])
+    scales = np.array([scale_hard, scale_easy])
+    weights = np.array([len(hard_data) / len(data), len(easy_data) / len(data)])
 
     return betas, locs, scales, weights
 
