@@ -6,6 +6,7 @@ ExperimentConfig: Model architecture and experiment settings
 """
 
 from dataclasses import dataclass
+from typing import Literal
 
 
 @dataclass
@@ -25,6 +26,9 @@ class TrainerConfig:
         hard_ratio: Ratio of tokens to collect as hard examples
         lr: Learning rate
         verbose: Print training progress
+        exit_classifier_mode: How to train exit_classifier
+            - "joint": Train with LM loss in same loop (BCE loss added)
+            - "post": Train separately after LM training completes
     """
     batch_size: int
     max_epochs: int
@@ -34,6 +38,7 @@ class TrainerConfig:
     hard_ratio: float
     lr: float
     verbose: bool
+    exit_classifier_mode: Literal["joint", "post"]
 
 
 @dataclass

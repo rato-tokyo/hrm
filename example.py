@@ -47,6 +47,7 @@ def main() -> None:
         hard_ratio=0.5,
         lr=1e-3,
         verbose=True,
+        exit_classifier_mode="post",  # "joint" or "post"
     )
 
     device = get_device()

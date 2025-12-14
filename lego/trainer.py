@@ -70,31 +70,52 @@ def train_block(
 
     device = next(block.parameters()).device
 
+    is_joint_mode = config.exit_classifier_mode == "joint"
+
     for epoch in range(config.max_epochs):
         # Training
         block.train()
         total_loss = 0.0
+        total_exit_loss = 0.0
         total_tokens = 0
 
         for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=True):
             # h: (batch_size, seq_len, dim)
             # y: (batch_size, seq_len)
             optimizer.zero_grad()
-            _, logits, _ = block.forward(h)
+            h_out, logits, _ = block.forward(h)
             # logits: (batch_size, seq_len, vocab_size)
 
             # Language modeling loss (flatten for cross_entropy)
             batch_size, seq_len, vocab_size = logits.shape
-            loss = F.cross_entropy(
+            lm_loss = F.cross_entropy(
                 logits.view(-1, vocab_size),
                 y.view(-1),
                 reduction='sum'
             )
 
+            loss = lm_loss
+
+            # Joint mode: add exit_classifier BCE loss
+            if is_joint_mode:
+                # Label: 1 if prediction is correct, 0 otherwise
+                preds = logits.argmax(dim=-1)  # (batch_size, seq_len)
+                exit_labels = (preds == y).float()  # (batch_size, seq_len)
+
+                # exit_classifier output
+                exit_logits = block.exit_classifier(h_out).squeeze(-1)  # (batch_size, seq_len)
+                exit_loss = F.binary_cross_entropy_with_logits(
+                    exit_logits.view(-1),
+                    exit_labels.view(-1),
+                    reduction='sum'
+                )
+                loss = lm_loss + exit_loss
+                total_exit_loss += exit_loss.item()
+
             loss.backward()
             torch.nn.utils.clip_grad_norm_(block.parameters(), config.grad_clip)
             optimizer.step()
-            total_loss += loss.item()
+            total_loss += lm_loss.item()
             total_tokens += batch_size * seq_len
 
         train_ppl = float(np.exp(total_loss / total_tokens))
@@ -143,6 +164,10 @@ def train_block(
     if best_state is not None:
         block.load_state_dict({k: v.to(device) for k, v in best_state.items()})
 
+    # Post mode: train exit_classifier separately after LM training
+    if config.exit_classifier_mode == "post":
+        _train_exit_classifier(block, data, device, config, is_verbose)
+
     # Collect hard examples and set threshold based on confidence distribution
     hard_examples, threshold = _collect_hard_examples(block, data, device, config.hard_ratio)
     block.threshold = threshold
@@ -164,6 +189,89 @@ def train_block(
         print(f"  Hard examples: {len(hard_examples)} sequences ({hard_examples.num_tokens} tokens, {actual_hard_ratio*100:.1f}%)")
 
     return hard_examples, stats
+
+
+def _train_exit_classifier(
+    block: "LEGOBlock",
+    data: "SequenceData",
+    device: torch.device,
+    config: TrainerConfig,
+    is_verbose: bool
+) -> None:
+    """
+    Train exit_classifier separately after LM training (post mode).
+
+    Freezes transformer and output_head, trains only exit_classifier.
+    Label: 1 if prediction is correct, 0 otherwise.
+
+    Args:
+        block: LEGOBlock with trained transformer
+        data: Full training data
+        device: Device to run on
+        config: TrainerConfig
+        is_verbose: Print progress
+    """
+    if is_verbose:
+        print("  Training exit_classifier (post mode)...")
+
+    # Freeze all except exit_classifier
+    for param in block.transformer.parameters():
+        param.requires_grad = False
+    if block.output_head is not None:
+        for param in block.output_head.parameters():
+            param.requires_grad = False
+
+    # Only exit_classifier is trainable
+    exit_optimizer = torch.optim.Adam(block.exit_classifier.parameters(), lr=config.lr)
+
+    # Quick training loop (fewer epochs, no early stopping)
+    num_epochs = min(10, config.max_epochs)
+
+    for epoch in range(num_epochs):
+        block.train()
+        total_loss = 0.0
+        total_tokens = 0
+        correct_preds = 0
+
+        for h, y in data.to(str(device)).batches(config.batch_size, shuffle=True):
+            exit_optimizer.zero_grad()
+
+            with torch.no_grad():
+                h_out = block.transformer(h)
+                logits = block.output_head(h_out)
+                preds = logits.argmax(dim=-1)
+                exit_labels = (preds == y).float()
+
+            # Train exit_classifier
+            exit_logits = block.exit_classifier(h_out).squeeze(-1)
+            loss = F.binary_cross_entropy_with_logits(
+                exit_logits.view(-1),
+                exit_labels.view(-1),
+                reduction='sum'
+            )
+
+            loss.backward()
+            exit_optimizer.step()
+
+            total_loss += loss.item()
+            batch_size, seq_len = y.shape
+            total_tokens += batch_size * seq_len
+            correct_preds += exit_labels.sum().item()
+
+        avg_loss = total_loss / total_tokens
+        accuracy = correct_preds / total_tokens
+        if is_verbose:
+            print(f"    Exit epoch {epoch+1}/{num_epochs}: loss={avg_loss:.4f}, acc={accuracy*100:.1f}%")
+
+    # Unfreeze all parameters
+    for param in block.transformer.parameters():
+        param.requires_grad = True
+    if block.output_head is not None:
+        for param in block.output_head.parameters():
+            param.requires_grad = True
+
+    if is_verbose:
+        print("  Exit_classifier training complete")
 
 
 def _collect_hard_examples(
