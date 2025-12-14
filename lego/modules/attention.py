@@ -13,7 +13,7 @@ from typing import Tuple
 class RotaryPositionalEmbedding(nn.Module):
     """Rotary Positional Embedding (RoPE)"""
 
-    def __init__(self, dim: int, max_seq_len: int = 1024):
+    def __init__(self, dim: int, max_seq_len: int):
         super().__init__()
         inv_freq = 1.0 / (10000 ** (torch.arange(0, dim, 2).float() / dim))
         self.register_buffer('inv_freq', inv_freq)
@@ -49,7 +49,7 @@ def apply_rotary_pos_emb(
 class MultiHeadAttention(nn.Module):
     """Multi-Head Attention with RoPE and Causal Mask (Pre-training only, no KV cache)"""
 
-    def __init__(self, dim: int, num_heads: int = 8, max_seq_len: int = 1024, causal: bool = True):
+    def __init__(self, dim: int, num_heads: int, max_seq_len: int, causal: bool):
         super().__init__()
         self.num_heads = num_heads
         self.head_dim = dim // num_heads

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from typing import Tuple, Optional
+from typing import Tuple
 
 from .modules import TransformerBlock
 
@@ -29,18 +29,16 @@ class LEGOBlock(nn.Module):
 
     Args:
         transformer: TransformerBlock to wrap
-        output_head: Shared output projection (reference, not owned)
     """
 
     def __init__(
         self,
         transformer: TransformerBlock,
-        output_head: Optional[nn.Linear] = None,
     ):
         super().__init__()
         self.transformer = transformer
         self.threshold = 1.0  # Set by trainer
-        self.output_head = output_head  # Shared reference, not owned
+        self.output_head: nn.Linear | None = None  # Set by LEGOLLM
 
         # LEGO-specific: Lightweight exit classifier (dim -> 1)
         self.exit_classifier = nn.Linear(transformer.dim, 1)

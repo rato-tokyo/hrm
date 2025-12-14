@@ -14,6 +14,7 @@ class TrainerConfig:
     Configuration for block training.
 
     Used by train_block() to configure training hyperparameters.
+    All fields are required (no default values).
 
     Attributes:
         batch_size: Batch size for training
@@ -25,14 +26,14 @@ class TrainerConfig:
         lr: Learning rate
         verbose: Print training progress
     """
-    batch_size: int = 64
-    max_epochs: int = 50
-    patience: int = 3
-    grad_clip: float = 1.0
-    val_ratio: float = 0.2
-    hard_ratio: float = 0.5
-    lr: float = 1e-3
-    verbose: bool = True
+    batch_size: int
+    max_epochs: int
+    patience: int
+    grad_clip: float
+    val_ratio: float
+    hard_ratio: float
+    lr: float
+    verbose: bool
 
 
 @dataclass
@@ -41,21 +42,25 @@ class ExperimentConfig:
     Configuration for LEGO experiment.
 
     Model architecture and data settings.
+    All fields are required (no default values).
 
     Attributes:
         dim: Model dimension
         num_heads: Number of attention heads
+        ffn_dim: FFN hidden dimension
+        max_seq_len: Maximum sequence length
+        causal: Whether to use causal masking
+        eps: Epsilon for RMSNorm
         seq_len: Sequence length for language modeling
         num_samples: Number of training samples
         block_layers: List of layer counts per block (e.g., [2, 2] for 2 blocks)
     """
-    # Model architecture
-    dim: int = 64
-    num_heads: int = 4
-    seq_len: int = 32
-
-    # Dataset
-    num_samples: int = 10000
-
-    # Block configuration
-    block_layers: tuple[int, ...] = (2, 2)  # Layers per block
+    dim: int
+    num_heads: int
+    ffn_dim: int
+    max_seq_len: int
+    causal: bool
+    eps: float
+    seq_len: int
+    num_samples: int
+    block_layers: tuple[int, ...]

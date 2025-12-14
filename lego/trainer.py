@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn.functional as F
-from typing import Tuple, Dict, Any, List, Optional, TYPE_CHECKING
+from typing import Tuple, Dict, Any, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .block import LEGOBlock
@@ -21,8 +21,7 @@ def train_block(
     block: "LEGOBlock",
     data: "TrainingData",
     optimizer: torch.optim.Optimizer,
-    config: Optional[TrainerConfig] = None,
-    verbose: Optional[bool] = None,
+    config: TrainerConfig,
 ) -> Tuple["TrainingData", Dict[str, Any]]:
     """
     Train a LEGOBlock and return hard examples for the next block.
@@ -38,8 +37,7 @@ def train_block(
         block: LEGOBlock to train
         data: TrainingData containing (hidden_states, targets)
         optimizer: Optimizer for block's parameters
-        config: TrainerConfig with training hyperparameters (default: TrainerConfig())
-        verbose: Override config.verbose if specified
+        config: TrainerConfig with training hyperparameters
 
     Returns:
         Tuple of:
@@ -48,11 +46,7 @@ def train_block(
     """
     import numpy as np
 
-    if config is None:
-        config = TrainerConfig()
-
-    # Allow verbose override
-    is_verbose = verbose if verbose is not None else config.verbose
+    is_verbose = config.verbose
 
     if block.output_head is None:
         raise RuntimeError("output_head not set. Call set_output_head() first.")
@@ -81,7 +75,7 @@ def train_block(
         total_loss = 0.0
         num_batches = 0
 
-        for h, y in train_data.to(str(device)).batches(config.batch_size):
+        for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=True):
             optimizer.zero_grad()
             h_out, logits, _ = block.forward(h)
             logits = logits.squeeze(1)

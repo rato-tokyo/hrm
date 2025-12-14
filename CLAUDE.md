@@ -23,7 +23,7 @@ train_block()       → Block訓練関数（外部）
 ### ファイル構成
 
 ```
-src/lego/
+lego/
 ├── modules/
 │   ├── transformer.py  # TransformerLayer, TransformerBlock
 │   ├── attention.py    # MultiHeadAttention
@@ -33,7 +33,7 @@ src/lego/
 ├── model.py            # LEGOLLM
 ├── trainer.py          # train_block()（訓練ロジック）
 ├── data.py             # TrainingData
-└── config.py           # ExperimentConfig
+└── config.py           # ExperimentConfig, TrainerConfig
 ```
 
 ---
@@ -60,6 +60,7 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 5. **トークン単位のEarly Exit** - すべての処理でearly exitはトークン単位（バッチ単位ではない）
 6. **TRUE Early Exit** - exitしたトークンの後続blockは処理しない
 7. **訓練と推論の分離** - LEGOBlockは推論のみ、訓練は`train_block()`関数
+8. **デフォルト値禁止** - 関数・クラスの引数にデフォルト値を設定しない（意図しない動作の原因）
 
 ---
 

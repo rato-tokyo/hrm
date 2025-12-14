@@ -6,7 +6,6 @@ Note: This is a pre-training only framework. KV cache is not implemented.
 
 import torch
 import torch.nn as nn
-from typing import Optional
 
 from .norm import RMSNorm
 from .attention import MultiHeadAttention
@@ -20,14 +19,12 @@ class TransformerLayer(nn.Module):
     Post-Norm architecture, pre-training only (no KV cache).
     """
 
-    def __init__(self, dim: int, num_heads: int = 8, ffn_dim: Optional[int] = None):
+    def __init__(self, dim: int, num_heads: int, ffn_dim: int, max_seq_len: int, causal: bool, eps: float):
         super().__init__()
-        ffn_dim = ffn_dim or dim * 4
-
-        self.attn = MultiHeadAttention(dim, num_heads)
+        self.attn = MultiHeadAttention(dim, num_heads, max_seq_len, causal)
         self.ffn = GatedLinearUnit(dim, ffn_dim)
-        self.norm1 = RMSNorm(dim)
-        self.norm2 = RMSNorm(dim)
+        self.norm1 = RMSNorm(dim, eps)
+        self.norm2 = RMSNorm(dim, eps)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Post-Norm architecture
@@ -47,7 +44,10 @@ class TransformerBlock(nn.Module):
         dim: Model dimension
         num_heads: Number of attention heads
         num_layers: Number of transformer layers in this block
-        ffn_dim: FFN hidden dimension (default: dim * 4)
+        ffn_dim: FFN hidden dimension
+        max_seq_len: Maximum sequence length
+        causal: Whether to use causal masking
+        eps: Epsilon for RMSNorm
     """
 
     def __init__(
@@ -55,7 +55,10 @@ class TransformerBlock(nn.Module):
         dim: int,
         num_heads: int,
         num_layers: int,
-        ffn_dim: Optional[int] = None
+        ffn_dim: int,
+        max_seq_len: int,
+        causal: bool,
+        eps: float
     ):
         super().__init__()
         self.dim = dim
@@ -63,7 +66,7 @@ class TransformerBlock(nn.Module):
         self.num_layers = num_layers
 
         self.layers = nn.ModuleList([
-            TransformerLayer(dim, num_heads, ffn_dim) for _ in range(num_layers)
+            TransformerLayer(dim, num_heads, ffn_dim, max_seq_len, causal, eps) for _ in range(num_layers)
         ])
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

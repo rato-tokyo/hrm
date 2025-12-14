@@ -76,7 +76,7 @@ class TrainingData:
     def batches(
         self,
         batch_size: int,
-        shuffle: bool = True
+        shuffle: bool
     ) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
         """
         Iterate over batched data for training.
@@ -103,12 +103,12 @@ class TrainingData:
             t_batch = self._targets[batch_indices]
             yield h_batch, t_batch
 
-    def split(self, train_ratio: float = 0.8) -> Tuple["TrainingData", "TrainingData"]:
+    def split(self, train_ratio: float) -> Tuple["TrainingData", "TrainingData"]:
         """
         Split into training and validation sets.
 
         Args:
-            train_ratio: Ratio of data for training (default: 0.8)
+            train_ratio: Ratio of data for training
 
         Returns:
             Tuple of (train_data, val_data)
@@ -145,8 +145,8 @@ class TrainingData:
 def create_wikitext_dataloaders(
     num_samples: int,
     batch_size: int,
-    seq_len: int = 32,
-    seed: int = 42
+    seq_len: int,
+    seed: int
 ) -> Tuple[List[Tuple[torch.Tensor, torch.Tensor]],
            List[Tuple[torch.Tensor, torch.Tensor]],
            int]:
@@ -156,8 +156,8 @@ def create_wikitext_dataloaders(
     Args:
         num_samples: Number of training samples
         batch_size: Batch size
-        seq_len: Sequence length (default: 32)
-        seed: Random seed (default: 42)
+        seq_len: Sequence length
+        seed: Random seed
 
     Returns:
         Tuple of (train_batches, val_batches, vocab_size)

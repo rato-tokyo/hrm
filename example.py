@@ -26,14 +26,27 @@ from lego import (
 
 def main() -> None:
     """Run LEGO block-wise training example."""
-    # Configuration
-    config = ExperimentConfig()
+    # Configuration - all values must be explicitly specified
+    config = ExperimentConfig(
+        dim=64,
+        num_heads=4,
+        ffn_dim=256,
+        max_seq_len=1024,
+        causal=True,
+        eps=1e-6,
+        seq_len=32,
+        num_samples=10000,
+        block_layers=(2, 2),
+    )
     trainer_config = TrainerConfig(
         batch_size=64,
         max_epochs=50,
         patience=3,
+        grad_clip=1.0,
+        val_ratio=0.2,
         hard_ratio=0.5,
         lr=1e-3,
+        verbose=True,
     )
 
     device = get_device()
@@ -48,12 +61,15 @@ def main() -> None:
     # Setup
     set_seed(42)
     train_batches, val_batches, vocab_size = create_wikitext_dataloaders(
-        config.num_samples, trainer_config.batch_size, config.seq_len
+        config.num_samples, trainer_config.batch_size, config.seq_len, seed=42
     )
 
     # Create model with blocks based on config.block_layers
     blocks = [
-        LEGOBlock(TransformerBlock(config.dim, config.num_heads, num_layers))
+        LEGOBlock(TransformerBlock(
+            config.dim, config.num_heads, num_layers,
+            config.ffn_dim, config.max_seq_len, config.causal, config.eps
+        ))
         for num_layers in config.block_layers
     ]
     model = LEGOLLM(vocab_size, config.dim, blocks).to(device)
@@ -107,8 +123,11 @@ def main() -> None:
             batch_size=trainer_config.batch_size,
             max_epochs=trainer_config.max_epochs,
             patience=trainer_config.patience,
+            grad_clip=trainer_config.grad_clip,
+            val_ratio=trainer_config.val_ratio,
             hard_ratio=trainer_config.hard_ratio,
             lr=trainer_config.lr * 0.1,  # Lower LR for phase 2
+            verbose=trainer_config.verbose,
         )
         optimizer1 = torch.optim.AdamW(model.blocks[1].parameters(), lr=phase2_config.lr)
         _, stats1 = train_block(
