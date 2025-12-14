@@ -120,10 +120,24 @@ U = torch.from_numpy(U_np).float().to(device)
 S = torch.from_numpy(S_np).float().to(device)
 Vt = torch.from_numpy(Vt_np).float().to(device)
 
+# Sanity check: verify SVD reconstruction
+print("\nSanity check: SVD reconstruction...")
+W_reconstructed = U @ torch.diag(S) @ Vt
+reconstruction_error = torch.norm(W - W_reconstructed).item() / torch.norm(W).item()
+print(f"  Relative reconstruction error: {reconstruction_error:.2e}")
+
+# Check logits reconstruction for a sample
+with torch.no_grad():
+    h_sample = h[:100]
+    z_exact = h_sample @ W.T
+    z_reconstructed = h_sample @ W_reconstructed.T
+    logits_corr = torch.corrcoef(torch.stack([z_exact.flatten(), z_reconstructed.flatten()]))[0, 1].item()
+    print(f"  Logits correlation (full rank): {logits_corr:.6f}")
+
 # Test different ranks
 ranks = [1, 2, 5, 10, 20, 32, 64]
-print(f"\n{'Rank':<6} {'Coverage':<10} {'Corr':<12} {'MSE':<15} {'Time':<10}")
-print("-" * 60)
+print(f"\n{'Rank':<6} {'Coverage':<10} {'Corr':<12} {'Logits Corr':<12} {'MSE':<15} {'Time':<10}")
+print("-" * 75)
 
 for r in ranks:
     rank_start = time.time()
@@ -134,6 +148,10 @@ for r in ranks:
     U_r = U[:, :r]  # (vocab_size, r)
 
     softmax_conf_approx = torch.zeros(num_tokens, device=device)
+
+    # Also track logits correlation for debugging
+    logits_corr_sum = 0.0
+    logits_count = 0
 
     with torch.no_grad():
         for i in range(num_chunks):
@@ -151,8 +169,18 @@ for r in ranks:
             probs = F.softmax(z_approx, dim=1)
             softmax_conf_approx[start:end] = probs.max(dim=1).values
 
+            # Track logits correlation (for first few chunks only)
+            if i < 3:
+                z_exact_chunk = h_chunk @ W.T
+                chunk_corr = torch.corrcoef(torch.stack([z_exact_chunk.flatten(), z_approx.flatten()]))[0, 1].item()
+                logits_corr_sum += chunk_corr
+                logits_count += 1
+
     # Coverage
     coverage = (S[:r] ** 2).sum().item() / (S ** 2).sum().item() * 100
+
+    # Average logits correlation
+    avg_logits_corr = logits_corr_sum / logits_count if logits_count > 0 else 0.0
 
     # Move to CPU for correlation
     conf_exact_cpu = softmax_conf.cpu().numpy()
@@ -162,7 +190,113 @@ for r in ranks:
     mse = np.mean((conf_approx_cpu - conf_exact_cpu) ** 2)
 
     elapsed = time.time() - rank_start
-    print(f"{r:<6} {coverage:<10.1f}% {corr:<12.4f} {mse:<15.6f} {elapsed:<10.1f}s")
+    print(f"{r:<6} {coverage:<10.1f}% {corr:<12.4f} {avg_logits_corr:<12.4f} {mse:<15.6f} {elapsed:<10.1f}s")
+
+# ============================================================
+# Experiment 1b: Low-Rank for Logit-based Metrics (no softmax)
+# ============================================================
+print(f"\n{'=' * 60}")
+print("Experiment 1b: Low-Rank for Logit-based Metrics")
+print("=" * 60)
+print("(softmaxを使わず、logitsの統計量を直接近似)")
+
+print(f"\n{'Rank':<6} {'Coverage':<10} {'max_z Corr':<12} {'max-mean Corr':<14} {'margin Corr':<12}")
+print("-" * 70)
+
+for r in ranks:
+    rank_start = time.time()
+
+    # Precompute low-rank components
+    Vt_r = Vt[:r, :]  # (r, dim)
+    S_r = S[:r]  # (r,)
+    U_r = U[:, :r]  # (vocab_size, r)
+
+    max_z_approx = torch.zeros(num_tokens, device=device)
+    max_minus_mean_approx = torch.zeros(num_tokens, device=device)
+    margin_approx = torch.zeros(num_tokens, device=device)
+
+    with torch.no_grad():
+        for i in range(num_chunks):
+            start = i * chunk_size
+            end = min((i + 1) * chunk_size, num_tokens)
+
+            h_chunk = h[start:end]  # (chunk, dim)
+
+            # z_approx = h @ Vt_r.T @ diag(S_r) @ U_r.T
+            h_proj = h_chunk @ Vt_r.T  # (chunk, r)
+            h_scaled = h_proj * S_r  # (chunk, r)
+            z_approx = h_scaled @ U_r.T  # (chunk, vocab_size)
+
+            # Max logit
+            max_z_approx[start:end] = z_approx.max(dim=1).values
+
+            # Max - mean
+            max_minus_mean_approx[start:end] = z_approx.max(dim=1).values - z_approx.mean(dim=1)
+
+            # Margin (max - second_max)
+            top2 = z_approx.topk(2, dim=1).values
+            margin_approx[start:end] = top2[:, 0] - top2[:, 1]
+
+    # Coverage
+    coverage = (S[:r] ** 2).sum().item() / (S ** 2).sum().item() * 100
+
+    # Correlations with exact values
+    max_z_corr, _ = pearsonr(max_z_approx.cpu().numpy(), max_z_cpu)
+    max_minus_mean_corr, _ = pearsonr(max_minus_mean_approx.cpu().numpy(), max_minus_mean_cpu)
+    margin_corr, _ = pearsonr(margin_approx.cpu().numpy(), margin_cpu)
+
+    print(f"{r:<6} {coverage:<10.1f}% {max_z_corr:<12.4f} {max_minus_mean_corr:<14.4f} {margin_corr:<12.4f}")
+
+# ============================================================
+# Experiment 1c: Easy/Hard Separation with Low-Rank max_minus_mean
+# ============================================================
+print(f"\n{'=' * 60}")
+print("Experiment 1c: Easy/Hard Separation with Low-Rank Approximation")
+print("=" * 60)
+print("(max_minus_mean の低ランク近似で分離性能を検証)")
+
+print(f"\n{'Rank':<6} {'Coverage':<10} {'Easy Loss':<12} {'Hard Loss':<12} {'Loss Diff':<12} {'Oracle %':<12}")
+print("-" * 75)
+
+for r in [5, 10, 20, 32, 64]:
+    # Precompute low-rank components
+    Vt_r = Vt[:r, :]
+    S_r = S[:r]
+    U_r = U[:, :r]
+
+    max_minus_mean_approx = torch.zeros(num_tokens, device=device)
+
+    with torch.no_grad():
+        for i in range(num_chunks):
+            start = i * chunk_size
+            end = min((i + 1) * chunk_size, num_tokens)
+
+            h_chunk = h[start:end]
+            h_proj = h_chunk @ Vt_r.T
+            h_scaled = h_proj * S_r
+            z_approx = h_scaled @ U_r.T
+
+            max_minus_mean_approx[start:end] = z_approx.max(dim=1).values - z_approx.mean(dim=1)
+
+    # Coverage
+    coverage = (S[:r] ** 2).sum().item() / (S ** 2).sum().item() * 100
+
+    # Easy/Hard separation
+    metric_cpu = max_minus_mean_approx.cpu().numpy()
+    threshold = np.median(metric_cpu)
+    easy_mask = metric_cpu >= threshold  # higher = easy (negative corr with loss)
+
+    easy_loss = loss_cpu[easy_mask].mean()
+    hard_loss = loss_cpu[~easy_mask].mean()
+    diff = hard_loss - easy_loss
+    oracle_pct = (diff / oracle_diff) * 100
+
+    print(f"{r:<6} {coverage:<10.1f}% {easy_loss:<12.2f} {hard_loss:<12.2f} {diff:<12.2f} {oracle_pct:<12.1f}%")
+
+print(f"{'Exact':<6} {'100.0':<10}% {metrics['max_minus_mean'][metrics['max_minus_mean'] >= np.median(metrics['max_minus_mean'])].mean():<12.2f}", end="")
+exact_easy = max_minus_mean_cpu >= np.median(max_minus_mean_cpu)
+print(f" {loss_cpu[exact_easy].mean():<12.2f} {loss_cpu[~exact_easy].mean():<12.2f} {loss_cpu[~exact_easy].mean() - loss_cpu[exact_easy].mean():<12.2f} ", end="")
+print(f"{(loss_cpu[~exact_easy].mean() - loss_cpu[exact_easy].mean()) / oracle_diff * 100:<12.1f}%")
 
 # ============================================================
 # Experiment 2: Correlation with Loss
