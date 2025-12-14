@@ -31,20 +31,40 @@ else:
 print("=" * 60)
 
 
-def compute_top1(h: torch.Tensor, W: torch.Tensor) -> torch.Tensor:
-    """Compute top-1 prediction for each token."""
-    logits = h @ W.T  # (num_tokens, vocab_size)
-    return logits.argmax(dim=-1)  # (num_tokens,)
+def compute_top1(h: torch.Tensor, W: torch.Tensor, batch_size: int = 4096) -> torch.Tensor:
+    """Compute top-1 prediction for each token (batched to save memory)."""
+    num_tokens = h.shape[0]
+    top1_list = []
+
+    for i in range(0, num_tokens, batch_size):
+        h_batch = h[i:i + batch_size]
+        logits_batch = h_batch @ W.T  # (batch, vocab_size)
+        top1_batch = logits_batch.argmax(dim=-1)
+        top1_list.append(top1_batch)
+
+    return torch.cat(top1_list)
 
 
-def compute_top1_lowrank(h: torch.Tensor, U: torch.Tensor, S: torch.Tensor, V: torch.Tensor, rank: int) -> torch.Tensor:
-    """Compute top-1 using low-rank approximation of W."""
-    # W_lowrank = U[:, :rank] @ diag(S[:rank]) @ V[:rank, :]
-    # logits = h @ W_lowrank.T = h @ V[:rank, :].T @ diag(S[:rank]) @ U[:, :rank].T
-    h_proj = h @ V[:rank, :].T  # (num_tokens, rank)
-    h_scaled = h_proj * S[:rank]  # (num_tokens, rank)
-    logits = h_scaled @ U[:, :rank].T  # (num_tokens, vocab_size)
-    return logits.argmax(dim=-1)
+def compute_top1_lowrank(h: torch.Tensor, U: torch.Tensor, S: torch.Tensor, V: torch.Tensor, rank: int, batch_size: int = 4096) -> torch.Tensor:
+    """Compute top-1 using low-rank approximation of W (batched to save memory)."""
+    num_tokens = h.shape[0]
+    top1_list = []
+
+    U_r = U[:, :rank]  # (vocab_size, rank)
+    S_r = S[:rank]  # (rank,)
+    V_r = V[:rank, :]  # (rank, dim)
+
+    for i in range(0, num_tokens, batch_size):
+        h_batch = h[i:i + batch_size]
+        # W_lowrank = U_r @ diag(S_r) @ V_r
+        # logits = h @ W_lowrank.T = h @ V_r.T @ diag(S_r) @ U_r.T
+        h_proj = h_batch @ V_r.T  # (batch, rank)
+        h_scaled = h_proj * S_r  # (batch, rank)
+        logits_batch = h_scaled @ U_r.T  # (batch, vocab_size)
+        top1_batch = logits_batch.argmax(dim=-1)
+        top1_list.append(top1_batch)
+
+    return torch.cat(top1_list)
 
 
 def main():
@@ -224,29 +244,44 @@ def main():
     print("Experiment 5: Speed Comparison (Full vs Low-Rank)")
     print("=" * 60)
 
-    h_test = layer_hidden[0]  # Use layer 1 for timing
-    n_trials = 10
+    # Use smaller subset for fair timing (single batch)
+    h_test = layer_hidden[0][:4096]  # Single batch for timing
+    n_trials = 20
 
-    # Full W
-    torch.cuda.synchronize() if device == "cuda" else None
+    # Full W (single batch, no loop)
+    if device == "cuda":
+        torch.cuda.synchronize()
     start = time.time()
     for _ in range(n_trials):
-        _ = compute_top1(h_test, W)
-    torch.cuda.synchronize() if device == "cuda" else None
+        logits = h_test @ W.T
+        _ = logits.argmax(dim=-1)
+    if device == "cuda":
+        torch.cuda.synchronize()
     full_time = (time.time() - start) / n_trials
 
-    print(f"Full W ({dim}x{vocab_size}): {full_time * 1000:.2f} ms/forward")
+    print(f"Full W ({dim}x{vocab_size}): {full_time * 1000:.2f} ms/batch (batch=4096)")
 
+    U_r_cache = {}
     for rank in [8, 16, 32]:
-        torch.cuda.synchronize() if device == "cuda" else None
+        U_r = U[:, :rank]
+        S_r = S[:rank]
+        V_r = V[:rank, :]
+
+        if device == "cuda":
+            torch.cuda.synchronize()
         start = time.time()
         for _ in range(n_trials):
-            _ = compute_top1_lowrank(h_test, U, S, V, rank)
-        torch.cuda.synchronize() if device == "cuda" else None
+            h_proj = h_test @ V_r.T
+            h_scaled = h_proj * S_r
+            logits = h_scaled @ U_r.T
+            _ = logits.argmax(dim=-1)
+        if device == "cuda":
+            torch.cuda.synchronize()
         lr_time = (time.time() - start) / n_trials
 
         speedup = full_time / lr_time
-        print(f"Rank {rank:2d}: {lr_time * 1000:.2f} ms/forward, speedup = {speedup:.2f}x")
+        print(f"Rank {rank:2d}: {lr_time * 1000:.2f} ms/batch, speedup = {speedup:.2f}x")
+        U_r_cache[rank] = lr_time
 
     # ============================================================
     # Visualization
@@ -320,21 +355,14 @@ def main():
     ax.set_xticks(range(1, 5))
     ax.grid(True, alpha=0.3)
 
-    # 6. Speed comparison
+    # 6. Speed comparison (use cached times from Experiment 5)
     ax = axes[1, 2]
     labels = ['Full W'] + [f'Rank {r}' for r in [8, 16, 32]]
-    times = [full_time * 1000]
-    for rank in [8, 16, 32]:
-        torch.cuda.synchronize() if device == "cuda" else None
-        start = time.time()
-        for _ in range(n_trials):
-            _ = compute_top1_lowrank(h_test, U, S, V, rank)
-        torch.cuda.synchronize() if device == "cuda" else None
-        times.append((time.time() - start) / n_trials * 1000)
+    times = [full_time * 1000] + [U_r_cache[r] * 1000 for r in [8, 16, 32]]
 
     bars = ax.bar(labels, times, color=['red', 'blue', 'blue', 'blue'])
     ax.set_ylabel('Time (ms)')
-    ax.set_title('Inference Speed Comparison')
+    ax.set_title('Inference Speed Comparison (batch=4096)')
     for bar, t in zip(bars, times):
         ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.1, f'{t:.2f}', ha='center')
 
