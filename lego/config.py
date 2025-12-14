@@ -6,7 +6,6 @@ ExperimentConfig: Model architecture and experiment settings
 """
 
 from dataclasses import dataclass
-from typing import Literal
 
 
 @dataclass
@@ -17,6 +16,9 @@ class TrainerConfig:
     Used by train_block() to configure training hyperparameters.
     All fields are required (no default values).
 
+    Exit classifier uses loss-based labels: exp(-cross_entropy_loss).
+    This approach showed best results in experiments (PPL 1071 vs 1095 for distill).
+
     Attributes:
         batch_size: Batch size for training
         max_epochs: Maximum number of epochs
@@ -26,13 +28,6 @@ class TrainerConfig:
         hard_ratio: Ratio of tokens to collect as hard examples
         lr: Learning rate
         verbose: Print training progress
-        exit_classifier_mode: How to train exit_classifier
-            - "joint": Train with LM loss in same loop (BCE loss added)
-            - "post": Train separately after LM training completes
-        exit_label_mode: What label to use for exit_classifier training
-            - "correct": 1 if prediction is correct, 0 otherwise (binary)
-            - "distill": softmax confidence as continuous target (regression)
-            - "loss": negative cross-entropy loss as target (regression)
     """
     batch_size: int
     max_epochs: int
@@ -42,8 +37,6 @@ class TrainerConfig:
     hard_ratio: float
     lr: float
     verbose: bool
-    exit_classifier_mode: Literal["joint", "post"]
-    exit_label_mode: Literal["correct", "distill", "loss"]
 
 
 @dataclass

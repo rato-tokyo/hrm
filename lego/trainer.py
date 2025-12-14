@@ -2,6 +2,7 @@
 LEGO Framework - Block Training
 
 Functions for training LEGOBlocks with hard example mining (token-level).
+Exit classifier uses loss-based labels: exp(-cross_entropy_loss).
 """
 
 from __future__ import annotations
@@ -28,10 +29,11 @@ def train_block(
 
     This function encapsulates the complete block training workflow:
     1. Split input data into train/val
-    2. Train with early stopping
-    3. Collect hard examples (token-level extraction, repacked into sequences)
-    4. Set block's threshold based on confidence distribution
-    5. Return hard examples as SequenceData for the next block
+    2. Train LM with early stopping
+    3. Train exit_classifier (post mode, loss-based labels)
+    4. Collect hard examples (token-level extraction, repacked into sequences)
+    5. Set block's threshold based on confidence distribution
+    6. Return hard examples as SequenceData for the next block
 
     Args:
         block: LEGOBlock to train
@@ -70,13 +72,10 @@ def train_block(
 
     device = next(block.parameters()).device
 
-    is_joint_mode = config.exit_classifier_mode == "joint"
-
     for epoch in range(config.max_epochs):
         # Training
         block.train()
         total_loss = 0.0
-        total_exit_loss = 0.0
         total_tokens = 0
 
         for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=True):
@@ -88,56 +87,16 @@ def train_block(
 
             # Language modeling loss (flatten for cross_entropy)
             batch_size, seq_len, vocab_size = logits.shape
-            lm_loss = F.cross_entropy(
+            loss = F.cross_entropy(
                 logits.view(-1, vocab_size),
                 y.view(-1),
                 reduction='sum'
             )
 
-            loss = lm_loss
-
-            # Joint mode: add exit_classifier loss (only if using exit_classifier mode)
-            if is_joint_mode and block.confidence_mode == "exit_classifier":
-                label_mode = config.exit_label_mode
-
-                # Compute labels based on mode
-                if label_mode == "correct":
-                    preds = logits.argmax(dim=-1)
-                    exit_labels = (preds == y).float()
-                elif label_mode == "distill":
-                    exit_labels = F.softmax(logits.detach(), dim=-1).max(dim=-1).values
-                else:  # loss
-                    per_token_loss = F.cross_entropy(
-                        logits.detach().view(-1, vocab_size),
-                        y.view(-1),
-                        reduction='none'
-                    ).view(batch_size, seq_len)
-                    exit_labels = torch.exp(-per_token_loss)
-
-                # exit_classifier output
-                exit_logits = block.exit_classifier(h_out).squeeze(-1)
-
-                if label_mode == "correct":
-                    exit_loss = F.binary_cross_entropy_with_logits(
-                        exit_logits.view(-1),
-                        exit_labels.view(-1),
-                        reduction='sum'
-                    )
-                else:
-                    exit_preds = torch.sigmoid(exit_logits)
-                    exit_loss = F.mse_loss(
-                        exit_preds.view(-1),
-                        exit_labels.view(-1),
-                        reduction='sum'
-                    )
-
-                loss = lm_loss + exit_loss
-                total_exit_loss += exit_loss.item()
-
             loss.backward()
             torch.nn.utils.clip_grad_norm_(block.parameters(), config.grad_clip)
             optimizer.step()
-            total_loss += lm_loss.item()
+            total_loss += loss.item()
             total_tokens += batch_size * seq_len
 
         train_ppl = float(np.exp(total_loss / total_tokens))
@@ -186,10 +145,8 @@ def train_block(
     if best_state is not None:
         block.load_state_dict({k: v.to(device) for k, v in best_state.items()})
 
-    # Post mode: train exit_classifier separately after LM training
-    # Only train if using exit_classifier confidence mode
-    if config.exit_classifier_mode == "post" and block.confidence_mode == "exit_classifier":
-        _train_exit_classifier(block, data, device, config, is_verbose)
+    # Train exit_classifier (post mode, loss-based labels)
+    _train_exit_classifier(block, data, device, config, is_verbose)
 
     # Collect hard examples and set threshold based on confidence distribution
     hard_examples, threshold = _collect_hard_examples(block, data, device, config.hard_ratio)
@@ -222,14 +179,10 @@ def _train_exit_classifier(
     is_verbose: bool
 ) -> None:
     """
-    Train exit_classifier separately after LM training (post mode).
+    Train exit_classifier after LM training.
 
     Freezes transformer and output_head, trains only exit_classifier.
-
-    Label modes:
-    - "correct": 1 if prediction is correct, 0 otherwise (BCE loss)
-    - "distill": softmax confidence as target (MSE loss, regression)
-    - "loss": normalized negative loss as target (MSE loss, regression)
+    Uses loss-based labels: exp(-cross_entropy_loss).
 
     Args:
         block: LEGOBlock with trained transformer
@@ -238,9 +191,8 @@ def _train_exit_classifier(
         config: TrainerConfig
         is_verbose: Print progress
     """
-    label_mode = config.exit_label_mode
     if is_verbose:
-        print(f"  Training exit_classifier (post mode, label={label_mode})...")
+        print("  Training exit_classifier...")
 
     # Freeze all except exit_classifier
     for param in block.transformer.parameters():
@@ -268,44 +220,23 @@ def _train_exit_classifier(
                 h_out = block.transformer(h)
                 logits = block.output_head(h_out)
 
-                # Compute labels based on mode
-                if label_mode == "correct":
-                    # Binary: 1 if correct, 0 otherwise
-                    preds = logits.argmax(dim=-1)
-                    exit_labels = (preds == y).float()
-                elif label_mode == "distill":
-                    # Continuous: softmax confidence (0-1)
-                    exit_labels = F.softmax(logits, dim=-1).max(dim=-1).values
-                else:  # loss
-                    # Continuous: normalized negative loss (higher = easier)
-                    # Per-token cross entropy, then convert to confidence-like score
-                    batch_size, seq_len, vocab_size = logits.shape
-                    per_token_loss = F.cross_entropy(
-                        logits.view(-1, vocab_size),
-                        y.view(-1),
-                        reduction='none'
-                    ).view(batch_size, seq_len)
-                    # Normalize: exp(-loss) gives probability-like score
-                    exit_labels = torch.exp(-per_token_loss)
+                # Loss-based labels: exp(-cross_entropy_loss)
+                batch_size, seq_len, vocab_size = logits.shape
+                per_token_loss = F.cross_entropy(
+                    logits.view(-1, vocab_size),
+                    y.view(-1),
+                    reduction='none'
+                ).view(batch_size, seq_len)
+                exit_labels = torch.exp(-per_token_loss)
 
-            # Train exit_classifier
+            # Train exit_classifier with MSE loss
             exit_logits = block.exit_classifier(h_out).squeeze(-1)
-
-            if label_mode == "correct":
-                # BCE loss for binary classification
-                loss = F.binary_cross_entropy_with_logits(
-                    exit_logits.view(-1),
-                    exit_labels.view(-1),
-                    reduction='sum'
-                )
-            else:
-                # MSE loss for regression (distill, loss modes)
-                exit_preds = torch.sigmoid(exit_logits)
-                loss = F.mse_loss(
-                    exit_preds.view(-1),
-                    exit_labels.view(-1),
-                    reduction='sum'
-                )
+            exit_preds = torch.sigmoid(exit_logits)
+            loss = F.mse_loss(
+                exit_preds.view(-1),
+                exit_labels.view(-1),
+                reduction='sum'
+            )
 
             loss.backward()
             exit_optimizer.step()
@@ -372,11 +303,8 @@ def _collect_hard_examples(
             # h_out: (batch_size, seq_len, dim)
             # logits: (batch_size, seq_len, vocab_size)
 
-            # Compute confidence based on block's confidence_mode
-            if block.confidence_mode == "softmax":
-                confidence = F.softmax(logits, dim=-1).max(dim=-1).values  # (batch_size, seq_len)
-            else:
-                confidence = torch.sigmoid(block.exit_classifier(h_out)).squeeze(-1)  # (batch_size, seq_len)
+            # Compute confidence using exit_classifier
+            confidence = torch.sigmoid(block.exit_classifier(h_out)).squeeze(-1)
 
             all_hidden_out.append(h_out)
             all_targets.append(y)

@@ -9,8 +9,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from typing import Tuple, Literal
+from typing import Tuple
 
 from .modules import TransformerBlock
 
@@ -20,12 +19,11 @@ class LEGOBlock(nn.Module):
     TransformerBlock with early exit capability.
 
     Wraps a standard TransformerBlock and adds:
-    - Confidence computation for early exit decision
+    - exit_classifier for confidence computation (lightweight Linear layer)
     - Threshold for token-level early exit decision (set by trainer)
 
-    Confidence modes:
-    - "softmax": Use max(softmax(logits)) as confidence (requires output_head, slower)
-    - "exit_classifier": Use lightweight Linear layer (faster, needs training)
+    Exit classifier is trained with loss-based labels: exp(-cross_entropy_loss).
+    This approach showed best results in experiments.
 
     This separation allows:
     - Standard TransformerBlock to be used independently
@@ -34,18 +32,12 @@ class LEGOBlock(nn.Module):
 
     Args:
         transformer: TransformerBlock to wrap
-        confidence_mode: "softmax" or "exit_classifier"
     """
 
-    def __init__(
-        self,
-        transformer: TransformerBlock,
-        confidence_mode: Literal["softmax", "exit_classifier"],
-    ):
+    def __init__(self, transformer: TransformerBlock):
         super().__init__()
         self.transformer = transformer
-        self.confidence_mode = confidence_mode
-        self.exit_classifier = nn.Linear(transformer.dim, 1)  # Used when confidence_mode="exit_classifier"
+        self.exit_classifier = nn.Linear(transformer.dim, 1)
         self.threshold = 1.0  # Set by trainer
         self.output_head: nn.Linear | None = None  # Set by LEGOLLM
 
@@ -87,13 +79,8 @@ class LEGOBlock(nn.Module):
         # Output logits
         logits = self.output_head(h)
 
-        # Compute confidence based on mode
-        if self.confidence_mode == "softmax":
-            # Use max softmax probability as confidence (slower, no extra training needed)
-            confidence = F.softmax(logits, dim=-1).max(dim=-1).values
-        else:
-            # Use exit_classifier (faster, requires training)
-            confidence = torch.sigmoid(self.exit_classifier(h)).squeeze(-1)
+        # Compute confidence using exit_classifier
+        confidence = torch.sigmoid(self.exit_classifier(h)).squeeze(-1)
 
         should_exit = confidence >= self.threshold
 

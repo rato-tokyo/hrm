@@ -38,8 +38,6 @@ def main() -> None:
         num_samples=10000,
         block_layers=(2, 2),
     )
-    # exit_label_mode: "correct" (binary), "distill" (softmax confidence), "loss" (exp(-loss))
-    exit_label_mode = "loss"  # Changed from "distill" for second experiment
 
     trainer_config = TrainerConfig(
         batch_size=64,
@@ -50,8 +48,6 @@ def main() -> None:
         hard_ratio=0.5,
         lr=1e-3,
         verbose=True,
-        exit_classifier_mode="post",  # "joint" or "post"
-        exit_label_mode=exit_label_mode,
     )
 
     device = get_device()
@@ -62,7 +58,6 @@ def main() -> None:
     print(f"Device: {device}")
     print(f"Model: dim={config.dim}, heads={config.num_heads}")
     print(f"Blocks: {config.block_layers}")
-    print(f"Exit label mode: {exit_label_mode}")
 
     # Setup
     set_seed(42)
@@ -71,20 +66,16 @@ def main() -> None:
     )
 
     # Create model with blocks based on config.block_layers
-    # confidence_mode: "softmax" (slower, no training) or "exit_classifier" (faster, needs training)
-    confidence_mode = "exit_classifier"  # Recommended: exit_classifier + loss mode
     blocks = [
         LEGOBlock(
             TransformerBlock(
                 config.dim, config.num_heads, num_layers,
                 config.ffn_dim, config.max_seq_len, config.causal, config.eps
             ),
-            confidence_mode,
         )
         for num_layers in config.block_layers
     ]
     model = LEGOLLM(vocab_size, config.dim, blocks).to(device)
-    print(f"Confidence mode: {confidence_mode}")
 
     print(f"Layers per block: {[b.num_layers for b in model.blocks]}")
 
@@ -142,8 +133,6 @@ def main() -> None:
             hard_ratio=trainer_config.hard_ratio,
             lr=trainer_config.lr * 0.1,
             verbose=trainer_config.verbose,
-            exit_classifier_mode=trainer_config.exit_classifier_mode,
-            exit_label_mode=trainer_config.exit_label_mode,
         )
         optimizer1 = torch.optim.AdamW(model.blocks[1].parameters(), lr=phase2_config.lr)
         _, stats1 = train_block(

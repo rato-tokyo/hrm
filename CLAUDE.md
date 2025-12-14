@@ -45,9 +45,10 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 ### 訓練フロー
 
 1. **Block 0**: 最初のブロックを全データで訓練
-2. **Hard Sequence収集**: 訓練後、信頼度の低いトークンを含むシーケンスを自動出力
-3. **Block 1+**: Hard Sequencesのみで訓練
-4. **推論**: TRUE Early Exitで高信頼度トークンは後続Blockを**実際にスキップ**
+2. **exit_classifier訓練**: LM訓練後、exit_classifierを訓練（loss方式）
+3. **Hard Sequence収集**: 信頼度の低いトークンを含むシーケンスを自動出力
+4. **Block 1+**: Hard Sequencesのみで訓練
+5. **推論**: TRUE Early Exitで高信頼度トークンは後続Blockを**実際にスキップ**
 
 ---
 
@@ -55,7 +56,7 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 
 1. **事前学習専用** - generate、KVキャッシュは実装しない
 2. **コンポジション方式** - LEGOBlockはTransformerBlockをラップ（継承ではない）
-3. **LEGOBlockがexit判定を所有** - 各Blockはthresholdを持ち、softmax maxで信頼度計算
+3. **LEGOBlockがexit判定を所有** - 各Blockはthresholdを持ち、exit_classifierで信頼度計算
 4. **LEGOLLMはルーティングのみ** - Block間のインデックス管理と統計計算
 5. **トークン単位のEarly Exit** - exit判定はトークン単位（バッチ単位ではない）
 6. **TRUE Early Exit** - exitしたトークンの後続blockは処理しない
@@ -68,7 +69,7 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 ## 核心機能（削除禁止）
 
 1. `LEGOBlock.forward()` - Transformer処理 + exit判定（h, logits, should_exit）
-2. `train_block()` - Block訓練 + hard example収集（trainer.py）
+2. `train_block()` - Block訓練 + exit_classifier訓練 + hard example収集（trainer.py）
 3. `LEGOLLM.forward()` - TRUE Early Exit推論
 4. `SequenceData` - hidden states + targetsのコンテナ（シーケンス単位）
 
@@ -81,6 +82,7 @@ block = LEGOBlock(TransformerBlock(dim=256, num_heads=8, num_layers=4))
 class LEGOBlock(nn.Module):
     def __init__(self, transformer: TransformerBlock):
         self.transformer = transformer  # 外部から注入
+        self.exit_classifier = nn.Linear(transformer.dim, 1)  # 信頼度計算用
         self.threshold = 1.0  # trainerが設定
 
     # プロパティ（transformerに委譲）
@@ -94,36 +96,61 @@ class LEGOBlock(nn.Module):
     set_output_head()                      # 共有出力層の設定
 ```
 
-### 信頼度計算方式（重要：削除禁止）
+---
 
-**softmax max方式を使用する**：
+## 信頼度計算方式（重要：削除禁止）
+
+**exit_classifier + loss方式を使用する**：
 
 ```python
-# 正しい実装（softmax max方式）
-confidence = F.softmax(logits, dim=-1).max(dim=-1).values
+# 信頼度計算（推論時）
+confidence = torch.sigmoid(block.exit_classifier(h)).squeeze(-1)
+
+# exit_classifierの訓練ラベル（LM訓練完了後）
+per_token_loss = F.cross_entropy(logits, y, reduction='none')
+exit_labels = torch.exp(-per_token_loss)  # loss方式
 ```
 
-- 訓練完了後の言語モデル出力に基づく信頼度
-- 追加パラメータ不要
-- 訓練は言語モデリング損失のみ
+### 方式の根拠（実験結果）
 
-### Hard Example収集方式（重要：削除禁止）
+| 方式 | Final PPL | Block 1 val_ppl |
+|------|-----------|-----------------|
+| **loss（採用）** | **1071** | **445** |
+| distill | 1095 | 522 |
+| softmax | 1219 | 736 |
+
+- **loss方式**が最良の精度（PPL 1071）
+- 正解ラベルを考慮した信頼度推定のため、hard example収集が正確
+- 詳細: `docs/experiments/exit_classifier_comparison.md`
+
+### 訓練フロー
+
+1. **LM訓練**: 言語モデリング損失でTransformerを訓練（early stopping付き）
+2. **exit_classifier訓練**: LM訓練完了後、Transformerを凍結してexit_classifierのみ訓練
+3. **threshold設定**: exit_classifierの出力からquantileでthresholdを計算
+
+---
+
+## Hard Example収集方式（重要：削除禁止）
 
 **トークン単位で収集**：`hard_ratio=0.5`なら信頼度下位50%のトークンのみをhard exampleとして収集。
 
 ```python
 # 正しい実装（トークン単位）
-# 1. 全トークンのconfidenceからthresholdを計算
+# 1. exit_classifierで信頼度を計算
+confidence = torch.sigmoid(block.exit_classifier(h_out)).squeeze(-1)
+
+# 2. 全トークンのconfidenceからthresholdを計算
 threshold = torch.quantile(all_confidences_flat, hard_ratio)
 
-# 2. 各トークンがhardかどうか判定
+# 3. 各トークンがhardかどうか判定
 hard_token_mask = confidences < threshold  # (num_sequences, seq_len)
 
-# 3. hardトークンのみを抽出
+# 4. hardトークンのみを抽出
 hard_hidden = hidden_out[hard_token_mask]  # (num_hard_tokens, dim)
 hard_targets = targets[hard_token_mask]    # (num_hard_tokens,)
 
-# 4. 新しいシーケンスに再構成してBlock 1に渡す
+# 5. 新しいシーケンスに再構成してBlock 1に渡す
 hard_hidden = hard_hidden.view(-1, seq_len, dim)
 hard_targets = hard_targets.view(-1, seq_len)
 return SequenceData(hard_hidden, hard_targets)
@@ -175,13 +202,13 @@ hard_targets = targets[hard_seq_mask]
 
 ```python
 # 正しい実装（quantile方式）
-# hard_ratio=0.5なら、上位50%がexitするthresholdを計算
-threshold = torch.quantile(all_confidences, 1.0 - hard_ratio)
+# hard_ratio=0.5なら、下位50%がhardトークン
+threshold = torch.quantile(all_confidences, hard_ratio)
 block.threshold = threshold
 ```
 
 これにより：
-- 訓練後のsoftmax出力分布に基づいた適切なthreshold
+- exit_classifierの出力分布に基づいた適切なthreshold
 - `hard_ratio`と推論時のexit率が一致
 - 外部での手動調整が不要
 
@@ -248,6 +275,12 @@ h = block.forward(tokens)  # (batch, 1, dim)
 **問題：** 「hardトークンを含むシーケンス全体」をBlock 1に渡し、easyトークンも含めて訓練していた。
 
 **教訓：** Block 1が受け取るべきはhardトークンのみ。easyトークンのhidden statesはBlock 1に流れてはいけない。
+
+### 8. 複数の信頼度計算方式を保持
+
+**問題：** softmax方式、exit_classifier + correct/distill/loss など複数の方式をオプションとして保持していた。
+
+**教訓：** 実験で最良と判明した方式（exit_classifier + loss）に一本化する。メンテナンス性 > 柔軟性。
 
 ---
 
