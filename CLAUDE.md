@@ -348,6 +348,24 @@ h = block.forward(tokens)  # (batch, 1, dim)
 
 **教訓：** 実験で最良と判明した方式（exit_classifier + loss）に一本化する。メンテナンス性 > 柔軟性。
 
+### 9. 訓練データでvalidation PPLを計算
+
+**問題：** `train_block()`内で訓練データを80/20分割し、20%側でval_pplを計算していた。結果として「val_ppl」は訓練データの一部の性能であり、真のvalidationセットの性能ではなかった。
+
+**発覚経緯：** サニティチェック（Final PPL > worst block val_ppl）が失敗し、調査の結果バグと判明。
+
+**解決：** `train_block()`と`train_legollm()`に別々の`train_data`と`val_data`を渡す設計に変更。WikiTextのvalidationセットを独立して使用するようにした。
+
+**教訓：** 訓練データとvalidationデータは完全に分離する。内部分割は混乱の元。
+
+### 10. 巨大なlogitsテンソルをメモリに保持
+
+**問題：** exit_classifier訓練のため、全データのlogits `(num_sequences, seq_len, vocab_size)` をメモリに保持。vocab_size=50000の場合、~40GBのRAMを消費していた。
+
+**解決：** logitsを保持せず、各バッチで即座に`exit_labels = exp(-loss)`を計算してCPUに移動。train_exit_classifierの引数を`(hidden_states, logits, targets)`から`(hidden_states, exit_labels)`に変更。
+
+**教訓：** 巨大な中間テンソルは保持せず、必要な値（ここではexit_labels）だけを計算して保存する。
+
 ---
 
 ## 頻発する設計ミス（⚠️ 要注意）
