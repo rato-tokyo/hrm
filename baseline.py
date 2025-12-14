@@ -30,8 +30,14 @@ class BaselineLLM(nn.Module):
         self.embedding = nn.Embedding(vocab_size, dim)
         self.transformer = transformer
         self.output_head = nn.Linear(dim, vocab_size, bias=False)
-        # Weight tying
-        self.output_head.weight = self.embedding.weight
+
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        """Initialize weights (same as LEGOLLM for fair comparison)."""
+        import math
+        nn.init.trunc_normal_(self.embedding.weight, std=0.02)
+        nn.init.trunc_normal_(self.output_head.weight, std=1.0 / math.sqrt(self.embedding.embedding_dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
