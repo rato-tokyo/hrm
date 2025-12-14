@@ -339,6 +339,45 @@ for name, metric in metrics.items():
     print(f"{name:<20} {corr:<15.4f} {direction:<12} {metric.mean():<12.4f} {metric.std():<12.4f}")
 
 # ============================================================
+# Experiment 2a: Correlation with Loss (High Confidence Only)
+# ============================================================
+print(f"\n{'=' * 60}")
+print("Experiment 2a: Correlation with Loss (High Confidence Only)")
+print("=" * 60)
+print("(softmax_conf >= threshold のトークンのみで相関を計算)")
+
+confidence_thresholds = [0.3, 0.5, 0.6, 0.7, 0.8, 0.9]
+
+print(f"\n{'Threshold':<12} {'N tokens':<12} {'%':<8} {'softmax':<12} {'max_z':<12} {'max-mean':<12} {'margin':<12}")
+print("-" * 85)
+
+for conf_thresh in confidence_thresholds:
+    high_conf_mask = softmax_conf_cpu >= conf_thresh
+    n_high = high_conf_mask.sum()
+    pct = n_high / len(softmax_conf_cpu) * 100
+
+    if n_high < 100:
+        print(f"{conf_thresh:<12.1f} {n_high:<12d} {pct:<8.1f}% {'N/A':<12} {'N/A':<12} {'N/A':<12} {'N/A':<12}")
+        continue
+
+    loss_high = loss_cpu[high_conf_mask]
+
+    corrs = {}
+    for name, metric in metrics.items():
+        metric_high = metric[high_conf_mask]
+        corr, _ = pearsonr(metric_high, loss_high)
+        corrs[name] = corr
+
+    print(f"{conf_thresh:<12.1f} {n_high:<12d} {pct:<8.1f}% {corrs['softmax_conf']:<12.4f} {corrs['max_z']:<12.4f} {corrs['max_minus_mean']:<12.4f} {corrs['margin']:<12.4f}")
+
+# Also show correlation for low confidence tokens
+print("\n高確信度 vs 低確信度の比較 (threshold=0.5):")
+high_mask = softmax_conf_cpu >= 0.5
+low_mask = ~high_mask
+print(f"  高確信度: {high_mask.sum():,} tokens ({high_mask.sum()/len(softmax_conf_cpu)*100:.1f}%), mean loss = {loss_cpu[high_mask].mean():.2f}")
+print(f"  低確信度: {low_mask.sum():,} tokens ({low_mask.sum()/len(softmax_conf_cpu)*100:.1f}%), mean loss = {loss_cpu[low_mask].mean():.2f}")
+
+# ============================================================
 # Experiment 2b: MLP Prediction (GPU)
 # ============================================================
 print(f"\n{'=' * 60}")
@@ -491,4 +530,4 @@ Key Questions Answered:
    - Best approach for efficiency?
 """)
 
-print(f"\nTotal execution time: GPU accelerated")
+print("\nTotal execution time: GPU accelerated")
