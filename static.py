@@ -261,8 +261,10 @@ def main() -> None:
         label='Observed distribution',
     )
 
-    # Plot range
-    x_range = np.linspace(0.01, 0.99, 500)
+    # Plot range - use actual data range with some padding
+    data_min = max(0.001, all_scores_flat.min() - 0.05)
+    data_max = min(0.999, all_scores_flat.max() + 0.05)
+    x_range = np.linspace(data_min, data_max, 500)
 
     # Individual Beta components
     colors = ['darkorange', 'forestgreen']
@@ -306,7 +308,7 @@ def main() -> None:
     ax.set_title('Exit Classifier Score Distribution: Beta Mixture + KDE', fontsize=14)
     ax.legend(loc='upper right', fontsize=9)
     ax.grid(True, alpha=0.3)
-    ax.set_xlim(0, 1)
+    ax.set_xlim(data_min - 0.02, data_max + 0.02)
 
     # Add statistics text box (left side)
     basic_stats_text = (
