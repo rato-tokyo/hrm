@@ -81,8 +81,7 @@ train_block()
 train_exit_classifier(
     exit_classifier,   # 訓練対象
     hidden_states,     # block.forward()の出力
-    logits,            # block.forward()の出力
-    targets,           # 正解ラベル
+    exit_labels,       # 事前計算済みラベル（exp(-loss)）
     lr, num_epochs, is_verbose
 )
 

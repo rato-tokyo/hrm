@@ -10,7 +10,7 @@ from .exit_classifier import ExitClassifier
 from .modules import TransformerBlock
 from .trainer import train_block
 from .exit_trainer import train_exit_classifier, collect_hard_examples
-from .model_trainer import train_legollm, evaluate_legollm, create_initial_data
+from .model_trainer import train_legollm, evaluate_legollm, create_sequence_data
 from .config import TrainerConfig, ExperimentConfig
 from .data import SequenceData, create_wikitext_dataloaders
 from .utils import set_seed, get_device
@@ -26,7 +26,7 @@ __all__ = [
     # Training - LEGOLLM
     'train_legollm',
     'evaluate_legollm',
-    'create_initial_data',
+    'create_sequence_data',
     # Training - LEGOBlock
     'train_block',
     'train_exit_classifier',

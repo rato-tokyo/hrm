@@ -20,7 +20,8 @@ from .exit_trainer import train_exit_classifier, collect_hard_examples
 
 def train_block(
     block: "LEGOBlock",
-    data: "SequenceData",
+    train_data: "SequenceData",
+    val_data: "SequenceData",
     optimizer: torch.optim.Optimizer,
     config: TrainerConfig,
 ) -> Tuple["SequenceData", Dict[str, Any]]:
@@ -28,15 +29,15 @@ def train_block(
     Train a LEGOBlock and return hard examples for the next block.
 
     This function orchestrates the complete block training workflow:
-    1. Split input data into train/val
-    2. Train LM with early stopping
-    3. Train exit_classifier (post mode, loss-based labels)
-    4. Collect hard examples (token-level extraction, repacked into sequences)
-    5. Set block's threshold based on confidence distribution
+    1. Train LM with early stopping (using val_data for validation)
+    2. Train exit_classifier (post mode, loss-based labels)
+    3. Collect hard examples (token-level extraction, repacked into sequences)
+    4. Set block's threshold based on confidence distribution
 
     Args:
         block: LEGOBlock to train
-        data: SequenceData containing (hidden_states, targets) as sequences
+        train_data: Training SequenceData (hidden_states, targets)
+        val_data: Validation SequenceData for early stopping
         optimizer: Optimizer for block's parameters
         config: TrainerConfig with training hyperparameters
 
@@ -51,9 +52,6 @@ def train_block(
         raise RuntimeError("output_head not set. Call set_output_head() first.")
 
     device = next(block.parameters()).device
-
-    # 1. Split data
-    train_data, val_data = data.split(train_ratio=1.0 - config.val_ratio)
 
     if is_verbose:
         print(f"Training block: {len(train_data)} train, {len(val_data)} val sequences")
@@ -70,7 +68,7 @@ def train_block(
     all_targets: List[torch.Tensor] = []
 
     with torch.no_grad():
-        for h, y in data.to(str(device)).batches(config.batch_size, shuffle=False):
+        for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=False):
             h_out, logits, _ = block.forward(h)
             # Compute exit_labels immediately to avoid storing logits (vocab_size dim is huge)
             per_token_loss = F.cross_entropy(
@@ -104,13 +102,13 @@ def train_block(
         block.exit_classifier,
         hidden_states,
         targets_all,
-        data.seq_len,
+        train_data.seq_len,
         config.hard_ratio,
     )
     block.threshold = threshold
 
     # 6. Build final statistics
-    actual_hard_ratio = hard_examples.num_tokens / data.num_tokens if data.num_tokens > 0 else 0.0
+    actual_hard_ratio = hard_examples.num_tokens / train_data.num_tokens if train_data.num_tokens > 0 else 0.0
     stats: Dict[str, Any] = {
         **lm_stats,
         'hard_ratio': actual_hard_ratio,

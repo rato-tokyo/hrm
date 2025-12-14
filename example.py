@@ -13,7 +13,7 @@ from lego import (
     create_wikitext_dataloaders,
     train_legollm,
     evaluate_legollm,
-    create_initial_data,
+    create_sequence_data,
 )
 
 
@@ -71,14 +71,17 @@ def main() -> None:
 
     print(f"Layers per block: {[b.num_layers for b in model.blocks]}")
 
-    # Create initial data
-    initial_data = create_initial_data(model, train_batches)
-    print(f"Initial data: {len(initial_data)} sequences ({initial_data.num_tokens} tokens)")
+    # Create sequence data from batches
+    train_data = create_sequence_data(model, train_batches)
+    val_data = create_sequence_data(model, val_batches)
+    print(f"Train data: {len(train_data)} sequences ({train_data.num_tokens} tokens)")
+    print(f"Val data: {len(val_data)} sequences ({val_data.num_tokens} tokens)")
 
     # Train all blocks
-    train_legollm(
+    train_stats = train_legollm(
         model=model,
-        initial_data=initial_data,
+        train_data=train_data,
+        val_data=val_data,
         config=trainer_config,
         lr_decay=0.1,
     )
@@ -96,6 +99,17 @@ def main() -> None:
     print(f"  Shallow ratio: {eval_stats['shallow_ratio']*100:.1f}%")
     print(f"  Compute cost: {eval_stats['compute_cost']*100:.1f}%")
     print(f"  Compute savings: {eval_stats['compute_savings']*100:.1f}%")
+
+    # Sanity check: final PPL should not exceed worst block val_ppl
+    block_stats = train_stats['block_stats']
+    worst_block_ppl = max(s['best_val_ppl'] for s in block_stats)
+    if eval_stats['ppl'] > worst_block_ppl:
+        print("\n" + "!" * 60)
+        print("BUG DETECTED: Final PPL exceeds worst block val_ppl!")
+        print(f"  Final PPL: {eval_stats['ppl']:.2f}")
+        print(f"  Worst block val_ppl: {worst_block_ppl:.2f}")
+        print("  This should not happen - please investigate.")
+        print("!" * 60)
 
     print("\n" + "=" * 60)
     print("Experiment completed!")
