@@ -38,6 +38,9 @@ def main() -> None:
         num_samples=10000,
         block_layers=(2, 2),
     )
+    # exit_label_mode: "correct" (binary), "distill" (softmax confidence), "loss" (exp(-loss))
+    exit_label_mode = "distill"  # Change to "loss" for second experiment
+
     trainer_config = TrainerConfig(
         batch_size=64,
         max_epochs=50,
@@ -48,6 +51,7 @@ def main() -> None:
         lr=1e-3,
         verbose=True,
         exit_classifier_mode="post",  # "joint" or "post"
+        exit_label_mode=exit_label_mode,
     )
 
     device = get_device()
@@ -58,6 +62,7 @@ def main() -> None:
     print(f"Device: {device}")
     print(f"Model: dim={config.dim}, heads={config.num_heads}")
     print(f"Blocks: {config.block_layers}")
+    print(f"Exit label mode: {exit_label_mode}")
 
     # Setup
     set_seed(42)
@@ -138,6 +143,7 @@ def main() -> None:
             lr=trainer_config.lr * 0.1,
             verbose=trainer_config.verbose,
             exit_classifier_mode=trainer_config.exit_classifier_mode,
+            exit_label_mode=trainer_config.exit_label_mode,
         )
         optimizer1 = torch.optim.AdamW(model.blocks[1].parameters(), lr=phase2_config.lr)
         _, stats1 = train_block(

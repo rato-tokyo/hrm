@@ -96,19 +96,41 @@ def train_block(
 
             loss = lm_loss
 
-            # Joint mode: add exit_classifier BCE loss (only if using exit_classifier mode)
+            # Joint mode: add exit_classifier loss (only if using exit_classifier mode)
             if is_joint_mode and block.confidence_mode == "exit_classifier":
-                # Label: 1 if prediction is correct, 0 otherwise
-                preds = logits.argmax(dim=-1)  # (batch_size, seq_len)
-                exit_labels = (preds == y).float()  # (batch_size, seq_len)
+                label_mode = config.exit_label_mode
+
+                # Compute labels based on mode
+                if label_mode == "correct":
+                    preds = logits.argmax(dim=-1)
+                    exit_labels = (preds == y).float()
+                elif label_mode == "distill":
+                    exit_labels = F.softmax(logits.detach(), dim=-1).max(dim=-1).values
+                else:  # loss
+                    per_token_loss = F.cross_entropy(
+                        logits.detach().view(-1, vocab_size),
+                        y.view(-1),
+                        reduction='none'
+                    ).view(batch_size, seq_len)
+                    exit_labels = torch.exp(-per_token_loss)
 
                 # exit_classifier output
-                exit_logits = block.exit_classifier(h_out).squeeze(-1)  # (batch_size, seq_len)
-                exit_loss = F.binary_cross_entropy_with_logits(
-                    exit_logits.view(-1),
-                    exit_labels.view(-1),
-                    reduction='sum'
-                )
+                exit_logits = block.exit_classifier(h_out).squeeze(-1)
+
+                if label_mode == "correct":
+                    exit_loss = F.binary_cross_entropy_with_logits(
+                        exit_logits.view(-1),
+                        exit_labels.view(-1),
+                        reduction='sum'
+                    )
+                else:
+                    exit_preds = torch.sigmoid(exit_logits)
+                    exit_loss = F.mse_loss(
+                        exit_preds.view(-1),
+                        exit_labels.view(-1),
+                        reduction='sum'
+                    )
+
                 loss = lm_loss + exit_loss
                 total_exit_loss += exit_loss.item()
 
@@ -203,7 +225,11 @@ def _train_exit_classifier(
     Train exit_classifier separately after LM training (post mode).
 
     Freezes transformer and output_head, trains only exit_classifier.
-    Label: 1 if prediction is correct, 0 otherwise.
+
+    Label modes:
+    - "correct": 1 if prediction is correct, 0 otherwise (BCE loss)
+    - "distill": softmax confidence as target (MSE loss, regression)
+    - "loss": normalized negative loss as target (MSE loss, regression)
 
     Args:
         block: LEGOBlock with trained transformer
@@ -212,8 +238,9 @@ def _train_exit_classifier(
         config: TrainerConfig
         is_verbose: Print progress
     """
+    label_mode = config.exit_label_mode
     if is_verbose:
-        print("  Training exit_classifier (post mode)...")
+        print(f"  Training exit_classifier (post mode, label={label_mode})...")
 
     # Freeze all except exit_classifier
     for param in block.transformer.parameters():
@@ -232,7 +259,7 @@ def _train_exit_classifier(
         block.train()
         total_loss = 0.0
         total_tokens = 0
-        correct_preds = 0
+        label_sum = 0.0
 
         for h, y in data.to(str(device)).batches(config.batch_size, shuffle=True):
             exit_optimizer.zero_grad()
@@ -240,16 +267,45 @@ def _train_exit_classifier(
             with torch.no_grad():
                 h_out = block.transformer(h)
                 logits = block.output_head(h_out)
-                preds = logits.argmax(dim=-1)
-                exit_labels = (preds == y).float()
+
+                # Compute labels based on mode
+                if label_mode == "correct":
+                    # Binary: 1 if correct, 0 otherwise
+                    preds = logits.argmax(dim=-1)
+                    exit_labels = (preds == y).float()
+                elif label_mode == "distill":
+                    # Continuous: softmax confidence (0-1)
+                    exit_labels = F.softmax(logits, dim=-1).max(dim=-1).values
+                else:  # loss
+                    # Continuous: normalized negative loss (higher = easier)
+                    # Per-token cross entropy, then convert to confidence-like score
+                    batch_size, seq_len, vocab_size = logits.shape
+                    per_token_loss = F.cross_entropy(
+                        logits.view(-1, vocab_size),
+                        y.view(-1),
+                        reduction='none'
+                    ).view(batch_size, seq_len)
+                    # Normalize: exp(-loss) gives probability-like score
+                    exit_labels = torch.exp(-per_token_loss)
 
             # Train exit_classifier
             exit_logits = block.exit_classifier(h_out).squeeze(-1)
-            loss = F.binary_cross_entropy_with_logits(
-                exit_logits.view(-1),
-                exit_labels.view(-1),
-                reduction='sum'
-            )
+
+            if label_mode == "correct":
+                # BCE loss for binary classification
+                loss = F.binary_cross_entropy_with_logits(
+                    exit_logits.view(-1),
+                    exit_labels.view(-1),
+                    reduction='sum'
+                )
+            else:
+                # MSE loss for regression (distill, loss modes)
+                exit_preds = torch.sigmoid(exit_logits)
+                loss = F.mse_loss(
+                    exit_preds.view(-1),
+                    exit_labels.view(-1),
+                    reduction='sum'
+                )
 
             loss.backward()
             exit_optimizer.step()
@@ -257,12 +313,12 @@ def _train_exit_classifier(
             total_loss += loss.item()
             batch_size, seq_len = y.shape
             total_tokens += batch_size * seq_len
-            correct_preds += exit_labels.sum().item()
+            label_sum += exit_labels.sum().item()
 
         avg_loss = total_loss / total_tokens
-        accuracy = correct_preds / total_tokens
+        avg_label = label_sum / total_tokens
         if is_verbose:
-            print(f"    Exit epoch {epoch+1}/{num_epochs}: loss={avg_loss:.4f}, acc={accuracy*100:.1f}%")
+            print(f"    Exit epoch {epoch+1}/{num_epochs}: loss={avg_loss:.4f}, avg_label={avg_label:.3f}")
 
     # Unfreeze all parameters
     for param in block.transformer.parameters():

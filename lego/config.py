@@ -29,6 +29,10 @@ class TrainerConfig:
         exit_classifier_mode: How to train exit_classifier
             - "joint": Train with LM loss in same loop (BCE loss added)
             - "post": Train separately after LM training completes
+        exit_label_mode: What label to use for exit_classifier training
+            - "correct": 1 if prediction is correct, 0 otherwise (binary)
+            - "distill": softmax confidence as continuous target (regression)
+            - "loss": negative cross-entropy loss as target (regression)
     """
     batch_size: int
     max_epochs: int
@@ -39,6 +43,7 @@ class TrainerConfig:
     lr: float
     verbose: bool
     exit_classifier_mode: Literal["joint", "post"]
+    exit_label_mode: Literal["correct", "distill", "loss"]
 
 
 @dataclass
