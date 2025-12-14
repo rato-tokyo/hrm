@@ -44,7 +44,7 @@ def main() -> None:
         patience=3,
         grad_clip=1.0,
         val_ratio=0.2,
-        hard_ratio=0.5,
+        hard_ratio=1.0,
         lr=1e-3,
         verbose=True,
         exit_classifier_mode="post",  # "joint" or "post"
