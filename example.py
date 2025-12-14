@@ -72,7 +72,7 @@ def main() -> None:
 
     # Create model with blocks based on config.block_layers
     # confidence_mode: "softmax" (slower, no training) or "exit_classifier" (faster, needs training)
-    confidence_mode = "exit_classifier"
+    confidence_mode = "softmax"  # Changed for comparison experiment
     blocks = [
         LEGOBlock(
             TransformerBlock(
