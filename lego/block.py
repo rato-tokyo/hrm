@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import Tuple
 
 from .modules import TransformerBlock
@@ -20,7 +19,7 @@ class LEGOBlock(nn.Module):
     TransformerBlock with early exit capability.
 
     Wraps a standard TransformerBlock and adds:
-    - Confidence computation via softmax max
+    - Lightweight exit_classifier for confidence computation
     - Threshold for token-level early exit decision (set by trainer)
 
     This separation allows:
@@ -38,6 +37,7 @@ class LEGOBlock(nn.Module):
     ):
         super().__init__()
         self.transformer = transformer
+        self.exit_classifier = nn.Linear(transformer.dim, 1)  # Lightweight confidence predictor
         self.threshold = 1.0  # Set by trainer
         self.output_head: nn.Linear | None = None  # Set by LEGOLLM
 
@@ -79,8 +79,8 @@ class LEGOBlock(nn.Module):
         # Output logits
         logits = self.output_head(h)
 
-        # Confidence from softmax max (prediction probability)
-        confidence = F.softmax(logits, dim=-1).max(dim=-1).values
+        # Confidence from exit_classifier (lightweight linear layer)
+        confidence = torch.sigmoid(self.exit_classifier(h)).squeeze(-1)
         should_exit = confidence >= self.threshold
 
         return h, logits, should_exit
