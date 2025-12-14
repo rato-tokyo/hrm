@@ -330,10 +330,14 @@ def _collect_hard_examples(
     targets_cat = torch.cat(all_targets)  # (num_sequences, seq_len)
     confidences_cat = torch.cat(all_confidences)  # (num_sequences, seq_len)
 
-    # Compute threshold: quantile such that (1 - hard_ratio) tokens exit
-    # e.g., hard_ratio=0.5 means top 50% exit, so threshold = 50th percentile
+    # Compute threshold: quantile such that hard_ratio tokens are collected as hard
+    # e.g., hard_ratio=0.5 means bottom 50% are hard, so threshold = 50th percentile
+    # confidence < threshold → hard token
     all_confidences_flat = confidences_cat.view(-1)
-    threshold = float(torch.quantile(all_confidences_flat, 1.0 - hard_ratio).item())
+    if hard_ratio >= 1.0:
+        threshold = float('inf')  # All tokens are hard
+    else:
+        threshold = float(torch.quantile(all_confidences_flat, hard_ratio).item())
 
     # Token-level hard mask: confidence < threshold
     hard_token_mask = confidences_cat < threshold  # (num_sequences, seq_len)
