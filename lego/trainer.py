@@ -1,7 +1,7 @@
 """
 LEGO Framework - Block Training
 
-Functions for training LEGOBlocks with hard example mining (sequence-based).
+Functions for training LEGOBlocks with hard example mining (token-level).
 """
 
 from __future__ import annotations
@@ -28,8 +28,8 @@ def train_block(
 
     This function encapsulates the complete block training workflow:
     1. Split input data into train/val
-    2. Train with early stopping (sequence-based for proper Attention)
-    3. Collect hard examples (sequences containing low confidence tokens)
+    2. Train with early stopping
+    3. Collect hard examples (token-level extraction, repacked into sequences)
     4. Set block's threshold based on confidence distribution
     5. Return hard examples as SequenceData for the next block
 
@@ -173,10 +173,10 @@ def _collect_hard_examples(
     hard_ratio: float
 ) -> Tuple["SequenceData", float]:
     """
-    Collect hard examples (sequences with low confidence tokens) after training.
+    Collect hard examples (token-level) after training.
 
-    Uses ratio-based selection: sequences containing tokens in the bottom X% confidence.
-    Also computes the threshold based on the confidence distribution.
+    Uses ratio-based selection: extracts only tokens with confidence in the bottom X%.
+    Hard tokens are then repacked into new sequences of the same seq_len.
 
     Args:
         block: Trained LEGOBlock
@@ -186,12 +186,13 @@ def _collect_hard_examples(
 
     Returns:
         Tuple of:
-        - SequenceData with hard examples (output hidden states and targets)
+        - SequenceData with hard examples only (output hidden states and targets)
         - threshold: Confidence threshold for early exit (quantile-based)
     """
     from .data import SequenceData
 
     block.eval()
+    seq_len = data.seq_len
 
     all_hidden_out: List[torch.Tensor] = []
     all_targets: List[torch.Tensor] = []
@@ -206,15 +207,15 @@ def _collect_hard_examples(
             # h_out: (batch_size, seq_len, dim)
             # logits: (batch_size, seq_len, vocab_size)
 
-            # Compute confidence from softmax max for each token
-            confidence = F.softmax(logits, dim=-1).max(dim=-1).values  # (batch_size, seq_len)
+            # Compute confidence using exit_classifier (not softmax)
+            confidence = torch.sigmoid(block.exit_classifier(h_out)).squeeze(-1)  # (batch_size, seq_len)
 
             all_hidden_out.append(h_out)
             all_targets.append(y)
             all_confidences.append(confidence)
 
     if not all_hidden_out:
-        return SequenceData.empty(data.seq_len, block.dim, str(device)), 1.0
+        return SequenceData.empty(seq_len, block.dim, str(device)), 1.0
 
     # Concatenate all
     hidden_out_cat = torch.cat(all_hidden_out)  # (num_sequences, seq_len, dim)
@@ -226,16 +227,24 @@ def _collect_hard_examples(
     all_confidences_flat = confidences_cat.view(-1)
     threshold = float(torch.quantile(all_confidences_flat, 1.0 - hard_ratio).item())
 
-    # Select sequences that contain at least one hard token (confidence < threshold)
-    # A sequence is "hard" if any of its tokens has low confidence
-    min_confidence_per_seq = confidences_cat.min(dim=1).values  # (num_sequences,)
-    hard_sequence_mask = min_confidence_per_seq < threshold
+    # Token-level hard mask: confidence < threshold
+    hard_token_mask = confidences_cat < threshold  # (num_sequences, seq_len)
 
-    num_hard_sequences = hard_sequence_mask.sum().item()
-    if num_hard_sequences == 0:
-        return SequenceData.empty(data.seq_len, block.dim, str(device)), threshold
+    # Extract only hard tokens
+    hard_hidden = hidden_out_cat[hard_token_mask]  # (num_hard_tokens, dim)
+    hard_targets = targets_cat[hard_token_mask]  # (num_hard_tokens,)
 
-    return SequenceData(
-        hidden_out_cat[hard_sequence_mask],
-        targets_cat[hard_sequence_mask]
-    ), threshold
+    num_hard_tokens = hard_hidden.shape[0]
+    if num_hard_tokens == 0:
+        return SequenceData.empty(seq_len, block.dim, str(device)), threshold
+
+    # Repack into sequences (truncate remainder that doesn't fill a complete sequence)
+    num_complete_sequences = num_hard_tokens // seq_len
+    if num_complete_sequences == 0:
+        return SequenceData.empty(seq_len, block.dim, str(device)), threshold
+
+    usable_tokens = num_complete_sequences * seq_len
+    hard_hidden = hard_hidden[:usable_tokens].view(num_complete_sequences, seq_len, -1)
+    hard_targets = hard_targets[:usable_tokens].view(num_complete_sequences, seq_len)
+
+    return SequenceData(hard_hidden, hard_targets), threshold

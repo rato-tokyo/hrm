@@ -109,20 +109,27 @@ confidence = F.softmax(logits, dim=-1).max(dim=-1).values
 
 ### Hard Example収集方式（重要：削除禁止）
 
-**シーケンス単位で収集**：`hard_ratio=0.5`なら信頼度下位50%のトークンを含むシーケンスをhard exampleとして収集。
+**トークン単位で収集**：`hard_ratio=0.5`なら信頼度下位50%のトークンのみをhard exampleとして収集。
 
 ```python
-# 正しい実装（シーケンス単位）
+# 正しい実装（トークン単位）
 # 1. 全トークンのconfidenceからthresholdを計算
-threshold = torch.quantile(all_confidences_flat, 1.0 - hard_ratio)
+threshold = torch.quantile(all_confidences_flat, hard_ratio)
 
-# 2. 各シーケンス内の最小confidenceがthreshold未満なら、そのシーケンスはhard
-min_confidence_per_seq = confidences.min(dim=1).values
-hard_sequence_mask = min_confidence_per_seq < threshold
+# 2. 各トークンがhardかどうか判定
+hard_token_mask = confidences < threshold  # (num_sequences, seq_len)
 
-# 3. hard sequenceのみを返す（Block 0の出力hidden statesとtargets）
-return SequenceData(hidden_out[hard_sequence_mask], targets[hard_sequence_mask])
+# 3. hardトークンのみを抽出
+hard_hidden = hidden_out[hard_token_mask]  # (num_hard_tokens, dim)
+hard_targets = targets[hard_token_mask]    # (num_hard_tokens,)
+
+# 4. 新しいシーケンスに再構成してBlock 1に渡す
+hard_hidden = hard_hidden.view(-1, seq_len, dim)
+hard_targets = hard_targets.view(-1, seq_len)
+return SequenceData(hard_hidden, hard_targets)
 ```
+
+**重要**: Block 1が受け取るのはhardトークンのみ。easyトークンのhidden statesはBlock 1に流れない。
 
 ### Threshold自動設定方式（重要：削除禁止）
 
@@ -197,3 +204,43 @@ h = block.forward(tokens)  # (batch, 1, dim)
 **問題：** 訓練時にトークンを独立して `(batch, 1, dim)` で処理し、Attentionが機能していなかった。
 
 **教訓：** Attentionはシーケンス全体を必要とする。シーケンス単位で処理し、exit判定のみトークン単位にする。
+
+### 7. Hard example収集でシーケンス全体を渡す
+
+**問題：** 「hardトークンを含むシーケンス全体」をBlock 1に渡し、easyトークンも含めて訓練していた。
+
+**教訓：** Block 1が受け取るべきはhardトークンのみ。easyトークンのhidden statesはBlock 1に流れてはいけない。
+
+---
+
+## 頻発する設計ミス（⚠️ 要注意）
+
+以下のミスは繰り返し発生している。実装時に必ず確認すること。
+
+### 1. シーケンス単位処理とトークン単位early exitの混同
+
+**原則**：
+- **Attention計算** → シーケンス単位（`(batch, seq_len, dim)`）
+- **Early exit判定** → トークン単位（各トークンが独立してexit）
+- **Hard example収集** → トークン単位（hardトークンのみ抽出）
+- **訓練時のforward** → シーケンス単位（Attentionのため）
+
+**よくあるミス**：
+- Attentionをトークン単位で処理（文脈なし）
+- Hard exampleをシーケンス単位で収集（easyトークンも含む）
+- Exit判定をシーケンス単位で行う（全トークン一律）
+
+### 2. Block間のデータフローの誤解
+
+**正しいフロー**：
+```
+Block 0入力: embedding(tokens)           → (batch, seq_len, dim)
+Block 0出力: hidden_states               → (batch, seq_len, dim)
+Hard収集:    hardトークンのみ抽出         → (num_hard, dim)
+再構成:      新シーケンスに詰め直し       → (new_batch, seq_len, dim)
+Block 1入力: 再構成されたhardトークン     → (new_batch, seq_len, dim)
+```
+
+**よくあるミス**：
+- Block 1にeasyトークンも渡す
+- シーケンス境界を維持しようとする（不要）
