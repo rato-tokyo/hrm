@@ -48,7 +48,9 @@ def fit_ggd_mixture(
     sorted_data = np.sort(data)
     split_points = np.linspace(0, n_samples, n_components + 1, dtype=int)
 
-    betas = np.ones(n_components) * 2.0  # Start with Gaussian
+    # Start with different beta values for each component
+    # Lower beta = sharper peak, higher beta = flatter
+    betas = np.array([1.5, 0.8])[:n_components]  # Expect peaked distributions
     locs = np.zeros(n_components)
     scales = np.ones(n_components)
     weights = np.ones(n_components) / n_components
@@ -116,15 +118,24 @@ def fit_ggd_mixture(
                 except Exception:
                     return 1e10
 
-            # Optimize
-            result = minimize(
-                neg_log_likelihood,
-                x0=[betas[k], scales[k]],
-                method='L-BFGS-B',
-                bounds=[(0.2, 10.0), (0.001, 2.0)],
-            )
-            if result.success:
-                betas[k], scales[k] = result.x
+            # Optimize with multiple restarts to avoid local minima
+            best_result = None
+            best_nll = float('inf')
+
+            # Try different initial beta values
+            for init_beta in [0.5, 1.0, 1.5, 2.0, 3.0]:
+                result = minimize(
+                    neg_log_likelihood,
+                    x0=[init_beta, scales[k]],
+                    method='L-BFGS-B',
+                    bounds=[(0.3, 5.0), (0.01, 0.5)],  # Narrower bounds for [0,1] data
+                )
+                if result.success and result.fun < best_nll:
+                    best_nll = result.fun
+                    best_result = result
+
+            if best_result is not None:
+                betas[k], scales[k] = best_result.x
 
     return betas, locs, scales, weights
 
