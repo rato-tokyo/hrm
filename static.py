@@ -5,11 +5,12 @@ Trains Block 0 and visualizes the distribution of exit classifier scores
 on validation data with Beta Mixture Model and KDE fitting.
 """
 
+import warnings
 import torch
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats as scipy_stats
-from scipy.optimize import minimize
+from scipy.integrate import IntegrationWarning
 
 from lego import (
     LEGOLLM,
@@ -43,28 +44,31 @@ def fit_beta_mixture(
     Returns:
         Tuple of (alphas, betas, weights) for each component
     """
+    warnings.filterwarnings('ignore', category=RuntimeWarning)
+    warnings.filterwarnings('ignore', category=IntegrationWarning)
+
     n_samples = len(data)
 
     # Clip data to avoid numerical issues at boundaries
-    data = np.clip(data, 1e-6, 1 - 1e-6)
+    data = np.clip(data, 1e-4, 1 - 1e-4)
 
     # Initialize parameters using k-means style initialization
     sorted_data = np.sort(data)
     split_points = np.linspace(0, n_samples, n_components + 1, dtype=int)
     alphas = np.zeros(n_components)
-    betas = np.zeros(n_components)
+    betas_arr = np.zeros(n_components)
     weights = np.ones(n_components) / n_components
 
     for k in range(n_components):
         segment = sorted_data[split_points[k]:split_points[k + 1]]
         if len(segment) > 0:
-            mean = segment.mean()
-            var = segment.var() + 1e-6
+            mean = np.clip(segment.mean(), 0.01, 0.99)
+            var = max(segment.var(), 1e-4)
             # Method of moments for beta distribution
             common = mean * (1 - mean) / var - 1
-            common = max(common, 2.0)  # Ensure valid parameters
-            alphas[k] = mean * common
-            betas[k] = (1 - mean) * common
+            common = np.clip(common, 2.0, 50.0)  # Ensure valid parameters
+            alphas[k] = max(mean * common, 1.0)
+            betas_arr[k] = max((1 - mean) * common, 1.0)
 
     # EM algorithm
     prev_log_likelihood = -np.inf
@@ -72,15 +76,22 @@ def fit_beta_mixture(
         # E-step: compute responsibilities
         log_probs = np.zeros((n_samples, n_components))
         for k in range(n_components):
-            log_probs[:, k] = np.log(weights[k] + 1e-10) + scipy_stats.beta.logpdf(
-                data, alphas[k], betas[k]
-            )
+            try:
+                log_probs[:, k] = np.log(weights[k] + 1e-10) + scipy_stats.beta.logpdf(
+                    data, alphas[k], betas_arr[k]
+                )
+            except Exception:
+                log_probs[:, k] = -1e10
+
+        # Handle invalid values
+        log_probs = np.nan_to_num(log_probs, nan=-1e10, posinf=-1e10, neginf=-1e10)
 
         # Log-sum-exp for numerical stability
         max_log_probs = log_probs.max(axis=1, keepdims=True)
-        log_sum = max_log_probs + np.log(np.exp(log_probs - max_log_probs).sum(axis=1, keepdims=True))
+        log_sum = max_log_probs + np.log(np.exp(log_probs - max_log_probs).sum(axis=1, keepdims=True) + 1e-10)
         log_responsibilities = log_probs - log_sum
         responsibilities = np.exp(log_responsibilities)
+        responsibilities = np.nan_to_num(responsibilities, nan=1.0/n_components)
 
         # Compute log-likelihood
         log_likelihood = log_sum.sum()
@@ -97,35 +108,17 @@ def fit_beta_mixture(
         for k in range(n_components):
             resp_k = responsibilities[:, k]
             weighted_data = resp_k * data
-            weighted_log_data = resp_k * np.log(data)
-            weighted_log_1_minus_data = resp_k * np.log(1 - data)
 
-            mean_k = weighted_data.sum() / Nk[k]
-            mean_log_k = weighted_log_data.sum() / Nk[k]
-            mean_log_1_minus_k = weighted_log_1_minus_data.sum() / Nk[k]
+            mean_k = np.clip(weighted_data.sum() / Nk[k], 0.01, 0.99)
+            var_k = max((resp_k * (data - mean_k)**2).sum() / Nk[k], 1e-4)
 
-            # Update alpha and beta using fixed-point iteration
-            def neg_expected_log_likelihood(params: np.ndarray) -> float:
-                a, b = params
-                if a <= 0 or b <= 0:
-                    return 1e10
-                return -(
-                    (a - 1) * mean_log_k
-                    + (b - 1) * mean_log_1_minus_k
-                    - np.log(scipy_stats.beta(a, b).expect(lambda x: 1) + 1e-10)
-                )
+            # Method of moments update
+            common = mean_k * (1 - mean_k) / var_k - 1
+            common = np.clip(common, 2.0, 100.0)
+            alphas[k] = max(mean_k * common, 1.0)
+            betas_arr[k] = max((1 - mean_k) * common, 1.0)
 
-            # Simple optimization
-            result = minimize(
-                neg_expected_log_likelihood,
-                [alphas[k], betas[k]],
-                method='L-BFGS-B',
-                bounds=[(0.1, 100), (0.1, 100)],
-            )
-            if result.success:
-                alphas[k], betas[k] = result.x
-
-    return alphas, betas, weights
+    return alphas, betas_arr, weights
 
 
 def main() -> None:
