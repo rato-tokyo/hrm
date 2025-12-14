@@ -44,7 +44,7 @@ def main() -> None:
         patience=3,
         grad_clip=1.0,
         val_ratio=0.2,
-        hard_ratio=1.0,
+        hard_ratio=0.5,
         lr=1e-3,
         verbose=True,
         exit_classifier_mode="post",  # "joint" or "post"
@@ -66,14 +66,20 @@ def main() -> None:
     )
 
     # Create model with blocks based on config.block_layers
+    # confidence_mode: "softmax" (slower, no training) or "exit_classifier" (faster, needs training)
+    confidence_mode = "exit_classifier"
     blocks = [
-        LEGOBlock(TransformerBlock(
-            config.dim, config.num_heads, num_layers,
-            config.ffn_dim, config.max_seq_len, config.causal, config.eps
-        ))
+        LEGOBlock(
+            TransformerBlock(
+                config.dim, config.num_heads, num_layers,
+                config.ffn_dim, config.max_seq_len, config.causal, config.eps
+            ),
+            confidence_mode,
+        )
         for num_layers in config.block_layers
     ]
     model = LEGOLLM(vocab_size, config.dim, blocks).to(device)
+    print(f"Confidence mode: {confidence_mode}")
 
     print(f"Layers per block: {[b.num_layers for b in model.blocks]}")
 

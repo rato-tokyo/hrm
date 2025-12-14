@@ -96,8 +96,8 @@ def train_block(
 
             loss = lm_loss
 
-            # Joint mode: add exit_classifier BCE loss
-            if is_joint_mode:
+            # Joint mode: add exit_classifier BCE loss (only if using exit_classifier mode)
+            if is_joint_mode and block.confidence_mode == "exit_classifier":
                 # Label: 1 if prediction is correct, 0 otherwise
                 preds = logits.argmax(dim=-1)  # (batch_size, seq_len)
                 exit_labels = (preds == y).float()  # (batch_size, seq_len)
@@ -165,7 +165,8 @@ def train_block(
         block.load_state_dict({k: v.to(device) for k, v in best_state.items()})
 
     # Post mode: train exit_classifier separately after LM training
-    if config.exit_classifier_mode == "post":
+    # Only train if using exit_classifier confidence mode
+    if config.exit_classifier_mode == "post" and block.confidence_mode == "exit_classifier":
         _train_exit_classifier(block, data, device, config, is_verbose)
 
     # Collect hard examples and set threshold based on confidence distribution
@@ -315,8 +316,11 @@ def _collect_hard_examples(
             # h_out: (batch_size, seq_len, dim)
             # logits: (batch_size, seq_len, vocab_size)
 
-            # Compute confidence using exit_classifier (not softmax)
-            confidence = torch.sigmoid(block.exit_classifier(h_out)).squeeze(-1)  # (batch_size, seq_len)
+            # Compute confidence based on block's confidence_mode
+            if block.confidence_mode == "softmax":
+                confidence = F.softmax(logits, dim=-1).max(dim=-1).values  # (batch_size, seq_len)
+            else:
+                confidence = torch.sigmoid(block.exit_classifier(h_out)).squeeze(-1)  # (batch_size, seq_len)
 
             all_hidden_out.append(h_out)
             all_targets.append(y)
