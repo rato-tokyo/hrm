@@ -29,6 +29,7 @@ def main() -> None:
         seq_len=32,
         num_samples=10000,
         block_layers=(2, 2),
+        exit_hidden_dim=128,
     )
 
     trainer_config = TrainerConfig(
@@ -64,6 +65,7 @@ def main() -> None:
                 config.dim, config.num_heads, num_layers,
                 config.ffn_dim, config.max_seq_len, config.causal, config.eps
             ),
+            config.exit_hidden_dim,
         )
         for num_layers in config.block_layers
     ]

@@ -20,11 +20,11 @@ class LEGOBlock(nn.Module):
     TransformerBlock with early exit capability.
 
     Wraps a standard TransformerBlock and adds:
-    - ExitClassifier for confidence computation and exit decision
+    - ExitClassifier (MLP-based) for confidence computation and exit decision
     - Shared output_head for logits computation
 
-    Exit classifier is trained with loss-based labels: exp(-cross_entropy_loss).
-    This approach showed best results in experiments.
+    Exit classifier uses MLP (2-layer) which showed 30.2% Oracle performance
+    vs 17.2% for Linear (experiment 2024-12-15).
 
     This separation allows:
     - Standard TransformerBlock to be used independently
@@ -33,12 +33,13 @@ class LEGOBlock(nn.Module):
 
     Args:
         transformer: TransformerBlock to wrap
+        exit_hidden_dim: Hidden dimension for ExitClassifier MLP
     """
 
-    def __init__(self, transformer: TransformerBlock):
+    def __init__(self, transformer: TransformerBlock, exit_hidden_dim: int):
         super().__init__()
         self.transformer = transformer
-        self.exit_classifier = ExitClassifier(transformer.dim)
+        self.exit_classifier = ExitClassifier(transformer.dim, exit_hidden_dim)
         self.output_head: nn.Linear | None = None  # Set by LEGOLLM
 
     @property

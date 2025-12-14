@@ -57,6 +57,7 @@ class ExperimentConfig:
         seq_len: Sequence length for language modeling
         num_samples: Number of training samples
         block_layers: List of layer counts per block (e.g., [2, 2] for 2 blocks)
+        exit_hidden_dim: Hidden dimension for ExitClassifier MLP (MLP: 30.2% Oracle vs Linear: 17.2%)
     """
     dim: int
     num_heads: int
@@ -67,3 +68,4 @@ class ExperimentConfig:
     seq_len: int
     num_samples: int
     block_layers: tuple[int, ...]
+    exit_hidden_dim: int

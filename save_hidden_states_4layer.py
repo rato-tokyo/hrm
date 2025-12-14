@@ -1,12 +1,13 @@
 """
-Save Hidden States for Loss Prediction Analysis
+Save Hidden States for Loss Prediction Analysis (4-layer version)
 
-Matches the exact configuration used in save_analysis_data.py:
-- dim=64, num_heads=4, num_layers=2
+Configuration:
+- dim=64, num_heads=4, num_layers=4 (instead of 2)
 - seq_len=32, num_samples=10000
 - WikiText-2 dataset
 
 This saves hidden_states along with per_token_loss for MLP training.
+Output: hidden_states_data_4layer.npz
 """
 
 import torch
@@ -29,7 +30,7 @@ from lego import (
 
 
 def main():
-    # EXACT same configuration as save_analysis_data.py
+    # 4-layer configuration (vs 2-layer in original)
     config = ExperimentConfig(
         dim=64,
         num_heads=4,
@@ -39,7 +40,7 @@ def main():
         eps=1e-6,
         seq_len=32,
         num_samples=10000,
-        block_layers=(2,),  # 2 layers only
+        block_layers=(4,),  # 4 layers (was 2)
         exit_hidden_dim=128,
     )
 
@@ -57,12 +58,12 @@ def main():
     device = get_device()
 
     print("=" * 60)
-    print("Save Hidden States (LEGO - Same Config as analysis_data.npz)")
+    print("Save Hidden States (4-layer model)")
     print("=" * 60)
     print(f"Device: {device}")
     print(f"Config: dim={config.dim}, heads={config.num_heads}, layers={config.block_layers}")
 
-    # Setup (same seed as save_analysis_data.py)
+    # Setup
     set_seed(42)
     train_batches, val_batches, vocab_size = create_wikitext_dataloaders(
         config.num_samples, trainer_config.batch_size, config.seq_len, seed=42
@@ -111,36 +112,21 @@ def main():
     print("LLM Sanity Check")
     print("=" * 60)
 
-    # Check PPL improved from random (vocab_size ~ 50000, random PPL ~ 50000)
     random_ppl = vocab_size
     if stats['best_val_ppl'] < random_ppl * 0.1:
-        print(f"  ✓ PPL ({stats['best_val_ppl']:.0f}) << random ({random_ppl}) - Model is learning")
+        print(f"  OK: PPL ({stats['best_val_ppl']:.0f}) << random ({random_ppl})")
     else:
-        print(f"  ✗ PPL ({stats['best_val_ppl']:.0f}) too high - Model may not be learning")
+        print(f"  NG: PPL ({stats['best_val_ppl']:.0f}) too high")
 
-    # Check early stopping worked
     if stats['stopped_early']:
-        print(f"  ✓ Early stopping triggered at epoch {stats['total_epochs']}")
+        print(f"  OK: Early stopping at epoch {stats['total_epochs']}")
     else:
-        print(f"  △ No early stopping (ran all {stats['total_epochs']} epochs)")
+        print(f"  INFO: No early stopping (ran all {stats['total_epochs']} epochs)")
 
-    # Check train/val PPL trend
     train_ppls = stats['train_ppls']
     val_ppls = stats['val_ppls']
-    if len(train_ppls) >= 2:
-        if train_ppls[-1] < train_ppls[0]:
-            print(f"  ✓ Train PPL decreased: {train_ppls[0]:.0f} → {train_ppls[-1]:.0f}")
-        else:
-            print(f"  ✗ Train PPL did not decrease: {train_ppls[0]:.0f} → {train_ppls[-1]:.0f}")
-
-    # Show PPL history
-    print(f"\n  PPL History (first 5, last 3):")
-    for i, (tr, va) in enumerate(zip(train_ppls[:5], val_ppls[:5])):
-        print(f"    Epoch {i+1}: train={tr:.0f}, val={va:.0f}")
-    if len(train_ppls) > 5:
-        print(f"    ...")
-        for i in range(max(5, len(train_ppls)-3), len(train_ppls)):
-            print(f"    Epoch {i+1}: train={train_ppls[i]:.0f}, val={val_ppls[i]:.0f}")
+    if len(train_ppls) >= 2 and train_ppls[-1] < train_ppls[0]:
+        print(f"  OK: Train PPL decreased: {train_ppls[0]:.0f} -> {train_ppls[-1]:.0f}")
 
     # Collect hidden_states and loss on validation set
     print("\nCollecting hidden_states on validation set...")
@@ -153,7 +139,6 @@ def main():
         for h, y in val_data.to(str(device)).batches(trainer_config.batch_size, shuffle=False):
             h_out, logits, _ = block.forward(h)
 
-            # Per-token cross-entropy loss
             per_token_loss = F.cross_entropy(
                 logits.view(-1, logits.size(-1)),
                 y.view(-1),
@@ -164,12 +149,12 @@ def main():
             all_per_token_loss.append(per_token_loss.cpu())
 
     # Flatten to token level
-    hidden_states = torch.cat(all_hidden_states)  # (num_sequences, seq_len, dim)
-    per_token_loss = torch.cat(all_per_token_loss)  # (num_sequences, seq_len)
+    hidden_states = torch.cat(all_hidden_states)
+    per_token_loss = torch.cat(all_per_token_loss)
 
     num_sequences, seq_len, dim = hidden_states.shape
-    hidden_states_flat = hidden_states.view(-1, dim).numpy()  # (num_tokens, dim)
-    per_token_loss_flat = per_token_loss.view(-1).numpy()  # (num_tokens,)
+    hidden_states_flat = hidden_states.view(-1, dim).numpy()
+    per_token_loss_flat = per_token_loss.view(-1).numpy()
 
     # Statistics
     print(f"\n{'=' * 60}")
@@ -187,22 +172,20 @@ def main():
         val = np.percentile(per_token_loss_flat, q)
         print(f"  {q:3d}%: {val:.4f}")
 
-    # Get output_head weight matrix W (for low-rank approximation experiments)
-    # W shape: (vocab_size, dim) - maps hidden states to logits
-    W = model.output_head.weight.detach().cpu().numpy()  # (vocab_size, dim)
+    # Get output_head weight matrix W
+    W = model.output_head.weight.detach().cpu().numpy()
     print(f"\n{'=' * 60}")
     print("Output Head (W matrix)")
     print("=" * 60)
     print(f"  W shape: {W.shape} (vocab_size x dim)")
     print(f"  W size: {W.nbytes / (1024 * 1024):.1f} MB")
 
-    # SVD analysis for low-rank approximation feasibility
+    # SVD analysis
     print(f"\nSVD Analysis:")
     U, S, Vt = np.linalg.svd(W, full_matrices=False)
     print(f"  Singular values shape: {S.shape}")
     print(f"  Top 10 singular values: {S[:10].round(2)}")
 
-    # Coverage ratio for different ranks
     total_var = np.sum(S ** 2)
     print(f"\n  Coverage by rank:")
     for r in [5, 10, 20, 32, 64]:
@@ -210,8 +193,8 @@ def main():
             coverage = np.sum(S[:r] ** 2) / total_var * 100
             print(f"    r={r:2d}: {coverage:.1f}%")
 
-    # Save
-    output_path = Path("hidden_states_data.npz")
+    # Save with different filename
+    output_path = Path("hidden_states_data_4layer.npz")
     size_mb = (hidden_states_flat.nbytes + per_token_loss_flat.nbytes + W.nbytes) / (1024 * 1024)
     print(f"\nSaving to {output_path} ({size_mb:.1f} MB)...")
 
@@ -224,6 +207,7 @@ def main():
         seq_len=seq_len,
         num_sequences=num_sequences,
         vocab_size=vocab_size,
+        num_layers=4,  # Added to identify layer count
         best_val_ppl=stats['best_val_ppl'],
         threshold=stats['threshold'],
     )

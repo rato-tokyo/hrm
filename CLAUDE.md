@@ -128,13 +128,13 @@ collect_hard_examples(
 ### LEGOBlockの責務（シンプル）
 
 ```python
-# LEGOBlockはTransformerBlockを引数で受け取る（明示的コンポジション）
-block = LEGOBlock(TransformerBlock(dim=256, num_heads=8, num_layers=4, ...))
+# LEGOBlockはTransformerBlockとexit_hidden_dimを引数で受け取る（明示的コンポジション）
+block = LEGOBlock(TransformerBlock(dim=256, num_heads=8, num_layers=4, ...), exit_hidden_dim=128)
 
 class LEGOBlock(nn.Module):
-    def __init__(self, transformer: TransformerBlock):
+    def __init__(self, transformer: TransformerBlock, exit_hidden_dim: int):
         self.transformer = transformer           # 外部から注入
-        self.exit_classifier = ExitClassifier(transformer.dim)  # 信頼度計算用
+        self.exit_classifier = ExitClassifier(transformer.dim, exit_hidden_dim)  # MLP-based
         self.output_head: nn.Linear | None = None  # LEGOLLMが設定
 
     # プロパティ（transformerに委譲）
@@ -148,29 +148,35 @@ class LEGOBlock(nn.Module):
     set_output_head()                      # 共有出力層の設定
 ```
 
-### ExitClassifierの責務
+### ExitClassifierの責務（MLP-based）
+
+**2024-12-15実験結果**：MLP Router（30.2% Oracle）vs Linear Router（17.2% Oracle）
+MLPは+13%の性能向上をもたらすため、MLPを採用。
 
 ```python
 class ExitClassifier(nn.Module):
-    def __init__(self, dim: int):
-        self.linear = nn.Linear(dim, 1)
-        self.threshold = 1.0  # trainerが設定
+    def __init__(self, dim: int, hidden_dim: int):
+        # 2-layer MLP: fc1 -> ReLU -> fc2
+        self.fc1 = nn.Linear(dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, 1)
+        self.threshold = 0.0  # trainerが設定
 
     # メソッド
-    forward(h) → (confidence, should_exit)
-    compute_confidence(h) → confidence
+    forward(h) → (predicted_loss, should_exit)
+    compute_confidence(h) → predicted_loss
+    _mlp_forward(h) → predicted_loss  # 内部: ReLU(fc1(h)) -> fc2
 ```
 
 ---
 
 ## 信頼度計算方式（重要：削除禁止）
 
-**exit_classifier + loss方式を使用する**：
+**MLP-based exit_classifier + loss方式を使用する**：
 
 ```python
-# BDR-style: exit_classifierはlossを直接予測（sigmoidなし）
+# BDR-style: exit_classifierはlossを直接予測（MLP: 2-layer）
 predicted_loss = block.exit_classifier.compute_confidence(h)
-# 内部: self.linear(h).squeeze(-1)  # 生の出力
+# 内部: fc2(ReLU(fc1(h))).squeeze(-1)  # 2-layer MLP
 
 # exit_classifierの訓練ラベル（LM訓練完了後）- exit_trainer.pyで使用
 per_token_loss = F.cross_entropy(logits, y, reduction='none')
@@ -363,6 +369,16 @@ h = block.forward(tokens)  # (batch, 1, dim)
 **解決：** logitsを保持せず、各バッチで即座に`exit_labels = exp(-loss)`を計算してCPUに移動。train_exit_classifierの引数を`(hidden_states, logits, targets)`から`(hidden_states, exit_labels)`に変更。
 
 **教訓：** 巨大な中間テンソルは保持せず、必要な値（ここではexit_labels）だけを計算して保存する。
+
+### 11. ExitClassifierにLinear層を使用
+
+**問題：** ExitClassifierに単一のLinear層（`nn.Linear(dim, 1)`）を使用していた。Easy/Hard分離性能が17.2% Oracleと低かった。
+
+**発覚経緯：** MoD (Mixture of Depths) 方式との比較実験（2024-12-15）で、MLP（2-layer）が30.2% Oracleを達成し、+13%の性能向上を確認。
+
+**解決：** ExitClassifierを2-layer MLP（`fc1 -> ReLU -> fc2`）に変更。`hidden_dim`を必須引数として追加。
+
+**教訓：** シンプルさと性能のトレードオフを実験で検証する。hidden statesからlossを予測するタスクは非線形性が必要。
 
 ---
 
