@@ -31,8 +31,9 @@ lego/
 │   └── norm.py         # RMSNorm
 ├── block.py            # LEGOBlock（推論のみ）
 ├── exit_classifier.py  # ExitClassifier（信頼度計算・exit判定）
-├── model.py            # LEGOLLM
-├── trainer.py          # train_block(), _train_lm()（LM訓練）
+├── model.py            # LEGOLLM（推論のみ）
+├── model_trainer.py    # train_legollm(), evaluate_legollm()（LEGOLLM訓練・評価）
+├── trainer.py          # train_block(), _train_lm()（LEGOBlock訓練）
 ├── exit_trainer.py     # train_exit_classifier(), collect_hard_examples()
 ├── data.py             # SequenceData
 └── config.py           # ExperimentConfig, TrainerConfig
@@ -59,16 +60,46 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 ```
 train_block()
 ├── 1. データ分割 (train/val)
-├── 2. _train_lm()               ← Transformer + output_head の訓練（early stopping付き）
-├── 3. train_exit_classifier()   ← LM訓練完了後、exit_classifier のみ訓練
-├── 4. collect_hard_examples()   ← threshold設定 + hard example収集
-└── 5. 統計をまとめてreturn
+├── 2. _train_lm()                          ← Transformer + output_head の訓練（early stopping付き）
+├── 3. block.forward()で全データを処理       ← hidden_states, logits を取得
+├── 4. train_exit_classifier()              ← exit_classifier のみ訓練（hidden_states, logits, targets を渡す）
+├── 5. collect_hard_examples()              ← threshold設定 + hard example収集
+└── 6. 統計をまとめてreturn
 ```
 
 **この順序の理由**：
 - exit_classifierの訓練ラベルはLMの出力（logits）に依存する
 - `exit_labels = torch.exp(-cross_entropy_loss)` を計算するため、LMが収束してからでないと適切なラベルが得られない
-- train_exit_classifier()ではTransformerとoutput_headを**凍結**し、exit_classifierのみを訓練する
+- train_exit_classifier()はLEGOBlockの内部構造を知らない（hidden_states, logits, targetsのみ受け取る）
+
+### exit_trainer.pyの設計（重要）
+
+**exit_trainerはLEGOBlockに依存しない**：
+
+```python
+# train_exit_classifier()の引数
+train_exit_classifier(
+    exit_classifier,   # 訓練対象
+    hidden_states,     # block.forward()の出力
+    logits,            # block.forward()の出力
+    targets,           # 正解ラベル
+    lr, num_epochs, is_verbose
+)
+
+# collect_hard_examples()の引数
+collect_hard_examples(
+    exit_classifier,   # 訓練済みExitClassifier
+    hidden_states,     # block.forward()の出力
+    targets,           # 正解ラベル
+    seq_len,           # シーケンス長
+    hard_ratio         # hard example比率
+)
+```
+
+**この設計の利点**：
+- exit_trainerはLEGOBlockの内部構造を知らない
+- ExitClassifierを単体でテスト可能
+- 別のモデル構造でもlogitsさえあれば使える
 
 ---
 
@@ -89,9 +120,11 @@ train_block()
 ## 核心機能（削除禁止）
 
 1. `LEGOBlock.forward()` - Transformer処理 + exit判定（h, logits, should_exit）
-2. `train_block()` - Block訓練 + exit_classifier訓練 + hard example収集（trainer.py）
-3. `LEGOLLM.forward()` - TRUE Early Exit推論
-4. `SequenceData` - hidden states + targetsのコンテナ（シーケンス単位）
+2. `LEGOLLM.forward()` - TRUE Early Exit推論
+3. `train_legollm()` - LEGOLLM全体の訓練（model_trainer.py）
+4. `train_block()` - LEGOBlock訓練 + exit_classifier訓練 + hard example収集（trainer.py）
+5. `evaluate_legollm()` - LEGOLLM評価（model_trainer.py）
+6. `SequenceData` - hidden states + targetsのコンテナ（シーケンス単位）
 
 ### LEGOBlockの責務（シンプル）
 

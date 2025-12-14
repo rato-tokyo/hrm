@@ -62,14 +62,46 @@ def train_block(
     # 2. Train LM with early stopping
     lm_stats = _train_lm(block, train_data, val_data, optimizer, config, device, is_verbose)
 
-    # 3. Train exit_classifier
-    train_exit_classifier(block, data, device, config, is_verbose)
+    # 3. Compute hidden_states and logits for exit_classifier training
+    block.eval()
+    all_hidden: List[torch.Tensor] = []
+    all_logits: List[torch.Tensor] = []
+    all_targets: List[torch.Tensor] = []
 
-    # 4. Collect hard examples and set threshold
-    hard_examples, threshold = collect_hard_examples(block, data, device, config.hard_ratio)
+    with torch.no_grad():
+        for h, y in data.to(str(device)).batches(config.batch_size, shuffle=False):
+            h_out, logits, _ = block.forward(h)
+            all_hidden.append(h_out)
+            all_logits.append(logits)
+            all_targets.append(y)
+
+    hidden_states = torch.cat(all_hidden)  # (num_sequences, seq_len, dim)
+    logits_all = torch.cat(all_logits)     # (num_sequences, seq_len, vocab_size)
+    targets_all = torch.cat(all_targets)   # (num_sequences, seq_len)
+
+    # 4. Train exit_classifier
+    num_exit_epochs = min(10, config.max_epochs)
+    train_exit_classifier(
+        block.exit_classifier,
+        hidden_states,
+        logits_all,
+        targets_all,
+        config.lr,
+        num_exit_epochs,
+        is_verbose,
+    )
+
+    # 5. Collect hard examples and set threshold
+    hard_examples, threshold = collect_hard_examples(
+        block.exit_classifier,
+        hidden_states,
+        targets_all,
+        data.seq_len,
+        config.hard_ratio,
+    )
     block.threshold = threshold
 
-    # 5. Build final statistics
+    # 6. Build final statistics
     actual_hard_ratio = hard_examples.num_tokens / data.num_tokens if data.num_tokens > 0 else 0.0
     stats: Dict[str, Any] = {
         **lm_stats,
