@@ -131,6 +131,7 @@ def main() -> None:
             hard_ratio=trainer_config.hard_ratio,
             lr=trainer_config.lr * 0.1,
             verbose=trainer_config.verbose,
+            exit_classifier_mode=trainer_config.exit_classifier_mode,
         )
         optimizer1 = torch.optim.AdamW(model.blocks[1].parameters(), lr=phase2_config.lr)
         _, stats1 = train_block(
