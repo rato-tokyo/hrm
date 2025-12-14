@@ -228,10 +228,10 @@ def main() -> None:
     ppl = float(np.exp(total_loss / total_tokens))
     acc = correct / total_tokens
 
-    print(f"\nFinal Results:")
+    print("\nFinal Results:")
     print(f"  Accuracy: {acc*100:.2f}%")
     print(f"  PPL: {ppl:.2f}")
-    print(f"  Compute cost: 100.0% (no early exit)")
+    print("  Compute cost: 100.0% (no early exit)")
 
     print("\n" + "=" * 60)
     print("Baseline completed!")

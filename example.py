@@ -110,7 +110,7 @@ def main() -> None:
         config=trainer_config,
     )
 
-    print(f"\nBlock 0 Results:")
+    print("\nBlock 0 Results:")
     print(f"  Best PPL: {stats0['best_val_ppl']:.2f}")
     print(f"  Threshold: {stats0['threshold']:.4f}")
     print(f"  Hard examples: {len(hard_data)} sequences ({hard_data.num_tokens} tokens, {stats0['hard_ratio']*100:.1f}%)")
@@ -141,7 +141,7 @@ def main() -> None:
             optimizer=optimizer1,
             config=phase2_config,
         )
-        print(f"\nBlock 1 Results:")
+        print("\nBlock 1 Results:")
         print(f"  Best PPL: {stats1['best_val_ppl']:.2f}")
     else:
         print("No hard examples - Block 1 training skipped")
@@ -154,7 +154,7 @@ def main() -> None:
     model.eval()
     total_loss = 0.0
     total_tokens = 0
-    correct = 0
+    correct: int = 0
     all_exit_counts = [0] * len(model.blocks)
 
     with torch.no_grad():
@@ -171,7 +171,7 @@ def main() -> None:
             y_flat = y.view(-1)
             total_loss += F.cross_entropy(logits_flat, y_flat, reduction='sum').item()
             total_tokens += y_flat.numel()
-            correct += (logits_flat.argmax(dim=-1) == y_flat).sum().item()
+            correct += int((logits_flat.argmax(dim=-1) == y_flat).sum().item())
 
     import numpy as np
     ppl = float(np.exp(total_loss / total_tokens))
@@ -187,7 +187,7 @@ def main() -> None:
         total_layers_computed += count * layers_so_far
     compute_cost = total_layers_computed / (total_tokens * model.num_layers) if total_tokens > 0 else 1.0
 
-    print(f"\nFinal Results:")
+    print("\nFinal Results:")
     print(f"  Accuracy: {acc*100:.2f}%")
     print(f"  PPL: {ppl:.2f}")
     print(f"  Shallow ratio: {shallow_ratio*100:.1f}%")

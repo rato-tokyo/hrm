@@ -6,29 +6,22 @@ Two-phase training with hard example mining and early exit inference.
 
 from .model import LEGOLLM
 from .block import LEGOBlock
-from .modules import TransformerBlock, TransformerLayer
+from .modules import TransformerBlock
 from .trainer import train_block
 from .config import TrainerConfig, ExperimentConfig
 from .data import SequenceData, create_wikitext_dataloaders
-from .utils import (
-    set_seed,
-    get_device,
-    create_synthetic_data,
-)
+from .utils import set_seed, get_device
 
-__version__ = "0.7.0"
+__version__ = "0.8.0"
 
 __all__ = [
-    # Core - LEGO components
+    # Core
     'LEGOLLM',
     'LEGOBlock',
-    # Core - Standard transformer components
     'TransformerBlock',
-    'TransformerLayer',
     # Training
     'train_block',
     'TrainerConfig',
-    # Config
     'ExperimentConfig',
     # Data
     'SequenceData',
@@ -36,5 +29,4 @@ __all__ = [
     # Utilities
     'set_seed',
     'get_device',
-    'create_synthetic_data',
 ]

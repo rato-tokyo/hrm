@@ -218,6 +218,7 @@ def _train_exit_classifier(
 
             with torch.no_grad():
                 h_out = block.transformer(h)
+                assert block.output_head is not None
                 logits = block.output_head(h_out)
 
                 # Loss-based labels: exp(-cross_entropy_loss)
