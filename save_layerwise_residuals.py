@@ -89,11 +89,11 @@ class ResidualTransformer(nn.Module):
 
 
 def main():
-    # Model configuration (small model for fast convergence)
+    # Model configuration (deeper model for saturation analysis)
     dim = 64
     num_heads = 4
     ffn_dim = 256
-    num_layers = 4
+    num_layers = 8
     max_seq_len = 1024
     seq_len = 32
     num_samples = 10000
