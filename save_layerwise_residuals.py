@@ -89,10 +89,10 @@ class ResidualTransformer(nn.Module):
 
 
 def main():
-    # Model configuration (dim=256 for meaningful low-rank analysis)
-    dim = 256
-    num_heads = 8
-    ffn_dim = 1024
+    # Model configuration (small model for fast convergence)
+    dim = 64
+    num_heads = 4
+    ffn_dim = 256
     num_layers = 4
     max_seq_len = 1024
     seq_len = 32
