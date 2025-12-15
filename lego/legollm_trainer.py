@@ -10,13 +10,12 @@ import torch
 from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .model import LEGOLLM
-    from .block import LEGOBlock
-    from .data import SequenceData
+    from .legollm import LEGOLLM
+    from .sequence_data import SequenceData
 
 from .config import TrainerConfig
-from .trainer import train_block
-from .data import SequenceData
+from .block_trainer import train_block
+from .sequence_data import SequenceData
 
 
 def train_legollm(
@@ -99,46 +98,12 @@ def train_legollm(
         if not is_last_block:
             current_train_data = hard_data
             # Transform val_data through the trained block
-            current_val_data = _transform_data_through_block(block, current_val_data, config.batch_size)
+            current_val_data = block.transform_data(current_val_data, config.batch_size)
 
     return {
         'block_stats': all_stats,
         'num_blocks_trained': len(all_stats),
     }
-
-
-def _transform_data_through_block(
-    block: "LEGOBlock",
-    data: "SequenceData",
-    batch_size: int,
-) -> "SequenceData":
-    """
-    Transform SequenceData through a trained block.
-
-    Args:
-        block: Trained LEGOBlock
-        data: Input SequenceData
-        batch_size: Batch size for processing
-
-    Returns:
-        SequenceData with transformed hidden states
-    """
-    device = next(block.parameters()).device
-    block.eval()
-
-    all_hidden: List[torch.Tensor] = []
-    all_targets: List[torch.Tensor] = []
-
-    with torch.no_grad():
-        for h, y in data.to(str(device)).batches(batch_size, shuffle=False):
-            h_out, _, _, _ = block.forward(h)
-            all_hidden.append(h_out)
-            all_targets.append(y)
-
-    return SequenceData(
-        torch.cat(all_hidden),
-        torch.cat(all_targets),
-    )
 
 
 def create_sequence_data(

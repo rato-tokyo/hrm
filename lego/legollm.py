@@ -12,7 +12,7 @@ import torch.nn as nn
 import math
 from typing import Tuple, Dict, List, Any, Union, overload, Literal
 
-from .block import LEGOBlock
+from .lego_block import LEGOBlock
 
 
 class LEGOLLM(nn.Module):

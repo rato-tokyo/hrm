@@ -12,7 +12,7 @@ import numpy as np
 from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .model import LEGOLLM
+    from .legollm import LEGOLLM
 
 
 def evaluate_legollm(

@@ -1,8 +1,8 @@
 """
 LEGO Framework - Block Training
 
-Functions for training LEGOBlocks with hard example mining (token-level).
-Uses hidden_history for exit decision and hard example collection.
+Functions for training LEGOBlocks.
+Hard example collection is handled by LEGOBlock.collect_hard_examples().
 """
 
 from __future__ import annotations
@@ -12,11 +12,10 @@ import torch.nn.functional as F
 from typing import Tuple, Dict, Any, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .block import LEGOBlock
-    from .data import SequenceData
+    from .lego_block import LEGOBlock
+    from .sequence_data import SequenceData
 
 from .config import TrainerConfig
-from .exit_fn import compute_cos_sim
 
 
 def train_block(
@@ -31,8 +30,7 @@ def train_block(
 
     This function orchestrates the complete block training workflow:
     1. Train LM with early stopping (using val_data for validation)
-    2. Compute cos_sim from hidden_history and set threshold
-    3. Collect hard examples (token-level extraction, repacked into sequences)
+    2. Collect hard examples via block.collect_hard_examples() (sets threshold)
 
     Args:
         block: LEGOBlock to train
@@ -56,112 +54,22 @@ def train_block(
     # 1. Train LM with early stopping
     lm_stats = _train_lm(block, train_data, val_data, optimizer, config)
 
-    # 2. Compute cos_sim and collect hard examples
-    block.eval()
-    hard_examples, threshold = _collect_hard_examples(block, train_data, config)
-    block.threshold = threshold
+    # 2. Collect hard examples (also sets block.threshold)
+    hard_examples = block.collect_hard_examples(train_data, config.hard_ratio, config.batch_size)
 
     # 3. Build final statistics
     actual_hard_ratio = hard_examples.num_tokens / train_data.num_tokens if train_data.num_tokens > 0 else 0.0
     stats: Dict[str, Any] = {
         **lm_stats,
         'hard_ratio': actual_hard_ratio,
-        'threshold': threshold,
+        'threshold': block.threshold,
     }
 
     if config.verbose:
-        print(f"  Threshold (cos_sim): {threshold:.4f}")
+        print(f"  Threshold (cos_sim): {block.threshold:.4f}")
         print(f"  Hard examples: {len(hard_examples)} sequences ({hard_examples.num_tokens} tokens, {actual_hard_ratio*100:.1f}%)")
 
     return hard_examples, stats
-
-
-def _collect_hard_examples(
-    block: "LEGOBlock",
-    train_data: "SequenceData",
-    config: TrainerConfig,
-) -> Tuple["SequenceData", float]:
-    """
-    Collect hard examples using cos_sim from hidden_history.
-
-    Low cos_sim = large change in layer = hard token = should NOT exit.
-
-    Args:
-        block: LEGOBlock (trained)
-        train_data: Training SequenceData
-        config: TrainerConfig with hard_ratio
-
-    Returns:
-        Tuple of:
-        - SequenceData with hard examples only
-        - threshold: cos_sim threshold for early exit
-    """
-    from .data import SequenceData
-
-    device = next(block.parameters()).device
-    all_cos_sim: List[torch.Tensor] = []
-    all_hidden_out: List[torch.Tensor] = []
-    all_targets: List[torch.Tensor] = []
-
-    with torch.no_grad():
-        for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=False):
-            # Get hidden_history from block
-            h_out, _, _, hidden_history = block.forward(h)
-
-            # Compute cos_sim from last two hidden states
-            h_in = hidden_history[-2]
-            cos_sim = compute_cos_sim(h_in, h_out)
-
-            all_cos_sim.append(cos_sim.cpu())
-            all_hidden_out.append(h_out.cpu())
-            all_targets.append(y.cpu())
-
-    cos_sim_all = torch.cat(all_cos_sim)  # (num_sequences, seq_len)
-    hidden_out_all = torch.cat(all_hidden_out)  # (num_sequences, seq_len, dim)
-    targets_all = torch.cat(all_targets)  # (num_sequences, seq_len)
-
-    # Compute threshold: quantile such that hard_ratio tokens are hard
-    # Hard tokens have LOW cos_sim (large change), so threshold = hard_ratio quantile
-    all_cos_flat = cos_sim_all.view(-1)
-    hard_ratio = config.hard_ratio
-
-    if hard_ratio >= 1.0:
-        threshold = float('inf')  # All tokens are hard
-    elif hard_ratio <= 0.0:
-        threshold = float('-inf')  # No tokens are hard
-    else:
-        # Threshold = hard_ratio quantile
-        # Tokens with cos_sim < threshold are hard
-        threshold = float(torch.quantile(all_cos_flat, hard_ratio).item())
-
-    if config.verbose:
-        print(f"  cos_sim stats: mean={all_cos_flat.mean():.4f}, std={all_cos_flat.std():.4f}")
-
-    # Token-level hard mask: cos_sim < threshold (low similarity = hard)
-    hard_token_mask = cos_sim_all < threshold  # (num_sequences, seq_len)
-
-    # Extract only hard tokens
-    hard_hidden = hidden_out_all[hard_token_mask]  # (num_hard_tokens, dim)
-    hard_targets = targets_all[hard_token_mask]  # (num_hard_tokens,)
-
-    num_hard_tokens = hard_hidden.shape[0]
-    seq_len = train_data.seq_len
-    dim = hidden_out_all.shape[-1]
-    device_str = str(next(block.parameters()).device)
-
-    if num_hard_tokens == 0:
-        return SequenceData.empty(seq_len, dim, device_str), threshold
-
-    # Repack into sequences
-    num_complete_sequences = num_hard_tokens // seq_len
-    if num_complete_sequences == 0:
-        return SequenceData.empty(seq_len, dim, device_str), threshold
-
-    usable_tokens = num_complete_sequences * seq_len
-    hard_hidden = hard_hidden[:usable_tokens].view(num_complete_sequences, seq_len, -1)
-    hard_targets = hard_targets[:usable_tokens].view(num_complete_sequences, seq_len)
-
-    return SequenceData(hard_hidden, hard_targets), threshold
 
 
 def _train_lm(

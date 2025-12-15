@@ -5,15 +5,15 @@ Two-phase training with hard example mining and early exit inference.
 Exit decision is made by exit_fn using hidden_history from all layers.
 """
 
-from .model import LEGOLLM
-from .block import LEGOBlock
+from .legollm import LEGOLLM
+from .lego_block import LEGOBlock
 from .exit_fn import ExitFn, default_exit_fn, compute_cos_sim
 from .modules import TransformerBlock
-from .trainer import train_block
-from .model_trainer import train_legollm, create_sequence_data
+from .block_trainer import train_block
+from .legollm_trainer import train_legollm, create_sequence_data
 from .evaluator import evaluate_legollm
 from .config import TrainerConfig, ExperimentConfig
-from .data import SequenceData
+from .sequence_data import SequenceData
 from .dataloader import create_wikitext_dataloaders
 from .utils import set_seed, get_device
 
