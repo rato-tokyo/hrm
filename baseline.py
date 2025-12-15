@@ -72,7 +72,7 @@ def main() -> None:
         eps=1e-6,
         seq_len=32,
         num_samples=10000,
-        block_layers=(2, 2),  # Total 4 layers
+        block_layers=(2, 2),
     )
 
     # Training config

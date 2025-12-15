@@ -16,8 +16,7 @@ class TrainerConfig:
     Used by train_block() to configure training hyperparameters.
     All fields are required (no default values).
 
-    Exit classifier uses loss-based labels: exp(-cross_entropy_loss).
-    This approach showed best results in experiments (PPL 1071 vs 1095 for distill).
+    Uses CALM-style exit classifier (cos_sim based, no training required).
 
     Attributes:
         batch_size: Batch size for training
@@ -56,8 +55,7 @@ class ExperimentConfig:
         eps: Epsilon for RMSNorm
         seq_len: Sequence length for language modeling
         num_samples: Number of training samples
-        block_layers: List of layer counts per block (e.g., [2, 2] for 2 blocks)
-        exit_hidden_dim: Hidden dimension for ExitClassifier MLP (MLP: 30.2% Oracle vs Linear: 17.2%)
+        block_layers: Layer counts per block (e.g., (2, 2) for 2 blocks with 2 layers each)
     """
     dim: int
     num_heads: int
@@ -68,4 +66,3 @@ class ExperimentConfig:
     seq_len: int
     num_samples: int
     block_layers: tuple[int, ...]
-    exit_hidden_dim: int
