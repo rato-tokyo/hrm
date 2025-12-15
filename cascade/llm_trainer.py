@@ -1,8 +1,8 @@
 """
-LEGOフレームワーク - LLM訓練（訓練専用）
+CASCADEフレームワーク - LLM訓練（訓練専用）
 
-EarlyExitLLMの訓練関数。
-Hard token収集はEarlyExitLLM.collect_hard_tokens()で処理。
+LLMの訓練関数。
+Hard token収集はLLM.collect_hard_tokens()で処理。
 
 注意: このモジュールは訓練専用。評価はevaluator.pyを使用。
 """
@@ -14,28 +14,28 @@ import torch.nn.functional as F
 from typing import Tuple, Dict, Any, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .early_exit_llm import EarlyExitLLM
+    from .llm import LLM
     from .sequence_data import SequenceData
 
 from .config import TrainerConfig
 
 
 def train_llm(
-    llm: "EarlyExitLLM",
+    llm: "LLM",
     train_data: "SequenceData",
     val_data: "SequenceData",
     optimizer: torch.optim.Optimizer,
     config: TrainerConfig,
 ) -> Tuple["SequenceData", Dict[str, Any]]:
     """
-    EarlyExitLLMを訓練し、次のLLM用のhard tokensを返す。
+    LLMを訓練し、次のLLM用のhard tokensを返す。
 
     完全なLLM訓練ワークフローを調整:
     1. Early stopping付きLM訓練（val_dataで検証）
     2. llm.collect_hard_tokens()でhard tokens収集（閾値も設定）
 
     Args:
-        llm: 訓練するEarlyExitLLM
+        llm: 訓練するLLM
         train_data: 訓練SequenceData (hidden_states, targets)
         val_data: Early stopping用の検証SequenceData
         optimizer: LLMパラメータ用オプティマイザ
@@ -75,7 +75,7 @@ def train_llm(
 
 
 def _train_lm(
-    llm: "EarlyExitLLM",
+    llm: "LLM",
     train_data: "SequenceData",
     val_data: "SequenceData",
     optimizer: torch.optim.Optimizer,
@@ -85,7 +85,7 @@ def _train_lm(
     Early stopping付き言語モデル訓練。
 
     Args:
-        llm: 訓練するEarlyExitLLM
+        llm: 訓練するLLM
         train_data: 訓練SequenceData
         val_data: 検証SequenceData
         optimizer: LLMパラメータ用オプティマイザ
@@ -147,7 +147,7 @@ def _train_lm(
 
 
 def _run_train_epoch(
-    llm: "EarlyExitLLM",
+    llm: "LLM",
     train_data: "SequenceData",
     optimizer: torch.optim.Optimizer,
     config: TrainerConfig,
@@ -158,7 +158,7 @@ def _run_train_epoch(
     勾配計算とパラメータ更新を行う。
 
     Args:
-        llm: 訓練するEarlyExitLLM
+        llm: 訓練するLLM
         train_data: 訓練SequenceData
         optimizer: LLMパラメータ用オプティマイザ
         config: 訓練ハイパーパラメータを含むTrainerConfig
@@ -195,7 +195,7 @@ def _run_train_epoch(
 
 
 def _compute_val_ppl(
-    llm: "EarlyExitLLM",
+    llm: "LLM",
     data: "SequenceData",
     batch_size: int,
 ) -> float:
@@ -205,7 +205,7 @@ def _compute_val_ppl(
     訓練中のearly stopping判定用。推論時のexit判定は行わない。
 
     Args:
-        llm: 検証するEarlyExitLLM
+        llm: 検証するLLM
         data: 検証用SequenceData
         batch_size: バッチサイズ
 

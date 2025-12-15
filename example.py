@@ -1,13 +1,13 @@
 """
-LEGOフレームワーク実行例 - 既存LLMへの新LLM統合
+CASCADEフレームワーク実行例 - LLM統合
 
-LLM 0（既存・訓練済み）+ LLM 1（未学習・hard tokensで訓練）の例。
-TRUE Early Exitにより、簡単なトークンはLLM 0で処理完了。
+任意のLLMをLLMクラスでラップし、Ensembleで統合する例。
+TRUE Early Exitにより、簡単なトークンは前段LLMで処理完了。
 """
 
-from lego import (
-    LEGOEnsemble,
-    EarlyExitLLM,
+from cascade import (
+    Ensemble,
+    LLM,
     TransformerBlock,
     ExperimentConfig,
     TrainerConfig,
@@ -21,7 +21,7 @@ from lego import (
 
 
 def main() -> None:
-    """LEGO統合訓練の実行例。"""
+    """CASCADE統合訓練の実行例。"""
     config = ExperimentConfig(
         dim=64,
         num_heads=4,
@@ -47,7 +47,7 @@ def main() -> None:
     device = get_device()
 
     print("=" * 60)
-    print("LEGOフレームワーク - LLM統合訓練例")
+    print("CASCADEフレームワーク - LLM統合訓練例")
     print("=" * 60)
     print(f"デバイス: {device}")
     print(f"モデル: dim={config.dim}, heads={config.num_heads}")
@@ -60,10 +60,9 @@ def main() -> None:
     )
 
     # LLMを作成
-    # LLM 0: 既存LLM（全データで訓練される）
-    # LLM 1: 新規LLM（未学習、hard tokensのみで訓練される）
+    # 任意のLLMをLLMクラスでラップ
     llms = [
-        EarlyExitLLM(
+        LLM(
             TransformerBlock(
                 config.dim, config.num_heads, num_layers,
                 config.ffn_dim, config.max_seq_len, config.causal, config.eps
@@ -71,7 +70,7 @@ def main() -> None:
         )
         for num_layers in config.llm_layers
     ]
-    ensemble = LEGOEnsemble(vocab_size, config.dim, llms).to(device)
+    ensemble = Ensemble(vocab_size, config.dim, llms).to(device)
 
     print(f"LLMあたりのレイヤー数: {[llm.num_layers for llm in ensemble.llms]}")
 
@@ -82,8 +81,7 @@ def main() -> None:
     print(f"検証データ: {len(val_data)}シーケンス ({val_data.num_tokens}トークン)")
 
     # 全LLMを訓練
-    # LLM 0: 全データで訓練 → hard tokens収集
-    # LLM 1: hard tokensのみで訓練
+    # 各LLMは順番に訓練され、hard tokensを次に渡す
     train_stats = train_ensemble(
         ensemble=ensemble,
         train_data=train_data,

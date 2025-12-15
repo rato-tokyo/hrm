@@ -1,7 +1,7 @@
 """
-LEGOフレームワーク - LEGOEnsemble（評価専用）
+CASCADEフレームワーク - Ensemble（評価専用）
 
-複数のEarlyExitLLMを統合し、TRUE Early Exitによるルーティングを管理。
+複数のLLMを統合し、TRUE Early Exitによるルーティングを管理。
 
 注意: このクラスのevaluate()は評価専用。訓練はensemble_trainer.pyを使用。
 """
@@ -13,33 +13,44 @@ import torch.nn as nn
 import math
 from typing import Tuple, Dict, List, Any
 
-from .early_exit_llm import EarlyExitLLM
+from .llm import LLM
 
 
-class LEGOEnsemble(nn.Module):
+class Ensemble(nn.Module):
     """
-    複数のEarlyExitLLMを統合するアンサンブルモデル。
+    複数のLLMを統合するアンサンブルモデル。
 
     アーキテクチャ:
     - Embeddingレイヤー（トークン → hidden states）
-    - 複数のEarlyExitLLM（Early Exit機能付き）
+    - 複数のLLM（Early Exit機能付き）
     - 共有output head（hidden states → logits）
 
     管理項目:
     - TRUE Early ExitによるLLM間ルーティング
     - exit統計の計算
 
+    使用例:
+        # LLMをラップして統合
+        llm_0 = LLM(pretrained_transformer)
+        llm_1 = LLM(TransformerBlock(...))
+
+        ensemble = Ensemble(vocab_size, dim, [llm_0, llm_1])
+
+        # 訓練後、LLMを追加
+        llm_2 = LLM(TransformerBlock(...))
+        ensemble.add_llm(llm_2)
+
     Args:
         vocab_size: 語彙サイズ
         dim: モデル次元（embedding次元）
-        llms: EarlyExitLLMインスタンスのリスト
+        llms: LLMインスタンスのリスト
     """
 
     def __init__(
         self,
         vocab_size: int,
         dim: int,
-        llms: List[EarlyExitLLM],
+        llms: List[LLM],
     ):
         super().__init__()
 
@@ -64,6 +75,18 @@ class LEGOEnsemble(nn.Module):
     def num_layers(self) -> int:
         """全LLMの合計レイヤー数。"""
         return sum(llm.num_layers for llm in self.llms)
+
+    def add_llm(self, llm: LLM) -> None:
+        """
+        新しいLLMをアンサンブルに追加。
+
+        追加されたLLMには共有output_headが自動的に設定される。
+
+        Args:
+            llm: 追加するLLMインスタンス
+        """
+        llm.set_output_head(self.output_head)
+        self.llms.append(llm)
 
     def evaluate(
         self, x: torch.Tensor

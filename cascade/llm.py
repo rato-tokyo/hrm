@@ -1,8 +1,8 @@
 """
-LEGOフレームワーク - EarlyExitLLM
+CASCADEフレームワーク - LLMクラス
 
-任意のBaseLLMをラップし、Early Exit機能を追加するクラス。
-各EarlyExitLLMは独立したLLMとして機能し、LEGOEnsembleで統合される。
+任意のBaseLLMをラップし、Early Exit機能を追加する汎用クラス。
+既存の訓練済みLLMも、新規の未学習LLMも、同じLLMクラスでラップする。
 """
 
 from __future__ import annotations
@@ -18,15 +18,25 @@ if TYPE_CHECKING:
     from .sequence_data import SequenceData
 
 
-class EarlyExitLLM(nn.Module):
+class LLM(nn.Module):
     """
-    BaseLLM + Early Exit機能。
+    BaseLLM + Early Exit機能を持つ汎用LLMラッパー。
 
     任意のLLM（TransformerBlockなど）をラップし、以下を追加:
     - exit_fnによるexit判定（デフォルト: CALM式cos_sim）
     - logits計算用の共有output_head
     - 推論時のexit判定用threshold
     - 訓練後のhard token収集
+
+    使用例:
+        # 既存の訓練済みLLMをラップ
+        llm_0 = LLM(pretrained_transformer)
+
+        # 新規の未学習LLMをラップ
+        llm_1 = LLM(TransformerBlock(...))
+
+        # Ensembleで統合
+        ensemble = Ensemble(vocab_size, dim, [llm_0, llm_1])
 
     Args:
         base_llm: ラップするBaseLLM（TransformerBlockなど）
@@ -42,7 +52,7 @@ class EarlyExitLLM(nn.Module):
         self.base_llm = base_llm
         self.exit_fn = exit_fn or default_exit_fn
         self.threshold = 0.0  # collect_hard_tokensで設定
-        self.output_head: nn.Linear | None = None  # LEGOEnsembleが設定
+        self.output_head: nn.Linear | None = None  # Ensembleが設定
 
     @property
     def dim(self) -> int:
@@ -90,7 +100,7 @@ class EarlyExitLLM(nn.Module):
         """
         【評価用】forward pass（TRUE Early Exit）。
 
-        exit判定を含む。LEGOEnsemble.evaluate()から呼ばれる。
+        exit判定を含む。Ensemble.evaluate()から呼ばれる。
 
         Args:
             h: hidden states (batch_size, seq_len, dim)

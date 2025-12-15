@@ -1,7 +1,7 @@
 """
-LEGOフレームワーク - LEGOEnsemble訓練
+CASCADEフレームワーク - Ensemble訓練
 
-完全なLEGOEnsemble（全LLM）の訓練関数。
+完全なEnsemble（全LLM）の訓練関数。
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import torch
 from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .lego_ensemble import LEGOEnsemble
+    from .ensemble import Ensemble
     from .sequence_data import SequenceData
 
 from .llm_trainer import train_llm
@@ -19,22 +19,22 @@ from .sequence_data import SequenceData
 
 
 def train_ensemble(
-    ensemble: "LEGOEnsemble",
+    ensemble: "Ensemble",
     train_data: "SequenceData",
     val_data: "SequenceData",
     config: TrainerConfig,
     lr_decay: float,
 ) -> Dict[str, Any]:
     """
-    LEGOEnsembleの全LLMを順番に訓練。
+    Ensembleの全LLMを順番に訓練。
 
     訓練フロー:
-    1. LLM 0（既存LLM）を全訓練データで訓練 → hard tokens収集
-    2. LLM 1（未学習）をhard tokensで訓練 → hard tokens収集
+    1. LLM 0を全訓練データで訓練 → hard tokens収集
+    2. LLM 1をhard tokensで訓練 → hard tokens収集
     3. ... 全LLMまで続行
 
     Args:
-        ensemble: 訓練するLEGOEnsemble
+        ensemble: 訓練するEnsemble
         train_data: 訓練SequenceData（埋め込み済みトークンをhidden statesとして）
         val_data: Early stopping用の検証SequenceData
         config: 訓練用TrainerConfig
@@ -102,14 +102,14 @@ def train_ensemble(
 
 
 def create_sequence_data(
-    ensemble: "LEGOEnsemble",
+    ensemble: "Ensemble",
     batches: List[Tuple[torch.Tensor, torch.Tensor]],
 ) -> "SequenceData":
     """
     トークンを埋め込んでSequenceDataを作成。
 
     Args:
-        ensemble: LEGOEnsemble（embeddingレイヤー用）
+        ensemble: Ensemble（embeddingレイヤー用）
         batches: (x, y)バッチのリスト
 
     Returns:

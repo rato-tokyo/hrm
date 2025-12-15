@@ -1,7 +1,7 @@
 """
-LEGOフレームワーク - モデル評価（評価専用）
+CASCADEフレームワーク - モデル評価（評価専用）
 
-TRUE Early ExitによるLEGOEnsemble評価関数。
+TRUE Early ExitによるEnsemble評価関数。
 
 注意: このモジュールは評価専用。訓練はensemble_trainer.pyを使用。
 """
@@ -14,20 +14,20 @@ import numpy as np
 from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .lego_ensemble import LEGOEnsemble
+    from .ensemble import Ensemble
 
 
 def evaluate_ensemble(
-    ensemble: "LEGOEnsemble",
+    ensemble: "Ensemble",
     val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
 ) -> Dict[str, Any]:
     """
-    【評価用】TRUE Early ExitでLEGOEnsembleを評価。
+    【評価用】TRUE Early ExitでEnsembleを評価。
 
     訓練完了後のモデル評価に使用。PPL、Accuracy、exit統計を計算。
 
     Args:
-        ensemble: 訓練済みLEGOEnsemble
+        ensemble: 訓練済みEnsemble
         val_batches: 検証用の(x, y)バッチのリスト
 
     Returns:

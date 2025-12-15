@@ -1,14 +1,14 @@
 """
-LEGO: Layered Ensemble with Gradual Optimization
+CASCADE: Confidence-Aware Sequential Compute Allocation for Dynamic Exit
 
-既存のLLMに新しいLLMを段階的に追加・統合するフレームワーク。
-- LLM 0は既存の訓練済みLLM
-- LLM 1以降は未学習で、hard tokensのみで訓練
+複数のLLMを統合し、Early Exitで効率的にルーティングするフレームワーク。
+- 任意のLLMをLLMクラスでラップ
 - Early Exit機能により、簡単なトークンは前段LLMで処理完了
+- Hard tokens（難しいトークン）だけを後段に渡す
 """
 
-from .lego_ensemble import LEGOEnsemble
-from .early_exit_llm import EarlyExitLLM
+from .ensemble import Ensemble
+from .llm import LLM
 from .exit_fn import ExitFn, default_exit_fn, compute_cos_sim
 from .modules import TransformerBlock
 from .llm_trainer import train_llm
@@ -19,12 +19,12 @@ from .sequence_data import SequenceData
 from .dataloader import create_wikitext_dataloaders
 from .utils import set_seed, get_device
 
-__version__ = "0.15.0"
+__version__ = "0.17.0"
 
 __all__ = [
     # コア
-    'LEGOEnsemble',
-    'EarlyExitLLM',
+    'Ensemble',
+    'LLM',
     'TransformerBlock',
     # Exit関数
     'ExitFn',
