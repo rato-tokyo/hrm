@@ -166,10 +166,16 @@ def train_predictor(
         precision = precision_score(labels_np, preds_np, zero_division=0)
         recall = recall_score(labels_np, preds_np, zero_division=0)
 
+        # Debug: prediction distribution
+        pred_positive_rate = preds_np.mean()
+        label_positive_rate = labels_np.mean()
+
     return {
         'f1': f1,
         'precision': precision,
         'recall': recall,
+        'pred_positive_rate': pred_positive_rate,
+        'label_positive_rate': label_positive_rate,
     }
 
 
@@ -243,6 +249,7 @@ def experiment_layer(
     print(f"F1: {mlp_results['f1'] * 100:.1f}%")
     print(f"Precision: {mlp_results['precision'] * 100:.1f}%")
     print(f"Recall: {mlp_results['recall'] * 100:.1f}%")
+    print(f"Pred positive rate: {mlp_results['pred_positive_rate'] * 100:.1f}% (label: {mlp_results['label_positive_rate'] * 100:.1f}%)")
     results['mlp'] = mlp_results
 
     # 3. Baseline: delta_norm threshold
