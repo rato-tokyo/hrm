@@ -136,7 +136,7 @@ def _transform_data_through_block(
 
     with torch.no_grad():
         for h, y in data.to(str(device)).batches(batch_size, shuffle=False):
-            h_out, _, _ = block.forward(h)
+            h_out, _, _, _ = block.forward(h)
             all_hidden.append(h_out)
             all_targets.append(y)
 

@@ -2,7 +2,7 @@
 LEGO Framework - Block Training
 
 Functions for training LEGOBlocks with hard example mining (token-level).
-Uses CALM-style exit (cos_sim threshold) - no exit_classifier training needed.
+Uses hidden_history for exit decision and hard example collection.
 """
 
 from __future__ import annotations
@@ -18,6 +18,22 @@ if TYPE_CHECKING:
 from .config import TrainerConfig
 
 
+def compute_cos_sim(h_in: torch.Tensor, h_out: torch.Tensor) -> torch.Tensor:
+    """
+    Compute cosine similarity between two hidden states.
+
+    Args:
+        h_in: Input hidden states (batch_size, seq_len, dim)
+        h_out: Output hidden states (batch_size, seq_len, dim)
+
+    Returns:
+        cos_sim: Cosine similarity per token (batch_size, seq_len)
+    """
+    h_in_norm = F.normalize(h_in, dim=-1)
+    h_out_norm = F.normalize(h_out, dim=-1)
+    return (h_in_norm * h_out_norm).sum(dim=-1)
+
+
 def train_block(
     block: "LEGOBlock",
     train_data: "SequenceData",
@@ -30,7 +46,7 @@ def train_block(
 
     This function orchestrates the complete block training workflow:
     1. Train LM with early stopping (using val_data for validation)
-    2. Compute cos_sim for all tokens and set threshold (CALM-style)
+    2. Compute cos_sim from hidden_history and set threshold
     3. Collect hard examples (token-level extraction, repacked into sequences)
 
     Args:
@@ -59,9 +75,9 @@ def train_block(
     # 1. Train LM with early stopping
     lm_stats = _train_lm(block, train_data, val_data, optimizer, config, device, is_verbose)
 
-    # 2. Compute cos_sim and collect hard examples (CALM-style)
+    # 2. Compute cos_sim and collect hard examples
     block.eval()
-    hard_examples, threshold = _collect_hard_examples_calm(
+    hard_examples, threshold = _collect_hard_examples(
         block, train_data, config, device, is_verbose
     )
     block.threshold = threshold
@@ -81,7 +97,7 @@ def train_block(
     return hard_examples, stats
 
 
-def _collect_hard_examples_calm(
+def _collect_hard_examples(
     block: "LEGOBlock",
     train_data: "SequenceData",
     config: TrainerConfig,
@@ -89,7 +105,7 @@ def _collect_hard_examples_calm(
     is_verbose: bool,
 ) -> Tuple["SequenceData", float]:
     """
-    Collect hard examples using CALM-style cos_sim.
+    Collect hard examples using cos_sim from hidden_history.
 
     Low cos_sim = large change in layer = hard token = should NOT exit.
 
@@ -113,11 +129,12 @@ def _collect_hard_examples_calm(
 
     with torch.no_grad():
         for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=False):
-            h_in = h
-            h_out = block.transformer(h)
+            # Get hidden_history from block
+            h_out, _, _, hidden_history = block.forward(h)
 
-            # Compute cos_sim
-            cos_sim = block.exit_classifier.compute_similarity(h_in, h_out)
+            # Compute cos_sim from last two hidden states
+            h_in = hidden_history[-2]
+            cos_sim = compute_cos_sim(h_in, h_out)
 
             all_cos_sim.append(cos_sim.cpu())
             all_hidden_out.append(h_out.cpu())
@@ -273,7 +290,7 @@ def _train_epoch(
 
     for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=True):
         optimizer.zero_grad()
-        _, logits, _ = block.forward(h)
+        _, logits, _, _ = block.forward(h)
 
         batch_size, seq_len, vocab_size = logits.shape
         loss = F.cross_entropy(
@@ -318,7 +335,7 @@ def _evaluate_ppl(
 
     with torch.no_grad():
         for h, y in data.to(str(device)).batches(batch_size, shuffle=False):
-            _, logits, _ = block.forward(h)
+            _, logits, _, _ = block.forward(h)
             batch_size_actual, seq_len, vocab_size = logits.shape
             loss = F.cross_entropy(
                 logits.view(-1, vocab_size),

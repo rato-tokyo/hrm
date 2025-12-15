@@ -111,10 +111,11 @@ class LEGOLLM(nn.Module):
             is_last_block = (block_idx == len(self.blocks) - 1)
 
             # Process full sequences through block (for proper Attention)
-            h_out, logits, should_exit = block.forward(h)
+            h_out, logits, should_exit, _ = block.forward(h)
             # h_out: (batch_size, seq_len, dim)
             # logits: (batch_size, seq_len, vocab_size)
             # should_exit: (batch_size, seq_len)
+            # hidden_history: not used here (for analysis/training)
 
             if not is_last_block:
                 # Tokens that should exit now (and haven't exited before)

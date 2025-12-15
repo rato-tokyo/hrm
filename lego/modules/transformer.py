@@ -6,6 +6,7 @@ Note: This is a pre-training only framework. KV cache is not implemented.
 
 import torch
 import torch.nn as nn
+from typing import List, Tuple
 
 from .norm import RMSNorm
 from .attention import MultiHeadAttention
@@ -69,16 +70,20 @@ class TransformerBlock(nn.Module):
             TransformerLayer(dim, num_heads, ffn_dim, max_seq_len, causal, eps) for _ in range(num_layers)
         ])
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         """
-        Forward pass through all layers.
+        Forward pass through all layers, returning hidden history.
 
         Args:
             x: Input tensor (batch_size, seq_len, dim)
 
         Returns:
-            Output tensor (batch_size, seq_len, dim)
+            Tuple of:
+            - Output tensor (batch_size, seq_len, dim)
+            - Hidden history: list of hidden states [input, layer1_out, layer2_out, ...]
         """
+        hidden_history = [x]
         for layer in self.layers:
             x = layer(x)
-        return x
+            hidden_history.append(x)
+        return x, hidden_history

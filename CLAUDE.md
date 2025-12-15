@@ -14,8 +14,8 @@
 
 ```
 TransformerLayer    → 1層（Attention + FFN）
-TransformerBlock    → 複数層のスタック（標準Transformer）
-LEGOBlock           → TransformerBlock + CALM-style early exit
+TransformerBlock    → 複数層のスタック（hidden_historyを返す）
+LEGOBlock           → TransformerBlock + exit_fn による早期exit判定
 LEGOLLM             → LEGOBlock × N（モデル全体）
 train_block()       → Block訓練関数（外部）
 ```
@@ -29,8 +29,7 @@ lego/
 │   ├── attention.py    # MultiHeadAttention
 │   ├── ffn.py          # GatedLinearUnit
 │   └── norm.py         # RMSNorm
-├── block.py            # LEGOBlock（推論のみ）
-├── exit_classifier.py  # ExitClassifier（CALM-style cos_sim）
+├── block.py            # LEGOBlock, default_exit_fn, ExitFn
 ├── model.py            # LEGOLLM（推論のみ）
 ├── model_trainer.py    # train_legollm(), evaluate_legollm()
 ├── trainer.py          # train_block(), _train_lm()
@@ -47,26 +46,28 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 ### 訓練フロー
 
 1. **Block 0**: 最初のブロックを全データで訓練
-2. **cos_sim計算**: LM訓練後、cos_sim(h_in, h_out)を計算してthreshold設定
-3. **Hard Sequence収集**: cos_simが低い（変化が大きい）トークンを収集
-4. **Block 1+**: Hard Sequencesのみで訓練
-5. **推論**: TRUE Early Exitで高cos_simトークンは後続Blockを**実際にスキップ**
+2. **hidden_history取得**: forward後、各レイヤーのhidden statesリストを取得
+3. **cos_sim計算**: hidden_history[-2]とhidden_history[-1]のcos_simでthreshold設定
+4. **Hard Sequence収集**: cos_simが低い（変化が大きい）トークンを収集
+5. **Block 1+**: Hard Sequencesのみで訓練
+6. **推論**: TRUE Early Exitで高cos_simトークンは後続Blockを**実際にスキップ**
 
 ### train_block()の内部フロー
 
 ```
 train_block()
 ├── 1. _train_lm()                     ← Transformer + output_head の訓練（early stopping付き）
-├── 2. cos_sim計算（全データ）          ← cos_sim(h_in, h_out) を計算
-├── 3. threshold設定                    ← hard_ratio quantileで設定
-├── 4. hard example収集                 ← cos_sim < threshold のトークンを抽出
-└── 5. 統計をまとめてreturn
+├── 2. hidden_history取得              ← block.forward()で各レイヤー出力を取得
+├── 3. cos_sim計算                     ← hidden_history[-2], [-1]のcos_sim
+├── 4. threshold設定                    ← hard_ratio quantileで設定
+├── 5. hard example収集                 ← cos_sim < threshold のトークンを抽出
+└── 6. 統計をまとめてreturn
 ```
 
-**CALM式の利点**：
-- exit_classifierの訓練が不要（計算コスト削減）
-- cos_simは訓練不要で計算可能
-- 深い層ほど高精度（実験で確認済み）
+**hidden_history方式の利点**：
+- exit_fnが柔軟に定義可能（デフォルトはCALM式cos_sim）
+- 各レイヤーの出力を分析可能
+- ExitClassifierクラス不要でシンプル
 
 ---
 
@@ -74,7 +75,7 @@ train_block()
 
 1. **事前学習専用** - generate、KVキャッシュは実装しない
 2. **コンポジション方式** - LEGOBlockはTransformerBlockをラップ（継承ではない）
-3. **CALM-style exit判定** - cos_sim(h_in, h_out) >= threshold でexit
+3. **exit_fn方式** - hidden_historyを受け取る関数でexit判定
 4. **LEGOLLMはルーティングのみ** - Block間のインデックス管理と統計計算
 5. **トークン単位のEarly Exit** - exit判定はトークン単位（バッチ単位ではない）
 6. **TRUE Early Exit** - exitしたトークンの後続blockは処理しない
@@ -85,76 +86,73 @@ train_block()
 
 ## 核心機能（削除禁止）
 
-1. `LEGOBlock.forward()` - Transformer処理 + exit判定（h, logits, should_exit）
+1. `LEGOBlock.forward()` - Transformer処理 + exit判定（h, logits, should_exit, hidden_history）
 2. `LEGOLLM.forward()` - TRUE Early Exit推論
 3. `train_legollm()` - LEGOLLM全体の訓練（model_trainer.py）
 4. `train_block()` - LEGOBlock訓練 + hard example収集（trainer.py）
 5. `evaluate_legollm()` - LEGOLLM評価（model_trainer.py）
 6. `SequenceData` - hidden states + targetsのコンテナ（シーケンス単位）
 
-### LEGOBlockの責務（シンプル）
+### TransformerBlockの責務
 
 ```python
-# LEGOBlockはTransformerBlockのみを引数で受け取る
-block = LEGOBlock(TransformerBlock(dim=256, num_heads=8, num_layers=4, ...))
+class TransformerBlock(nn.Module):
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        """
+        Returns:
+            - h_out: 最終出力
+            - hidden_history: [input, layer1_out, layer2_out, ...]
+        """
+        hidden_history = [x]
+        for layer in self.layers:
+            x = layer(x)
+            hidden_history.append(x)
+        return x, hidden_history
+```
+
+### LEGOBlockの責務
+
+```python
+# Type alias for exit function
+ExitFn = Callable[[List[torch.Tensor], float], torch.Tensor]
+
+def default_exit_fn(hidden_history: List[torch.Tensor], threshold: float) -> torch.Tensor:
+    """CALM-style exit: cos_sim(hidden_history[-2], hidden_history[-1]) >= threshold"""
+    h_in, h_out = hidden_history[-2], hidden_history[-1]
+    cos_sim = F.cosine_similarity(h_in, h_out, dim=-1)
+    return cos_sim >= threshold
 
 class LEGOBlock(nn.Module):
-    def __init__(self, transformer: TransformerBlock):
-        self.transformer = transformer           # 外部から注入
-        self.exit_classifier = ExitClassifier()  # CALM-style (パラメータなし)
+    def __init__(self, transformer: TransformerBlock, exit_fn: Optional[ExitFn] = None):
+        self.transformer = transformer
+        self.exit_fn = exit_fn or default_exit_fn
+        self.threshold = 0.0  # trainerが設定
         self.output_head: nn.Linear | None = None  # LEGOLLMが設定
 
-    # プロパティ（transformerに委譲）
-    @property
-    def dim(self) -> int: return self.transformer.dim
-    @property
-    def threshold(self) -> float: return self.exit_classifier.threshold
-
-    # メソッド
-    forward() → (h, logits, should_exit)  # 推論のみ
-    set_output_head()                      # 共有出力層の設定
+    def forward(self, h) -> Tuple[Tensor, Tensor, Tensor, List[Tensor]]:
+        h_out, hidden_history = self.transformer(h)
+        logits = self.output_head(h_out)
+        should_exit = self.exit_fn(hidden_history, self.threshold)
+        return h_out, logits, should_exit, hidden_history
 ```
 
-### ExitClassifierの責務（CALM-style）
-
-**2024-12-15 方針変更**: MLP方式からCALM式（cos_sim）に変更。
-訓練不要で計算コストが低く、深い層で高精度。
+### カスタムexit_fnの例
 
 ```python
-class ExitClassifier(nn.Module):
-    def __init__(self):
-        self.threshold = 0.0  # trainerが設定
+# 全レイヤーの変化量を考慮するexit_fn
+def multi_layer_exit_fn(hidden_history: List[torch.Tensor], threshold: float) -> torch.Tensor:
+    """複数レイヤー間のcos_sim平均で判断"""
+    cos_sims = []
+    for i in range(1, len(hidden_history)):
+        h_in, h_out = hidden_history[i-1], hidden_history[i]
+        cos_sim = F.cosine_similarity(h_in, h_out, dim=-1)
+        cos_sims.append(cos_sim)
+    avg_cos_sim = torch.stack(cos_sims).mean(dim=0)
+    return avg_cos_sim >= threshold
 
-    # メソッド
-    forward(h_in, h_out) → (cos_sim, should_exit)
-    compute_similarity(h_in, h_out) → cos_sim
+# 使用例
+block = LEGOBlock(transformer, exit_fn=multi_layer_exit_fn)
 ```
-
----
-
-## 信頼度計算方式（CALM-style）
-
-**cos_sim(h_in, h_out) を使用する**：
-
-```python
-# CALM State Propagation
-cos_sim = exit_classifier.compute_similarity(h_in, h_out)
-# 内部: F.normalize(h_in) · F.normalize(h_out)
-
-# Exit判定
-should_exit = cos_sim >= threshold
-# 高いcos_sim = 層による変化が小さい = 収束 = exit可能
-```
-
-### CALM式の理由
-
-**CALM論文より**:
-> "State Propagation: the cosine similarity between the hidden states of consecutive layers"
-
-**利点**:
-- **訓練不要**: MLP等の訓練が不要
-- **計算コスト低**: 内積のみ
-- **深い層で高精度**: 実験でLayer 7で69.2% F1（Recall 93.1%）
 
 ---
 
@@ -163,12 +161,13 @@ should_exit = cos_sim >= threshold
 **トークン単位で収集**：`hard_ratio=0.5`ならcos_sim下位50%のトークンをhard exampleとして収集。
 
 ```python
-# 正しい実装（トークン単位）- trainer.py の _collect_hard_examples_calm()
-# 1. cos_simを計算
-cos_sim = block.exit_classifier.compute_similarity(h_in, h_out)
+# 正しい実装（トークン単位）- trainer.py の _collect_hard_examples()
+# 1. hidden_historyからcos_simを計算
+h_out, _, _, hidden_history = block.forward(h)
+h_in = hidden_history[-2]
+cos_sim = compute_cos_sim(h_in, h_out)
 
 # 2. thresholdを計算（下位hard_ratio%がhard）
-# low cos_sim = hard token
 threshold = torch.quantile(all_cos_flat, hard_ratio)
 
 # 3. 各トークンがhardかどうか判定
@@ -215,7 +214,7 @@ return SequenceData(hard_hidden, hard_targets)
 
 ```python
 # 正しい実装（シーケンス単位）
-h = block.forward(sequences)  # (batch, seq_len, dim)
+h_out, logits, should_exit, hidden_history = block.forward(sequences)
 # Attention: 各トークンが他のトークンを参照可能
 
 # 間違った実装（トークン単位）
@@ -269,7 +268,7 @@ h = block.forward(tokens)  # (batch, 1, dim)
 
 **問題：** softmax方式、MLP方式、CALM方式など複数の方式をオプションとして保持していた。
 
-**教訓：** 最良と判明した方式（CALM式）に一本化する。メンテナンス性 > 柔軟性。
+**教訓：** 最良と判明した方式に一本化する。メンテナンス性 > 柔軟性。
 
 ### 8. 訓練データでvalidation PPLを計算
 
@@ -277,13 +276,13 @@ h = block.forward(tokens)  # (batch, 1, dim)
 
 **教訓：** 訓練データとvalidationデータは完全に分離する。内部分割は混乱の元。
 
-### 9. MLP-based ExitClassifierの採用と廃止
+### 9. ExitClassifierクラスの肥大化
 
-**問題：** ExitClassifierにMLP（2-layer）を使用し、訓練が必要だった。
+**問題：** ExitClassifierクラスにMLP、CALM、複数方式を混在させていた。
 
-**解決（2024-12-15）：** CALM式（cos_sim）に変更。訓練不要で深い層で高精度。
+**解決（2024-12-15）：** exit_fn関数方式に変更。シンプルな関数で判定、hidden_historyを活用。
 
-**教訓：** 訓練コストと精度のトレードオフを考慮する。訓練不要で十分な精度が出るならそちらを採用。
+**教訓：** クラスよりも関数の方がシンプルで柔軟な場合がある。
 
 ---
 
