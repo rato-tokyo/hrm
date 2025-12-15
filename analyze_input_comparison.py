@@ -4,8 +4,10 @@ Analyze Different Input Features for Saturation Prediction
 比較する入力:
 1. h_out: 層の出力（累積 + この層の変化）
 2. delta: この層の変化のみ
-3. h_out + delta: 両方を結合
-4. delta + prev_delta: この層と前の層の変化を結合
+3. h_out.delta: 両方を結合
+4. delta.prev_delta: この層と前の層の変化を結合
+5. delta - prev_delta: 変化の加速度
+6. state_prop: cos_sim(h_in, h_out) - CALM の State Propagation
 
 Usage:
     python analyze_input_comparison.py
@@ -240,6 +242,33 @@ def experiment_layer(
         print("\n--- Method 5: delta - prev_delta (N/A for layer 1) ---")
         results['delta_diff'] = None
 
+    # 6. State Propagation: cos_sim(h_in, h_out) threshold
+    print("\n--- Method 6: State Propagation (cos_sim threshold) ---")
+    h_in = h_out - delta  # h_in = h_out - delta
+
+    # Compute cosine similarity
+    h_in_norm = F.normalize(h_in, dim=-1)
+    h_out_norm = F.normalize(h_out, dim=-1)
+    cos_sim = (h_in_norm * h_out_norm).sum(dim=-1)  # (num_tokens,)
+
+    # Find best threshold
+    cos_sim_val = cos_sim[val_idx]
+    labels_val_np = labels[val_idx].cpu().numpy()
+
+    best_f1_sp = 0
+    best_threshold = 0
+    for percentile in [10, 20, 30, 40, 50, 60, 70, 80, 90]:
+        threshold = torch.quantile(cos_sim_val, percentile / 100.0).item()
+        # High cos_sim = small change = likely saturated
+        preds = (cos_sim_val > threshold).float().cpu().numpy()
+        f1 = f1_score(labels_val_np, preds)
+        if f1 > best_f1_sp:
+            best_f1_sp = f1
+            best_threshold = threshold
+
+    print(f"F1: {best_f1_sp * 100:.1f}% (threshold={best_threshold:.4f})")
+    results['state_prop'] = {'f1': best_f1_sp, 'threshold': best_threshold}
+
     results['saturation_rate'] = saturation_rate
 
     return results, delta
@@ -277,43 +306,47 @@ def main():
     print("SUMMARY")
     print("=" * 60)
 
-    print(f"\n{'Layer':<8} {'Sat%':<8} {'h_out':<10} {'delta':<10} {'h.d':<10} {'d.prev':<10} {'d-prev':<10}")
-    print("-" * 68)
+    print(f"\n{'Layer':<8} {'Sat%':<8} {'h_out':<10} {'delta':<10} {'h.d':<10} {'d.prev':<10} {'d-prev':<10} {'st_prop':<10}")
+    print("-" * 78)
 
     h_out_f1s = []
     delta_f1s = []
     h_out_delta_f1s = []
     delta_prev_f1s = []
     delta_diff_f1s = []
+    state_prop_f1s = []
 
     for layer, results in all_results.items():
         sat = results['saturation_rate'] * 100
         h_out_f1 = results['h_out']['f1'] * 100
         delta_f1 = results['delta']['f1'] * 100
         h_out_delta_f1 = results['h_out_delta']['f1'] * 100
+        state_prop_f1 = results['state_prop']['f1'] * 100
 
         h_out_f1s.append(h_out_f1)
         delta_f1s.append(delta_f1)
         h_out_delta_f1s.append(h_out_delta_f1)
+        state_prop_f1s.append(state_prop_f1)
 
         if results['delta.prev'] is not None:
             delta_prev_f1 = results['delta.prev']['f1'] * 100
             delta_diff_f1 = results['delta_diff']['f1'] * 100
             delta_prev_f1s.append(delta_prev_f1)
             delta_diff_f1s.append(delta_diff_f1)
-            print(f"{layer:<8} {sat:<7.1f}% {h_out_f1:<9.1f}% {delta_f1:<9.1f}% {h_out_delta_f1:<9.1f}% {delta_prev_f1:<9.1f}% {delta_diff_f1:<9.1f}%")
+            print(f"{layer:<8} {sat:<7.1f}% {h_out_f1:<9.1f}% {delta_f1:<9.1f}% {h_out_delta_f1:<9.1f}% {delta_prev_f1:<9.1f}% {delta_diff_f1:<9.1f}% {state_prop_f1:<9.1f}%")
         else:
-            print(f"{layer:<8} {sat:<7.1f}% {h_out_f1:<9.1f}% {delta_f1:<9.1f}% {h_out_delta_f1:<9.1f}% {'N/A':<10} {'N/A':<10}")
+            print(f"{layer:<8} {sat:<7.1f}% {h_out_f1:<9.1f}% {delta_f1:<9.1f}% {h_out_delta_f1:<9.1f}% {'N/A':<10} {'N/A':<10} {state_prop_f1:<9.1f}%")
 
-    print("-" * 68)
+    print("-" * 78)
 
     avg_h_out = np.mean(h_out_f1s)
     avg_delta = np.mean(delta_f1s)
     avg_h_out_delta = np.mean(h_out_delta_f1s)
     avg_delta_prev = np.mean(delta_prev_f1s) if delta_prev_f1s else 0
     avg_delta_diff = np.mean(delta_diff_f1s) if delta_diff_f1s else 0
+    avg_state_prop = np.mean(state_prop_f1s)
 
-    print(f"{'Average':<8} {'':<8} {avg_h_out:<9.1f}% {avg_delta:<9.1f}% {avg_h_out_delta:<9.1f}% {avg_delta_prev:<9.1f}% {avg_delta_diff:<9.1f}%")
+    print(f"{'Average':<8} {'':<8} {avg_h_out:<9.1f}% {avg_delta:<9.1f}% {avg_h_out_delta:<9.1f}% {avg_delta_prev:<9.1f}% {avg_delta_diff:<9.1f}% {avg_state_prop:<9.1f}%")
 
     # Analysis
     print("\n" + "=" * 60)
@@ -356,11 +389,19 @@ def main():
             print(f"   変化の加速度による改善なし（{improvement_diff:.1f}%）")
             print(f"   → 絶対的な変化量の方が重要")
 
+    print(f"\n5. State Propagation (CALM) の効果:")
+    print(f"   cos_sim(h_in, h_out) threshold: 平均 F1 = {avg_state_prop:.1f}%")
+    if avg_state_prop > avg_delta:
+        print(f"   → delta より優位（+{avg_state_prop - avg_delta:.1f}%）")
+    else:
+        print(f"   → delta より劣位（{avg_state_prop - avg_delta:.1f}%）")
+
     # Best method
     methods = {
         'h_out': avg_h_out,
         'delta': avg_delta,
         'h_out.delta': avg_h_out_delta,
+        'state_prop': avg_state_prop,
     }
     if delta_prev_f1s:
         methods['delta.prev_delta'] = avg_delta_prev
