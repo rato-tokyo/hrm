@@ -46,25 +46,19 @@ def train_block(
         - SequenceData: Hard examples for the next block (output hidden states)
         - Dict: Training statistics (train_ppls, val_ppls, best_epoch, etc.)
     """
-    is_verbose = config.verbose
-
     if block.output_head is None:
         raise RuntimeError("output_head not set. Call set_output_head() first.")
 
-    device = next(block.parameters()).device
-
-    if is_verbose:
+    if config.verbose:
         print(f"Training block: {len(train_data)} train, {len(val_data)} val sequences")
         print(f"  ({train_data.num_tokens} train, {val_data.num_tokens} val tokens)")
 
     # 1. Train LM with early stopping
-    lm_stats = _train_lm(block, train_data, val_data, optimizer, config, device, is_verbose)
+    lm_stats = _train_lm(block, train_data, val_data, optimizer, config)
 
     # 2. Compute cos_sim and collect hard examples
     block.eval()
-    hard_examples, threshold = _collect_hard_examples(
-        block, train_data, config, device, is_verbose
-    )
+    hard_examples, threshold = _collect_hard_examples(block, train_data, config)
     block.threshold = threshold
 
     # 3. Build final statistics
@@ -75,7 +69,7 @@ def train_block(
         'threshold': threshold,
     }
 
-    if is_verbose:
+    if config.verbose:
         print(f"  Threshold (cos_sim): {threshold:.4f}")
         print(f"  Hard examples: {len(hard_examples)} sequences ({hard_examples.num_tokens} tokens, {actual_hard_ratio*100:.1f}%)")
 
@@ -86,8 +80,6 @@ def _collect_hard_examples(
     block: "LEGOBlock",
     train_data: "SequenceData",
     config: TrainerConfig,
-    device: torch.device,
-    is_verbose: bool,
 ) -> Tuple["SequenceData", float]:
     """
     Collect hard examples using cos_sim from hidden_history.
@@ -98,8 +90,6 @@ def _collect_hard_examples(
         block: LEGOBlock (trained)
         train_data: Training SequenceData
         config: TrainerConfig with hard_ratio
-        device: Device to run on
-        is_verbose: Print progress
 
     Returns:
         Tuple of:
@@ -108,6 +98,7 @@ def _collect_hard_examples(
     """
     from .data import SequenceData
 
+    device = next(block.parameters()).device
     all_cos_sim: List[torch.Tensor] = []
     all_hidden_out: List[torch.Tensor] = []
     all_targets: List[torch.Tensor] = []
@@ -143,7 +134,7 @@ def _collect_hard_examples(
         # Tokens with cos_sim < threshold are hard
         threshold = float(torch.quantile(all_cos_flat, hard_ratio).item())
 
-    if is_verbose:
+    if config.verbose:
         print(f"  cos_sim stats: mean={all_cos_flat.mean():.4f}, std={all_cos_flat.std():.4f}")
 
     # Token-level hard mask: cos_sim < threshold (low similarity = hard)
@@ -156,14 +147,15 @@ def _collect_hard_examples(
     num_hard_tokens = hard_hidden.shape[0]
     seq_len = train_data.seq_len
     dim = hidden_out_all.shape[-1]
+    device_str = str(next(block.parameters()).device)
 
     if num_hard_tokens == 0:
-        return SequenceData.empty(seq_len, dim, str(device)), threshold
+        return SequenceData.empty(seq_len, dim, device_str), threshold
 
     # Repack into sequences
     num_complete_sequences = num_hard_tokens // seq_len
     if num_complete_sequences == 0:
-        return SequenceData.empty(seq_len, dim, str(device)), threshold
+        return SequenceData.empty(seq_len, dim, device_str), threshold
 
     usable_tokens = num_complete_sequences * seq_len
     hard_hidden = hard_hidden[:usable_tokens].view(num_complete_sequences, seq_len, -1)
@@ -178,8 +170,6 @@ def _train_lm(
     val_data: "SequenceData",
     optimizer: torch.optim.Optimizer,
     config: TrainerConfig,
-    device: torch.device,
-    is_verbose: bool,
 ) -> Dict[str, Any]:
     """
     Train language model with early stopping.
@@ -190,12 +180,11 @@ def _train_lm(
         val_data: Validation SequenceData
         optimizer: Optimizer for block's parameters
         config: TrainerConfig with training hyperparameters
-        device: Device to run on
-        is_verbose: Print progress
 
     Returns:
         Dict with train_ppls, val_ppls, best_epoch, best_val_ppl, total_epochs, stopped_early
     """
+    device = next(block.parameters()).device
     best_ppl = float('inf')
     best_state: Dict[str, torch.Tensor] | None = None
     patience_counter = 0
@@ -207,11 +196,11 @@ def _train_lm(
 
     for epoch in range(config.max_epochs):
         # Training epoch
-        train_ppl = _train_epoch(block, train_data, optimizer, config, device)
+        train_ppl = _train_epoch(block, train_data, optimizer, config)
         train_ppls.append(train_ppl)
 
         # Validation
-        val_ppl = _evaluate_ppl(block, val_data, config.batch_size, device)
+        val_ppl = _evaluate_ppl(block, val_data, config.batch_size)
         val_ppls.append(val_ppl)
 
         # Early stopping check
@@ -224,12 +213,12 @@ def _train_lm(
         else:
             patience_counter += 1
 
-        if is_verbose:
+        if config.verbose:
             status = "best" if is_best else f"{patience_counter}/{config.patience}"
             print(f"  Epoch {epoch+1}/{config.max_epochs}: train_ppl={train_ppl:.2f}, val_ppl={val_ppl:.2f} [{status}]")
 
         if patience_counter >= config.patience:
-            if is_verbose:
+            if config.verbose:
                 print(f"  Early stopping at epoch {epoch+1}")
             break
 
@@ -252,7 +241,6 @@ def _train_epoch(
     train_data: "SequenceData",
     optimizer: torch.optim.Optimizer,
     config: TrainerConfig,
-    device: torch.device,
 ) -> float:
     """
     Run one training epoch.
@@ -262,13 +250,13 @@ def _train_epoch(
         train_data: Training SequenceData
         optimizer: Optimizer for block's parameters
         config: TrainerConfig with training hyperparameters
-        device: Device to run on
 
     Returns:
         Training perplexity for this epoch
     """
     import numpy as np
 
+    device = next(block.parameters()).device
     block.train()
     total_loss = 0.0
     total_tokens = 0
@@ -298,7 +286,6 @@ def _evaluate_ppl(
     block: "LEGOBlock",
     data: "SequenceData",
     batch_size: int,
-    device: torch.device,
 ) -> float:
     """
     Evaluate perplexity on a dataset.
@@ -307,13 +294,13 @@ def _evaluate_ppl(
         block: LEGOBlock to evaluate
         data: SequenceData to evaluate on
         batch_size: Batch size for evaluation
-        device: Device to run on
 
     Returns:
         Perplexity
     """
     import numpy as np
 
+    device = next(block.parameters()).device
     block.eval()
     total_loss = 0.0
     total_tokens = 0

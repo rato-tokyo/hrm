@@ -23,7 +23,6 @@ class TrainerConfig:
         max_epochs: Maximum number of epochs
         patience: Early stopping patience
         grad_clip: Gradient clipping value
-        val_ratio: Ratio of data for validation
         hard_ratio: Ratio of tokens to collect as hard examples
         lr: Learning rate
         verbose: Print training progress
@@ -32,7 +31,6 @@ class TrainerConfig:
     max_epochs: int
     patience: int
     grad_clip: float
-    val_ratio: float
     hard_ratio: float
     lr: float
     verbose: bool

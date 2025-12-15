@@ -35,7 +35,7 @@ def evaluate_legollm(
     total_loss = 0.0
     total_tokens = 0
     correct = 0
-    all_exit_counts = [0] * len(model.blocks)
+    aggregated_exit_counts: List[int] = []
 
     with torch.no_grad():
         for x, y in val_batches:
@@ -43,8 +43,11 @@ def evaluate_legollm(
             logits, stats = model.forward(x, return_stats=True)
 
             # Accumulate exit counts
-            for i, count in enumerate(stats['exit_counts']):
-                all_exit_counts[i] += count
+            batch_exit_counts: List[int] = stats['exit_counts']
+            if not aggregated_exit_counts:
+                aggregated_exit_counts = [0] * len(batch_exit_counts)
+            for i, count in enumerate(batch_exit_counts):
+                aggregated_exit_counts[i] += count
 
             # Loss and accuracy
             logits_flat = logits.view(-1, logits.size(-1))
@@ -53,27 +56,18 @@ def evaluate_legollm(
             total_tokens += y_flat.numel()
             correct += int((logits_flat.argmax(dim=-1) == y_flat).sum().item())
 
-    ppl = float(np.exp(total_loss / total_tokens))
-    acc = correct / total_tokens
+    ppl = float(np.exp(total_loss / total_tokens)) if total_tokens > 0 else float('inf')
+    acc = correct / total_tokens if total_tokens > 0 else 0.0
 
-    # Compute shallow ratio
-    shallow_exits = sum(all_exit_counts[:-1])
-    shallow_ratio = shallow_exits / total_tokens if total_tokens > 0 else 0.0
-
-    # Compute cost
-    total_layers_computed = 0
-    layers_so_far = 0
-    for block_idx, count in enumerate(all_exit_counts):
-        layers_so_far += model.blocks[block_idx].num_layers
-        total_layers_computed += count * layers_so_far
-    compute_cost = total_layers_computed / (total_tokens * model.num_layers) if total_tokens > 0 else 1.0
+    # Compute statistics using model's method
+    exit_stats = model._compute_exit_stats(aggregated_exit_counts)
 
     return {
         'ppl': ppl,
         'accuracy': acc,
-        'shallow_ratio': shallow_ratio,
-        'compute_cost': compute_cost,
-        'compute_savings': 1.0 - compute_cost,
-        'exit_counts': all_exit_counts,
+        'shallow_ratio': exit_stats['shallow_ratio'],
+        'compute_cost': exit_stats['compute_cost'],
+        'compute_savings': 1.0 - exit_stats['compute_cost'],
+        'exit_counts': aggregated_exit_counts,
         'total_tokens': total_tokens,
     }

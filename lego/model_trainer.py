@@ -44,8 +44,6 @@ def train_legollm(
     Returns:
         Dict with per-block statistics and overall training info
     """
-    is_verbose = config.verbose
-
     all_stats: List[Dict[str, Any]] = []
     current_train_data = train_data
     current_val_data = val_data
@@ -53,13 +51,13 @@ def train_legollm(
     for block_idx, block in enumerate(model.blocks):
         is_last_block = (block_idx == len(model.blocks) - 1)
 
-        if is_verbose:
+        if config.verbose:
             print(f"\n{'=' * 60}")
             print(f"Training Block {block_idx}")
             print("=" * 60)
 
         if len(current_train_data) == 0:
-            if is_verbose:
+            if config.verbose:
                 print(f"No data for Block {block_idx} - skipping")
             break
 
@@ -70,7 +68,6 @@ def train_legollm(
             max_epochs=config.max_epochs,
             patience=config.patience,
             grad_clip=config.grad_clip,
-            val_ratio=config.val_ratio,
             hard_ratio=config.hard_ratio,
             lr=block_lr,
             verbose=config.verbose,
@@ -92,7 +89,7 @@ def train_legollm(
             **stats,
         })
 
-        if is_verbose:
+        if config.verbose:
             print(f"\nBlock {block_idx} Results:")
             print(f"  Best PPL: {stats['best_val_ppl']:.2f}")
             print(f"  Threshold: {stats['threshold']:.4f}")

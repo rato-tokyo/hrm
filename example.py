@@ -36,7 +36,6 @@ def main() -> None:
         max_epochs=50,
         patience=3,
         grad_clip=1.0,
-        val_ratio=0.2,
         hard_ratio=0.5,
         lr=1e-3,
         verbose=True,
