@@ -1,7 +1,7 @@
 """
-LEGO Framework - Core Modules
+LEGOフレームワーク - コアモジュール
 
-Internal components. Use TransformerBlock from lego package.
+内部コンポーネント。TransformerBlockはlegoパッケージからインポートしてください。
 """
 
 from .transformer import TransformerBlock

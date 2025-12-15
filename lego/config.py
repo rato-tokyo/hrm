@@ -1,8 +1,8 @@
 """
-LEGO Framework - Configuration Classes
+LEGOフレームワーク - 設定クラス
 
-TrainerConfig: Training hyperparameters for train_block()
-ExperimentConfig: Model architecture and experiment settings
+TrainerConfig: train_llm()用の訓練ハイパーパラメータ
+ExperimentConfig: モデルアーキテクチャと実験設定
 """
 
 from dataclasses import dataclass
@@ -11,21 +11,21 @@ from dataclasses import dataclass
 @dataclass
 class TrainerConfig:
     """
-    Configuration for block training.
+    LLM訓練用の設定。
 
-    Used by train_block() to configure training hyperparameters.
-    All fields are required (no default values).
+    train_llm()で訓練ハイパーパラメータを設定するために使用。
+    全フィールド必須（デフォルト値なし）。
 
-    Exit decision uses exit_fn with hidden_history (default: CALM-style cos_sim).
+    Exit判定はexit_fnとhidden_historyを使用（デフォルト: CALM式cos_sim）。
 
     Attributes:
-        batch_size: Batch size for training
-        max_epochs: Maximum number of epochs
-        patience: Early stopping patience
-        grad_clip: Gradient clipping value
-        hard_ratio: Ratio of tokens to collect as hard examples
-        lr: Learning rate
-        verbose: Print training progress
+        batch_size: 訓練バッチサイズ
+        max_epochs: 最大エポック数
+        patience: Early stoppingの待機エポック数
+        grad_clip: 勾配クリッピング値
+        hard_ratio: hard tokenとして収集するトークンの割合
+        lr: 学習率
+        verbose: 訓練進捗を表示するか
     """
     batch_size: int
     max_epochs: int
@@ -39,21 +39,21 @@ class TrainerConfig:
 @dataclass
 class ExperimentConfig:
     """
-    Configuration for LEGO experiment.
+    LEGO実験用の設定。
 
-    Model architecture and data settings.
-    All fields are required (no default values).
+    モデルアーキテクチャとデータ設定。
+    全フィールド必須（デフォルト値なし）。
 
     Attributes:
-        dim: Model dimension
-        num_heads: Number of attention heads
-        ffn_dim: FFN hidden dimension
-        max_seq_len: Maximum sequence length
-        causal: Whether to use causal masking
-        eps: Epsilon for RMSNorm
-        seq_len: Sequence length for language modeling
-        num_samples: Number of training samples
-        block_layers: Layer counts per block (e.g., (2, 2) for 2 blocks with 2 layers each)
+        dim: モデル次元
+        num_heads: Attentionヘッド数
+        ffn_dim: FFN隠れ層次元
+        max_seq_len: 最大シーケンス長
+        causal: Causalマスクを使用するか
+        eps: RMSNormのイプシロン
+        seq_len: 言語モデリング用シーケンス長
+        num_samples: 訓練サンプル数
+        llm_layers: 各LLMのレイヤー数（例: (2, 2)は2層×2 LLM）
     """
     dim: int
     num_heads: int
@@ -63,4 +63,4 @@ class ExperimentConfig:
     eps: float
     seq_len: int
     num_samples: int
-    block_layers: tuple[int, ...]
+    llm_layers: tuple[int, ...]

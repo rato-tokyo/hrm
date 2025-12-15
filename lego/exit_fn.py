@@ -1,8 +1,8 @@
 """
-LEGO Framework - Exit Functions
+LEGOフレームワーク - Exit関数
 
-Functions for determining early exit based on hidden_history.
-Default implementation uses CALM-style cosine similarity.
+hidden_historyに基づいて早期exitを判定する関数群。
+デフォルト実装はCALM式のcosine similarityを使用。
 """
 
 import torch
@@ -10,26 +10,26 @@ import torch.nn.functional as F
 from typing import List, Callable
 
 
-# Type alias for exit function
+# Exit関数の型エイリアス
 ExitFn = Callable[[List[torch.Tensor], float], torch.Tensor]
 
 
 def default_exit_fn(hidden_history: List[torch.Tensor], threshold: float) -> torch.Tensor:
     """
-    Default CALM-style exit function using cosine similarity.
+    CALM式のデフォルトexit関数（cosine similarity使用）。
 
-    Compares the last two hidden states (input and output of final layer).
-    High similarity means small change, suggesting saturation.
+    最後の2つのhidden states（最終レイヤーの入出力）を比較。
+    類似度が高い = 変化が小さい = 収束したと判断。
 
     Args:
-        hidden_history: List of hidden states [input, layer1_out, ...]
-        threshold: Cosine similarity threshold for exit
+        hidden_history: hidden statesのリスト [入力, レイヤー1出力, ...]
+        threshold: exitのためのcosine similarity閾値
 
     Returns:
-        should_exit: Boolean mask (batch_size, seq_len) where True = should exit
+        should_exit: Booleanマスク (batch_size, seq_len) True = exitすべき
     """
-    h_in = hidden_history[-2]   # Input to last layer
-    h_out = hidden_history[-1]  # Output of last layer
+    h_in = hidden_history[-2]   # 最終レイヤーへの入力
+    h_out = hidden_history[-1]  # 最終レイヤーの出力
 
     # Cosine similarity
     h_in_norm = F.normalize(h_in, dim=-1)
@@ -41,14 +41,14 @@ def default_exit_fn(hidden_history: List[torch.Tensor], threshold: float) -> tor
 
 def compute_cos_sim(h_in: torch.Tensor, h_out: torch.Tensor) -> torch.Tensor:
     """
-    Compute cosine similarity between two hidden states.
+    2つのhidden states間のcosine similarityを計算。
 
     Args:
-        h_in: Input hidden states (batch_size, seq_len, dim)
-        h_out: Output hidden states (batch_size, seq_len, dim)
+        h_in: 入力hidden states (batch_size, seq_len, dim)
+        h_out: 出力hidden states (batch_size, seq_len, dim)
 
     Returns:
-        cos_sim: Cosine similarity per token (batch_size, seq_len)
+        cos_sim: トークンごとのcosine similarity (batch_size, seq_len)
     """
     h_in_norm = F.normalize(h_in, dim=-1)
     h_out_norm = F.normalize(h_out, dim=-1)

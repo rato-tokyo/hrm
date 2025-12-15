@@ -1,7 +1,7 @@
 """
-LEGO Framework - Attention Mechanisms
+LEGOフレームワーク - Attentionメカニズム
 
-Note: This is a pre-training only framework. KV cache is not implemented.
+注意: 本フレームワークは事前学習専用です。KVキャッシュは実装していません。
 """
 
 import torch
@@ -29,7 +29,7 @@ class RotaryPositionalEmbedding(nn.Module):
 
 
 def rotate_half(x: torch.Tensor) -> torch.Tensor:
-    """Rotate half of the hidden dims"""
+    """隠れ次元の半分を回転"""
     x1, x2 = x[..., :x.shape[-1]//2], x[..., x.shape[-1]//2:]
     return torch.cat([-x2, x1], dim=-1)
 
@@ -40,14 +40,14 @@ def apply_rotary_pos_emb(
     cos: torch.Tensor,
     sin: torch.Tensor
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Apply rotary positional embedding to queries and keys"""
+    """QueryとKeyにRotary位置埋め込みを適用"""
     q_embed = (q * cos) + (rotate_half(q) * sin)
     k_embed = (k * cos) + (rotate_half(k) * sin)
     return q_embed, k_embed
 
 
 class MultiHeadAttention(nn.Module):
-    """Multi-Head Attention with RoPE and Causal Mask (Pre-training only, no KV cache)"""
+    """RoPEとCausalマスク付きMulti-Head Attention（事前学習専用、KVキャッシュなし）"""
 
     def __init__(self, dim: int, num_heads: int, max_seq_len: int, causal: bool):
         super().__init__()
@@ -63,7 +63,7 @@ class MultiHeadAttention(nn.Module):
         self.rope = RotaryPositionalEmbedding(self.head_dim, max_seq_len)
         self.scale = self.head_dim ** -0.5
 
-        # Register causal mask buffer
+        # Causalマスクをバッファとして登録
         if causal:
             mask = torch.triu(torch.ones(max_seq_len, max_seq_len), diagonal=1).bool()
             self.register_buffer('causal_mask', mask)
@@ -71,19 +71,19 @@ class MultiHeadAttention(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         batch_size, seq_len, _ = x.shape
 
-        # Compute Q, K, V
+        # Q, K, Vを計算
         q = self.q_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        # Apply RoPE
+        # RoPEを適用
         cos, sin = self.rope(x, seq_len)
         q, k = apply_rotary_pos_emb(q, k, cos, sin)
 
-        # Compute attention
+        # Attentionを計算
         attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale
 
-        # Apply causal mask (prevent attending to future tokens)
+        # Causalマスクを適用（未来のトークンへのAttentionを防止）
         if self.causal:
             attn = attn.masked_fill(self.causal_mask[:seq_len, :seq_len], float('-inf'))
 

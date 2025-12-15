@@ -1,5 +1,5 @@
 """
-LEGO Framework - Normalization Layers
+LEGOフレームワーク - 正規化レイヤー
 """
 
 import torch

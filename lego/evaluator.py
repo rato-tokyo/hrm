@@ -1,7 +1,9 @@
 """
-LEGO Framework - Model Evaluation
+LEGOフレームワーク - モデル評価（評価専用）
 
-Functions for evaluating LEGOLLM with TRUE Early Exit.
+TRUE Early ExitによるLEGOEnsemble評価関数。
+
+注意: このモジュールは評価専用。訓練はensemble_trainer.pyを使用。
 """
 
 from __future__ import annotations
@@ -12,25 +14,27 @@ import numpy as np
 from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .legollm import LEGOLLM
+    from .lego_ensemble import LEGOEnsemble
 
 
-def evaluate_legollm(
-    model: "LEGOLLM",
+def evaluate_ensemble(
+    ensemble: "LEGOEnsemble",
     val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
 ) -> Dict[str, Any]:
     """
-    Evaluate LEGOLLM with TRUE Early Exit.
+    【評価用】TRUE Early ExitでLEGOEnsembleを評価。
+
+    訓練完了後のモデル評価に使用。PPL、Accuracy、exit統計を計算。
 
     Args:
-        model: Trained LEGOLLM model
-        val_batches: List of (x, y) batches for validation
+        ensemble: 訓練済みLEGOEnsemble
+        val_batches: 検証用の(x, y)バッチのリスト
 
     Returns:
-        Dict with ppl, accuracy, shallow_ratio, compute_cost, exit_counts
+        ppl, accuracy, shallow_ratio, compute_cost, exit_countsを含むDict
     """
-    device = next(model.parameters()).device
-    model.eval()
+    device = next(ensemble.parameters()).device
+    ensemble.eval()
 
     total_loss = 0.0
     total_tokens = 0
@@ -40,16 +44,16 @@ def evaluate_legollm(
     with torch.no_grad():
         for x, y in val_batches:
             x, y = x.to(device), y.to(device)
-            logits, stats = model.forward(x, return_stats=True)
+            logits, stats = ensemble.evaluate(x)
 
-            # Accumulate exit counts
+            # exit countsを集計
             batch_exit_counts: List[int] = stats['exit_counts']
             if not aggregated_exit_counts:
                 aggregated_exit_counts = [0] * len(batch_exit_counts)
             for i, count in enumerate(batch_exit_counts):
                 aggregated_exit_counts[i] += count
 
-            # Loss and accuracy
+            # LossとAccuracy
             logits_flat = logits.view(-1, logits.size(-1))
             y_flat = y.view(-1)
             total_loss += F.cross_entropy(logits_flat, y_flat, reduction='sum').item()
@@ -59,8 +63,8 @@ def evaluate_legollm(
     ppl = float(np.exp(total_loss / total_tokens)) if total_tokens > 0 else float('inf')
     acc = correct / total_tokens if total_tokens > 0 else 0.0
 
-    # Compute statistics using model's method
-    exit_stats = model._compute_exit_stats(aggregated_exit_counts)
+    # モデルのメソッドで統計を計算
+    exit_stats = ensemble._compute_exit_stats(aggregated_exit_counts)
 
     return {
         'ppl': ppl,

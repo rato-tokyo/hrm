@@ -1,5 +1,5 @@
 """
-LEGO Framework - Feed-Forward Network Layers
+LEGOフレームワーク - Feed-Forwardネットワークレイヤー
 """
 
 import torch
@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 
 class GatedLinearUnit(nn.Module):
-    """Gated Linear Unit (GLU) for FFN"""
+    """FFN用のGated Linear Unit (GLU)"""
 
     def __init__(self, dim: int, hidden_dim: int):
         super().__init__()

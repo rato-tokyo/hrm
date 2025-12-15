@@ -1,7 +1,7 @@
 """
-LEGO Framework - Data Loading
+LEGOフレームワーク - データローディング
 
-WikiText-2 dataloader for language modeling pre-training.
+言語モデリング事前学習用のWikiText-2データローダー。
 """
 
 import torch
@@ -17,21 +17,21 @@ def create_wikitext_dataloaders(
            List[Tuple[torch.Tensor, torch.Tensor]],
            int]:
     """
-    Create WikiText-2 dataloaders for language modeling.
+    言語モデリング用のWikiText-2データローダーを作成。
 
     Args:
-        num_samples: Number of training samples
-        batch_size: Batch size
-        seq_len: Sequence length
-        seed: Random seed
+        num_samples: 訓練サンプル数
+        batch_size: バッチサイズ
+        seq_len: シーケンス長
+        seed: ランダムシード
 
     Returns:
-        Tuple of (train_batches, val_batches, vocab_size)
+        (train_batches, val_batches, vocab_size)のタプル
     """
     try:
         from datasets import load_dataset
     except ImportError as exc:
-        raise ImportError("Please install datasets: pip install datasets") from exc
+        raise ImportError("datasetsをインストールしてください: pip install datasets") from exc
 
     torch.manual_seed(seed)
     dataset = load_dataset('wikitext', 'wikitext-2-raw-v1')
@@ -39,7 +39,7 @@ def create_wikitext_dataloaders(
     def simple_tokenize(text: str) -> List[str]:
         return text.lower().split()
 
-    # Build vocabulary
+    # 語彙を構築
     vocab: Dict[str, int] = {'<unk>': 0, '<pad>': 1}
     for split in ['train', 'validation']:
         for item in dataset[split]:
@@ -60,7 +60,7 @@ def create_wikitext_dataloaders(
     train_data = tokenize_split('train')
     val_data = tokenize_split('validation')
 
-    # Limit samples
+    # サンプル数を制限
     max_tokens_train = num_samples * (seq_len + 1)
     max_tokens_val = int(num_samples * 0.2) * (seq_len + 1)
     train_data = train_data[:max_tokens_train]

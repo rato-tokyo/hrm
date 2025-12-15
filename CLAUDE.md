@@ -1,312 +1,280 @@
 # LEGO (Layered Ensemble with Gradual Optimization) の仕様
 
+## LEGOとは
+
+**LEGOは、既存のLLMに新しいLLMを段階的に追加・統合するフレームワークです。**
+
+核心的な考え方：
+- **LLM 0（前段）は既存の訓練済みLLM**
+- 前段LLMに**Early Exit機能を追加**し、簡単なトークンはそこで処理完了
+- **Hard token（難しいトークン）だけ**を後段に渡す
+- **LLM 1以降は未学習のLLM**で、hard tokensのみで訓練される
+- これにより、既存LLMを拡張できる
+
+```
+┌─────────────────┐     hard tokens     ┌─────────────────┐
+│  既存LLM (訓練済)│ ─────────────────── │  新LLM (未学習)  │
+│ (+ Early Exit)  │                     │ hard tokensで訓練│
+└─────────────────┘                     └─────────────────┘
+        │                                       │
+   easy tokens                             hard tokens
+   ここでexit                               ここでexit
+```
+
 ## スコープ
 
 **本フレームワークは事前学習（pre-training）専用です。**
 
 - テキスト生成（generate）機能は含まない
 - KVキャッシュは実装しない（事前学習では不要）
-- 推論は`forward(return_stats=True)`で評価
 
 ---
 
 ## アーキテクチャ
 
 ```
-TransformerLayer    → 1層（Attention + FFN）
-TransformerBlock    → 複数層のスタック（hidden_historyを返す）
-LEGOBlock           → TransformerBlock + exit_fn による早期exit判定
-LEGOLLM             → LEGOBlock × N（モデル全体）
-train_block()       → Block訓練関数（外部）
+BaseLLM             → 任意のLLM（TransformerBlockなど）
+EarlyExitLLM        → BaseLLM + Early Exit機能（exit_fn + threshold + output_head）
+LEGOEnsemble        → EarlyExitLLM × N の統合・ルーティング
 ```
+
+### クラスの責務
+
+| クラス | 責務 |
+|--------|------|
+| `BaseLLM` | 純粋なLLM処理（hidden states → hidden states） |
+| `EarlyExitLLM` | BaseLLMをラップし、Early Exit機能を追加 |
+| `LEGOEnsemble` | 複数のEarlyExitLLMを統合、ルーティング管理 |
 
 ### ファイル構成
 
 ```
 lego/
 ├── modules/
-│   ├── transformer.py  # TransformerLayer, TransformerBlock
+│   ├── transformer.py  # TransformerLayer, TransformerBlock（BaseLLMの一例）
 │   ├── attention.py    # MultiHeadAttention
 │   ├── ffn.py          # GatedLinearUnit
 │   └── norm.py         # RMSNorm
-├── block.py            # LEGOBlock, default_exit_fn, ExitFn
-├── model.py            # LEGOLLM（推論のみ）
-├── model_trainer.py    # train_legollm(), evaluate_legollm()
-├── trainer.py          # train_block(), _train_lm()
-├── data.py             # SequenceData
-└── config.py           # ExperimentConfig, TrainerConfig
+├── early_exit_llm.py   # EarlyExitLLM（BaseLLM + Early Exit）
+├── lego_ensemble.py    # LEGOEnsemble（統合・評価）
+├── exit_fn.py          # ExitFn, default_exit_fn, compute_cos_sim
+├── llm_trainer.py      # train_llm()（単一LLM訓練）
+├── ensemble_trainer.py # train_ensemble()（全体訓練）
+├── evaluator.py        # evaluate_ensemble()
+├── sequence_data.py    # SequenceData
+├── config.py           # TrainerConfig, ExperimentConfig
+├── dataloader.py       # create_wikitext_dataloaders
+└── utils.py            # set_seed, get_device
 ```
 
 ---
 
 ## コア概念
 
-LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を組み合わせた効率的なTransformer訓練フレームワークです。
+### 統合フロー
 
-### 訓練フロー
+1. **LLM 0（既存LLM）を訓練**: 全データで言語モデルとして訓練
+2. **Early Exit機能を追加**: threshold設定、hard token判定
+3. **Hard tokensを収集**: LLM 0で処理しきれなかったトークン
+4. **LLM 1（新規・未学習）を訓練**: Hard tokensのみで訓練
+5. **推論時**: 簡単なトークンはLLM 0でexit、難しいトークンだけLLM 1へ
 
-1. **Block 0**: 最初のブロックを全データで訓練
-2. **hidden_history取得**: forward後、各レイヤーのhidden statesリストを取得
-3. **cos_sim計算**: hidden_history[-2]とhidden_history[-1]のcos_simでthreshold設定
-4. **Hard Sequence収集**: cos_simが低い（変化が大きい）トークンを収集
-5. **Block 1+**: Hard Sequencesのみで訓練
-6. **推論**: TRUE Early Exitで高cos_simトークンは後続Blockを**実際にスキップ**
+### 重要な設計思想
 
-### train_block()の内部フロー
+**LLM 0は既存の訓練済みLLM**:
+- 単体で完全に機能する言語モデル
+- Early Exit機能は「後付け」で追加される
 
-```
-train_block()
-├── 1. _train_lm()                     ← Transformer + output_head の訓練（early stopping付き）
-├── 2. hidden_history取得              ← block.forward()で各レイヤー出力を取得
-├── 3. cos_sim計算                     ← hidden_history[-2], [-1]のcos_sim
-├── 4. threshold設定                    ← hard_ratio quantileで設定
-├── 5. hard example収集                 ← cos_sim < threshold のトークンを抽出
-└── 6. 統計をまとめてreturn
-```
+**LLM 1以降は未学習のLLM**:
+- 初期状態では何も学習していない
+- **Hard tokensのみ**で訓練される
+- 前段LLMが苦手なトークンを専門に処理
 
-**hidden_history方式の利点**：
-- exit_fnが柔軟に定義可能（デフォルトはCALM式cos_sim）
-- 各レイヤーの出力を分析可能
-- ExitClassifierクラス不要でシンプル
+**Hard tokenの定義**:
+- cos_sim(入力hidden, 出力hidden)が低いトークン
+- = LLMを通過することで大きく変化したトークン
+- = そのLLMにとって「難しい」トークン
 
 ---
 
 ## 設計原則
 
-1. **事前学習専用** - generate、KVキャッシュは実装しない
-2. **コンポジション方式** - LEGOBlockはTransformerBlockをラップ（継承ではない）
+1. **既存LLMの拡張** - LLM 0は訓練済み、LLM 1+は未学習でhard tokensを学習
+2. **コンポジション方式** - EarlyExitLLMはBaseLLMをラップ（継承ではない）
 3. **exit_fn方式** - hidden_historyを受け取る関数でexit判定
-4. **LEGOLLMはルーティングのみ** - Block間のインデックス管理と統計計算
-5. **トークン単位のEarly Exit** - exit判定はトークン単位（バッチ単位ではない）
-6. **TRUE Early Exit** - exitしたトークンの後続blockは処理しない
-7. **訓練と推論の分離** - LEGOBlockは推論のみ、訓練は`train_block()`関数
-8. **シーケンス単位処理** - Attention計算のためシーケンス全体を処理、exit判定のみトークン単位
+4. **LEGOEnsembleはルーティングのみ** - LLM間のインデックス管理と統計計算
+5. **トークン単位のEarly Exit** - exit判定はトークン単位
+6. **TRUE Early Exit** - exitしたトークンは後続LLMを実際に通過しない
+7. **訓練と推論の分離** - モデルは推論のみ、訓練は外部関数で
 
 ---
 
-## 核心機能（削除禁止）
+## 核心機能
 
-1. `LEGOBlock.forward()` - Transformer処理 + exit判定（h, logits, should_exit, hidden_history）
-2. `LEGOLLM.forward()` - TRUE Early Exit推論
-3. `train_legollm()` - LEGOLLM全体の訓練（model_trainer.py）
-4. `train_block()` - LEGOBlock訓練 + hard example収集（trainer.py）
-5. `evaluate_legollm()` - LEGOLLM評価（model_trainer.py）
-6. `SequenceData` - hidden states + targetsのコンテナ（シーケンス単位）
-
-### TransformerBlockの責務
+### EarlyExitLLMの責務
 
 ```python
-class TransformerBlock(nn.Module):
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
-        """
-        Returns:
-            - h_out: 最終出力
-            - hidden_history: [input, layer1_out, layer2_out, ...]
-        """
-        hidden_history = [x]
-        for layer in self.layers:
-            x = layer(x)
-            hidden_history.append(x)
-        return x, hidden_history
-```
+class EarlyExitLLM(nn.Module):
+    """
+    BaseLLM + Early Exit機能。
 
-### LEGOBlockの責務
+    任意のLLMをラップし、以下を追加:
+    - output_head: logits計算用（全LLMで共有）
+    - exit_fn: exit判定関数
+    - threshold: exit判定の閾値
+    """
 
-```python
-# Type alias for exit function
-ExitFn = Callable[[List[torch.Tensor], float], torch.Tensor]
-
-def default_exit_fn(hidden_history: List[torch.Tensor], threshold: float) -> torch.Tensor:
-    """CALM-style exit: cos_sim(hidden_history[-2], hidden_history[-1]) >= threshold"""
-    h_in, h_out = hidden_history[-2], hidden_history[-1]
-    cos_sim = F.cosine_similarity(h_in, h_out, dim=-1)
-    return cos_sim >= threshold
-
-class LEGOBlock(nn.Module):
-    def __init__(self, transformer: TransformerBlock, exit_fn: Optional[ExitFn] = None):
-        self.transformer = transformer
+    def __init__(self, base_llm: nn.Module, exit_fn: Optional[ExitFn] = None):
+        self.base_llm = base_llm
         self.exit_fn = exit_fn or default_exit_fn
         self.threshold = 0.0  # trainerが設定
-        self.output_head: nn.Linear | None = None  # LEGOLLMが設定
+        self.output_head: nn.Linear | None = None  # LEGOEnsembleが設定
 
-    def forward(self, h) -> Tuple[Tensor, Tensor, Tensor, List[Tensor]]:
-        h_out, hidden_history = self.transformer(h)
+    def train_forward(self, h) -> Tuple[Tensor, Tensor, List[Tensor]]:
+        """【訓練用】exit判定なし"""
+        h_out, hidden_history = self.base_llm(h)
+        logits = self.output_head(h_out)
+        return h_out, logits, hidden_history
+
+    def evaluate(self, h) -> Tuple[Tensor, Tensor, Tensor]:
+        """【評価用】exit判定あり"""
+        h_out, hidden_history = self.base_llm(h)
         logits = self.output_head(h_out)
         should_exit = self.exit_fn(hidden_history, self.threshold)
-        return h_out, logits, should_exit, hidden_history
+        return h_out, logits, should_exit
 ```
 
-### カスタムexit_fnの例
+### LEGOEnsembleの責務
 
 ```python
-# 全レイヤーの変化量を考慮するexit_fn
-def multi_layer_exit_fn(hidden_history: List[torch.Tensor], threshold: float) -> torch.Tensor:
-    """複数レイヤー間のcos_sim平均で判断"""
-    cos_sims = []
-    for i in range(1, len(hidden_history)):
-        h_in, h_out = hidden_history[i-1], hidden_history[i]
-        cos_sim = F.cosine_similarity(h_in, h_out, dim=-1)
-        cos_sims.append(cos_sim)
-    avg_cos_sim = torch.stack(cos_sims).mean(dim=0)
-    return avg_cos_sim >= threshold
+class LEGOEnsemble(nn.Module):
+    """
+    複数のEarlyExitLLMを統合。
 
-# 使用例
-block = LEGOBlock(transformer, exit_fn=multi_layer_exit_fn)
+    - Embedding層を保持
+    - 共有output_headを管理
+    - TRUE Early Exitによるルーティング
+    """
+
+    def __init__(self, vocab_size: int, dim: int, llms: List[EarlyExitLLM]):
+        self.embedding = nn.Embedding(vocab_size, dim)
+        self.llms = nn.ModuleList(llms)
+        self.output_head = nn.Linear(dim, vocab_size, bias=False)
+
+        # 全LLMでoutput_headを共有
+        for llm in self.llms:
+            llm.set_output_head(self.output_head)
 ```
 
 ---
 
-## Hard Example収集方式（重要：削除禁止）
+## Hard Token収集（重要）
 
-**トークン単位で収集**：`hard_ratio=0.5`ならcos_sim下位50%のトークンをhard exampleとして収集。
+**トークン単位で収集**：cos_sim下位N%のトークンがhard。
 
 ```python
-# 正しい実装（トークン単位）- trainer.py の _collect_hard_examples()
-# 1. hidden_historyからcos_simを計算
-h_out, _, _, hidden_history = block.forward(h)
+# LLMを通過後のcos_simを計算
+h_out, _, hidden_history = llm.train_forward(h)
 h_in = hidden_history[-2]
 cos_sim = compute_cos_sim(h_in, h_out)
 
-# 2. thresholdを計算（下位hard_ratio%がhard）
-threshold = torch.quantile(all_cos_flat, hard_ratio)
+# threshold以下がhard（大きく変化した = 難しい）
+hard_mask = cos_sim < threshold
+hard_hidden = h_out[hard_mask]
 
-# 3. 各トークンがhardかどうか判定
-hard_token_mask = cos_sim < threshold  # (num_sequences, seq_len)
-
-# 4. hardトークンのみを抽出
-hard_hidden = hidden_out[hard_token_mask]  # (num_hard_tokens, dim)
-hard_targets = targets[hard_token_mask]    # (num_hard_tokens,)
-
-# 5. 新しいシーケンスに再構成してBlock 1に渡す
-hard_hidden = hard_hidden.view(-1, seq_len, dim)
-hard_targets = hard_targets.view(-1, seq_len)
-return SequenceData(hard_hidden, hard_targets)
+# 新シーケンスに再構成して次のLLMへ
 ```
 
-**重要**: Block 1が受け取るのはhardトークンのみ。easyトークンのhidden statesはBlock 1に流れない。
+**重要**: 後段LLMが受け取るのはhardトークンのみ。easyトークンは前段LLMで処理完了。
 
 ---
 
-## ⛔ シーケンス単位収集は使用禁止
+## 訓練フロー詳細
 
-### 定義
+```
+【全体の流れ】
 
-| 用語 | 対象 | 選択基準 | 結果 |
-|------|------|----------|------|
-| **トークン単位収集** | 個々のトークン | 各トークンのcos_sim < threshold | hardトークンのみ抽出、repackして新シーケンス作成 |
-| **シーケンス単位収集** | シーケンス全体 | シーケンス内の最小cos_simで判定 | hardシーケンス全体を選択（easyトークンも含む） |
+1. LLM 0 訓練（全データ）
+   └─ 訓練済みLLMとして動作可能に
 
-### 禁止理由
+2. LLM 0 の hard tokens 収集
+   ├─ 全データを通す
+   ├─ cos_sim < threshold のトークンを抽出
+   └─ threshold を LLM 0 に設定（推論時のexit判定用）
 
-1. **easyトークンがBlock 1に流れる**: シーケンス内の簡単なトークンも一緒に訓練される
-2. **訓練効率の低下**: Block 0で十分処理できるトークンを再度訓練する無駄
-3. **LEGOの設計思想に反する**: 「難しいものだけを深い層で処理」が核心
+3. LLM 1 訓練（hard tokensのみ）
+   ├─ 未学習状態からスタート
+   └─ LLM 0 が苦手なトークンを専門に学習
 
-### 永続的な方針
-
-**トークン単位収集のみを使用する**。シーケンス単位収集は今後一切実装しない。
+4. 推論時
+   ├─ 全トークンを LLM 0 に入力
+   ├─ cos_sim >= threshold → exit（LLM 0 の予測を使用）
+   └─ cos_sim < threshold → LLM 1 へ（hard tokensのみ）
+```
 
 ---
 
-## シーケンス単位処理の重要性（重要：削除禁止）
-
-**Attentionはシーケンス全体を必要とする**：
+## 使用例
 
 ```python
-# 正しい実装（シーケンス単位）
-h_out, logits, should_exit, hidden_history = block.forward(sequences)
-# Attention: 各トークンが他のトークンを参照可能
+from lego import (
+    LEGOEnsemble,
+    EarlyExitLLM,
+    TransformerBlock,
+    train_ensemble,
+    evaluate_ensemble,
+)
 
-# 間違った実装（トークン単位）
-h = block.forward(tokens)  # (batch, 1, dim)
-# Attention: 各トークンが自分自身のみ参照 → 文脈なし
+# 既存LLM（LLM 0）と新規LLM（LLM 1、未学習）を作成
+llm_0 = EarlyExitLLM(TransformerBlock(dim=64, num_heads=4, num_layers=2, ...))
+llm_1 = EarlyExitLLM(TransformerBlock(dim=64, num_heads=4, num_layers=2, ...))
+
+# LEGOで統合
+ensemble = LEGOEnsemble(vocab_size, dim=64, llms=[llm_0, llm_1])
+
+# 訓練
+# - LLM 0: 全データで訓練
+# - LLM 1: LLM 0 の hard tokens で訓練
+train_ensemble(ensemble, train_data, val_data, config)
+
+# 評価（TRUE Early Exit）
+stats = evaluate_ensemble(ensemble, val_batches)
+print(f"Shallow ratio: {stats['shallow_ratio']}")  # LLM 0でexitした割合
 ```
-
-訓練時も推論時も、シーケンス全体を処理してからexit判定を行う。
 
 ---
 
 ## 過去の設計ミスと教訓
 
-### 1. TRUE Early Exitの誤実装
+### 1. 「Block」という名前の誤解
 
-**問題：** 全トークンを全Blockに通してからマスクで統計を取る実装をしていた。
+**問題：** LEGOBlockをTransformerの「ブロック」と誤解。実際は独立したLLM。
 
-**教訓：** TRUE early exitを謳うなら、実際に計算をスキップしなければ意味がない。
+**解決：** クラス名をEarlyExitLLMに変更し、概念を明確化。
 
-### 2. 不要な機能の実装（generate、KVキャッシュ）
+### 2. TRUE Early Exitの誤実装
 
-**問題：** 事前学習フレームワークなのに生成機能を実装していた。
+**問題：** 全トークンを全LLMに通してからマスクで統計を取る実装。
 
-**教訓：** スコープを最初に明確化する。YAGNI原則。
+**教訓：** TRUE early exitなら実際に計算をスキップする。
 
-### 3. exit判定がTransformerに散在
+### 3. トークン単位でAttention処理
 
-**問題：** exit判定のロジックがTransformer側に書かれていた。
+**問題：** トークンを独立して処理し、Attentionが機能していなかった。
 
-**教訓：** 責務を適切に分離する。Blockはexit判定、Transformerはルーティング。
+**教訓：** Attentionはシーケンス全体を必要とする。
 
-### 4. モデルに訓練ロジックを含める
+### 4. Hard token収集でシーケンス全体を渡す
 
-**問題：** LEGOBlockに`fit()`メソッドを実装し、300行超のクラスになっていた。
+**問題：** hardトークンを含むシーケンス全体を後段LLMに渡していた。
 
-**教訓：** 訓練と推論を分離する。モデルは推論のみ、訓練は外部関数で。
-
-### 5. トークン単位でAttention処理
-
-**問題：** 訓練時にトークンを独立して `(batch, 1, dim)` で処理し、Attentionが機能していなかった。
-
-**教訓：** Attentionはシーケンス全体を必要とする。シーケンス単位で処理し、exit判定のみトークン単位にする。
-
-### 6. Hard example収集でシーケンス全体を渡す
-
-**問題：** 「hardトークンを含むシーケンス全体」をBlock 1に渡し、easyトークンも含めて訓練していた。
-
-**教訓：** Block 1が受け取るべきはhardトークンのみ。easyトークンのhidden statesはBlock 1に流れてはいけない。
-
-### 7. 複数の信頼度計算方式を保持
-
-**問題：** softmax方式、MLP方式、CALM方式など複数の方式をオプションとして保持していた。
-
-**教訓：** 最良と判明した方式に一本化する。メンテナンス性 > 柔軟性。
-
-### 8. 訓練データでvalidation PPLを計算
-
-**問題：** `train_block()`内で訓練データを80/20分割し、20%側でval_pplを計算していた。
-
-**教訓：** 訓練データとvalidationデータは完全に分離する。内部分割は混乱の元。
-
-### 9. ExitClassifierクラスの肥大化
-
-**問題：** ExitClassifierクラスにMLP、CALM、複数方式を混在させていた。
-
-**解決（2024-12-15）：** exit_fn関数方式に変更。シンプルな関数で判定、hidden_historyを活用。
-
-**教訓：** クラスよりも関数の方がシンプルで柔軟な場合がある。
+**教訓：** 後段LLMにはhardトークンのみを渡す。
 
 ---
 
-## 頻発する設計ミス（⚠️ 要注意）
+## ⛔ 禁止事項
 
-### 1. シーケンス単位処理とトークン単位early exitの混同
-
-**原則**：
-- **Attention計算** → シーケンス単位（`(batch, seq_len, dim)`）
-- **Early exit判定** → トークン単位（各トークンが独立してexit）
-- **Hard example収集** → トークン単位（hardトークンのみ抽出）
-- **訓練時のforward** → シーケンス単位（Attentionのため）
-
-### 2. Block間のデータフローの誤解
-
-**正しいフロー**：
-```
-Block 0入力: embedding(tokens)           → (batch, seq_len, dim)
-Block 0出力: hidden_states               → (batch, seq_len, dim)
-Hard収集:    hardトークンのみ抽出         → (num_hard, dim)
-再構成:      新シーケンスに詰め直し       → (new_batch, seq_len, dim)
-Block 1入力: 再構成されたhardトークン     → (new_batch, seq_len, dim)
-```
-
-**よくあるミス**：
-- Block 1にeasyトークンも渡す
-- シーケンス境界を維持しようとする（不要）
+1. **シーケンス単位のhard収集** - トークン単位のみ使用
+2. **easyトークンを後段LLMに渡す** - hardトークンのみ
+3. **generateやKVキャッシュの実装** - 事前学習専用
+4. **モデルクラスに訓練ロジック** - 外部関数で分離

@@ -1,7 +1,7 @@
 """
-LEGO Framework - Transformer Components
+LEGOフレームワーク - Transformerコンポーネント
 
-Note: This is a pre-training only framework. KV cache is not implemented.
+注意: 本フレームワークは事前学習専用です。KVキャッシュは実装していません。
 """
 
 import torch
@@ -15,9 +15,9 @@ from .ffn import GatedLinearUnit
 
 class TransformerLayer(nn.Module):
     """
-    Single Transformer Layer (Attention + FFN).
+    単一のTransformerレイヤー（Attention + FFN）。
 
-    Post-Norm architecture, pre-training only (no KV cache).
+    Post-Normアーキテクチャ。事前学習専用（KVキャッシュなし）。
     """
 
     def __init__(self, dim: int, num_heads: int, ffn_dim: int, max_seq_len: int, causal: bool, eps: float):
@@ -28,7 +28,7 @@ class TransformerLayer(nn.Module):
         self.norm2 = RMSNorm(dim, eps)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Post-Norm architecture
+        # Post-Normアーキテクチャ
         x = self.norm1(x + self.attn(x))
         x = self.norm2(x + self.ffn(x))
         return x
@@ -36,19 +36,18 @@ class TransformerLayer(nn.Module):
 
 class TransformerBlock(nn.Module):
     """
-    Stack of TransformerLayers.
+    TransformerLayerのスタック。
 
-    Standard transformer block that can be used independently or
-    wrapped by LEGOBlock for early exit capability.
+    単独で使用することも、LEGOBlockでラップして早期exit機能を追加することも可能。
 
     Args:
-        dim: Model dimension
-        num_heads: Number of attention heads
-        num_layers: Number of transformer layers in this block
-        ffn_dim: FFN hidden dimension
-        max_seq_len: Maximum sequence length
-        causal: Whether to use causal masking
-        eps: Epsilon for RMSNorm
+        dim: モデル次元
+        num_heads: Attentionヘッド数
+        num_layers: このブロック内のレイヤー数
+        ffn_dim: FFN隠れ層次元
+        max_seq_len: 最大シーケンス長
+        causal: Causalマスクを使用するか
+        eps: RMSNormのイプシロン
     """
 
     def __init__(
@@ -72,15 +71,15 @@ class TransformerBlock(nn.Module):
 
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         """
-        Forward pass through all layers, returning hidden history.
+        全レイヤーを通過し、hidden historyを返す。
 
         Args:
-            x: Input tensor (batch_size, seq_len, dim)
+            x: 入力テンソル (batch_size, seq_len, dim)
 
         Returns:
-            Tuple of:
-            - Output tensor (batch_size, seq_len, dim)
-            - Hidden history: list of hidden states [input, layer1_out, layer2_out, ...]
+            タプル:
+            - 出力テンソル (batch_size, seq_len, dim)
+            - hidden history: 各hidden stateのリスト [入力, レイヤー1出力, レイヤー2出力, ...]
         """
         hidden_history = [x]
         for layer in self.layers:

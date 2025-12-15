@@ -1,7 +1,7 @@
 """
-LEGO Framework - SequenceData
+LEGOフレームワーク - SequenceData
 
-Data container for LEGO block training (sequence-based).
+LEGOブロック訓練用のデータコンテナ（シーケンスベース）。
 """
 
 import torch
@@ -10,77 +10,77 @@ from typing import Iterator, Tuple, Optional
 
 class SequenceData:
     """
-    Container for LEGO block training data (sequence-based).
+    LEGOブロック訓練用データのコンテナ（シーケンスベース）。
 
-    Holds sequences of (hidden_states, targets) for block training.
-    Maintains sequence structure for proper Attention computation.
+    ブロック訓練用の(hidden_states, targets)シーケンスを保持。
+    Attention計算のためにシーケンス構造を維持。
 
     Args:
-        hidden_states: Hidden states tensor (num_sequences, seq_len, dim)
-        targets: Target labels tensor (num_sequences, seq_len)
+        hidden_states: hidden statesテンソル (num_sequences, seq_len, dim)
+        targets: ターゲットラベルテンソル (num_sequences, seq_len)
 
-    Usage:
-        # Create from tensors
+    使用例:
+        # テンソルから作成
         data = SequenceData(hidden_states, targets)
 
-        # Iterate in batches (preserving sequences)
+        # バッチで反復（シーケンスを維持）
         for h, y in data.batches(batch_size=8):
             # h: (batch_size, seq_len, dim)
             # y: (batch_size, seq_len)
             ...
 
-        # Split into train/val
+        # train/valに分割
         train_data, val_data = data.split(train_ratio=0.8)
     """
 
     def __init__(self, hidden_states: torch.Tensor, targets: torch.Tensor):
         if hidden_states.shape[0] != targets.shape[0]:
             raise ValueError(
-                f"Batch size mismatch: hidden_states={hidden_states.shape[0]}, targets={targets.shape[0]}"
+                f"バッチサイズ不一致: hidden_states={hidden_states.shape[0]}, targets={targets.shape[0]}"
             )
         if hidden_states.shape[1] != targets.shape[1]:
             raise ValueError(
-                f"Seq len mismatch: hidden_states={hidden_states.shape[1]}, targets={targets.shape[1]}"
+                f"シーケンス長不一致: hidden_states={hidden_states.shape[1]}, targets={targets.shape[1]}"
             )
         self._hidden_states = hidden_states  # (num_sequences, seq_len, dim)
         self._targets = targets  # (num_sequences, seq_len)
 
     @property
     def hidden_states(self) -> torch.Tensor:
-        """Hidden states tensor (num_sequences, seq_len, dim)."""
+        """hidden statesテンソル (num_sequences, seq_len, dim)。"""
         return self._hidden_states
 
     @property
     def targets(self) -> torch.Tensor:
-        """Target labels tensor (num_sequences, seq_len)."""
+        """ターゲットラベルテンソル (num_sequences, seq_len)。"""
         return self._targets
 
     @property
     def dim(self) -> int:
-        """Hidden state dimension."""
+        """hidden state次元。"""
         return self._hidden_states.shape[-1]
 
     @property
     def seq_len(self) -> int:
-        """Sequence length."""
+        """シーケンス長。"""
         return self._hidden_states.shape[1]
 
     @property
     def num_sequences(self) -> int:
-        """Number of sequences."""
+        """シーケンス数。"""
         return self._hidden_states.shape[0]
 
     @property
     def num_tokens(self) -> int:
-        """Total number of tokens."""
+        """総トークン数。"""
         return self._hidden_states.shape[0] * self._hidden_states.shape[1]
 
     def __len__(self) -> int:
-        """Number of sequences."""
+        """シーケンス数。"""
         return self.num_sequences
 
     def to(self, device: str) -> "SequenceData":
-        """Move data to specified device."""
+        """指定デバイスにデータを移動。"""
         return SequenceData(
             self._hidden_states.to(device),
             self._targets.to(device)
@@ -92,14 +92,14 @@ class SequenceData:
         shuffle: bool
     ) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
         """
-        Iterate over batched sequences for training.
+        訓練用にバッチ化されたシーケンスを反復。
 
         Args:
-            batch_size: Number of sequences per batch
-            shuffle: Whether to shuffle before batching
+            batch_size: バッチあたりのシーケンス数
+            shuffle: バッチ化前にシャッフルするか
 
         Yields:
-            Tuple of (hidden_states, targets)
+            (hidden_states, targets)のタプル
             - hidden_states: (batch_size, seq_len, dim)
             - targets: (batch_size, seq_len)
         """
@@ -117,13 +117,13 @@ class SequenceData:
 
     def split(self, train_ratio: float) -> Tuple["SequenceData", "SequenceData"]:
         """
-        Split into training and validation sets.
+        訓練セットと検証セットに分割。
 
         Args:
-            train_ratio: Ratio of data for training
+            train_ratio: 訓練用データの割合
 
         Returns:
-            Tuple of (train_data, val_data)
+            (train_data, val_data)のタプル
         """
         num_sequences = len(self)
         num_train = int(num_sequences * train_ratio)
@@ -145,7 +145,7 @@ class SequenceData:
 
     @classmethod
     def empty(cls, seq_len: int, dim: int, device: Optional[str]) -> "SequenceData":
-        """Create an empty SequenceData instance."""
+        """空のSequenceDataインスタンスを作成。"""
         hidden_states = torch.empty(0, seq_len, dim)
         targets = torch.empty(0, seq_len, dtype=torch.long)
         if device:
