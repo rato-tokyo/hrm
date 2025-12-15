@@ -1,14 +1,12 @@
 """
-LEGO Framework - LEGOLLM Training and Evaluation
+LEGO Framework - LEGOLLM Training
 
-Functions for training complete LEGOLLM models (all blocks) and evaluation.
+Functions for training complete LEGOLLM models (all blocks).
 """
 
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
-import numpy as np
 from typing import Dict, Any, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -144,70 +142,6 @@ def _transform_data_through_block(
         torch.cat(all_hidden),
         torch.cat(all_targets),
     )
-
-
-def evaluate_legollm(
-    model: "LEGOLLM",
-    val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
-) -> Dict[str, Any]:
-    """
-    Evaluate LEGOLLM with TRUE Early Exit.
-
-    Args:
-        model: Trained LEGOLLM model
-        val_batches: List of (x, y) batches for validation
-
-    Returns:
-        Dict with ppl, accuracy, shallow_ratio, compute_cost, exit_counts
-    """
-    device = next(model.parameters()).device
-    model.eval()
-
-    total_loss = 0.0
-    total_tokens = 0
-    correct = 0
-    all_exit_counts = [0] * len(model.blocks)
-
-    with torch.no_grad():
-        for x, y in val_batches:
-            x, y = x.to(device), y.to(device)
-            logits, stats = model.forward(x, return_stats=True)
-
-            # Accumulate exit counts
-            for i, count in enumerate(stats['exit_counts']):
-                all_exit_counts[i] += count
-
-            # Loss and accuracy
-            logits_flat = logits.view(-1, logits.size(-1))
-            y_flat = y.view(-1)
-            total_loss += F.cross_entropy(logits_flat, y_flat, reduction='sum').item()
-            total_tokens += y_flat.numel()
-            correct += int((logits_flat.argmax(dim=-1) == y_flat).sum().item())
-
-    ppl = float(np.exp(total_loss / total_tokens))
-    acc = correct / total_tokens
-
-    # Compute shallow ratio
-    shallow_exits = sum(all_exit_counts[:-1])
-    shallow_ratio = shallow_exits / total_tokens if total_tokens > 0 else 0.0
-
-    # Compute cost
-    total_layers_computed = 0
-    layers_so_far = 0
-    for block_idx, count in enumerate(all_exit_counts):
-        layers_so_far += model.blocks[block_idx].num_layers
-        total_layers_computed += count * layers_so_far
-    compute_cost = total_layers_computed / (total_tokens * model.num_layers) if total_tokens > 0 else 1.0
-
-    return {
-        'ppl': ppl,
-        'accuracy': acc,
-        'shallow_ratio': shallow_ratio,
-        'compute_cost': compute_cost,
-        'compute_savings': 1.0 - compute_cost,
-        'exit_counts': all_exit_counts,
-        'total_tokens': total_tokens,
-    }
 
 
 def create_sequence_data(
