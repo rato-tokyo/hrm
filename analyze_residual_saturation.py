@@ -22,6 +22,18 @@ from pathlib import Path
 from scipy import stats
 
 
+def get_device():
+    """Get available device."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+DEVICE = get_device()
+
+
 def load_data(path: str = "layerwise_residuals.npz"):
     """Load residual data."""
     print(f"Loading {path}...")
@@ -32,6 +44,7 @@ def load_data(path: str = "layerwise_residuals.npz"):
     num_layers = int(data['num_layers'])
 
     print(f"Config: dim={dim}, vocab_size={vocab_size}, num_layers={num_layers}")
+    print(f"Device: {DEVICE}")
 
     return data, dim, vocab_size, num_layers
 
@@ -39,17 +52,21 @@ def load_data(path: str = "layerwise_residuals.npz"):
 def compute_top1_batched(
     h: np.ndarray,
     W: np.ndarray,
-    batch_size: int = 4096
+    batch_size: int = 8192
 ) -> np.ndarray:
-    """Compute top-1 predictions in batches to avoid OOM."""
+    """Compute top-1 predictions in batches using GPU."""
+    W_tensor = torch.from_numpy(W).to(DEVICE)
+    h_tensor = torch.from_numpy(h).to(DEVICE)
+
     num_tokens = h.shape[0]
     top1_list = []
 
-    for i in range(0, num_tokens, batch_size):
-        h_batch = h[i:i + batch_size]
-        logits_batch = h_batch @ W.T  # (batch, vocab_size)
-        top1_batch = np.argmax(logits_batch, axis=-1)
-        top1_list.append(top1_batch)
+    with torch.no_grad():
+        for i in range(0, num_tokens, batch_size):
+            h_batch = h_tensor[i:i + batch_size]
+            logits_batch = h_batch @ W_tensor.T
+            top1_batch = logits_batch.argmax(dim=-1).cpu().numpy()
+            top1_list.append(top1_batch)
 
     return np.concatenate(top1_list)
 
