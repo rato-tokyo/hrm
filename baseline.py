@@ -50,7 +50,7 @@ class BaselineLLM(nn.Module):
             logits: (batch_size, seq_len, vocab_size)
         """
         h = self.embedding(x)
-        h = self.transformer(h)
+        h, _ = self.transformer(h)  # Ignore hidden_history
         return self.output_head(h)
 
     @property

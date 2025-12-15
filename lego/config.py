@@ -16,7 +16,7 @@ class TrainerConfig:
     Used by train_block() to configure training hyperparameters.
     All fields are required (no default values).
 
-    Uses CALM-style exit classifier (cos_sim based, no training required).
+    Exit decision uses exit_fn with hidden_history (default: CALM-style cos_sim).
 
     Attributes:
         batch_size: Batch size for training
