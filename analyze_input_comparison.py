@@ -210,9 +210,9 @@ def experiment_layer(
     print(f"F1: {r3['f1'] * 100:.1f}%")
     results['h_out_delta'] = r3
 
-    # 4. delta + prev_delta (if available)
+    # 4. delta.prev_delta (if available)
     if prev_delta is not None:
-        print("\n--- Method 4: delta + prev_delta ---")
+        print("\n--- Method 4: delta.prev_delta ---")
         delta_prev = torch.cat([delta, prev_delta], dim=-1)
         r4 = train_and_evaluate(
             delta_prev[train_idx], labels[train_idx],
@@ -220,10 +220,25 @@ def experiment_layer(
             input_dim=dim * 2, hidden_dim=hidden_dim,
         )
         print(f"F1: {r4['f1'] * 100:.1f}%")
-        results['delta_prev'] = r4
+        results['delta.prev'] = r4
     else:
-        print("\n--- Method 4: delta + prev_delta (N/A for layer 1) ---")
-        results['delta_prev'] = None
+        print("\n--- Method 4: delta.prev_delta (N/A for layer 1) ---")
+        results['delta.prev'] = None
+
+    # 5. delta - prev_delta (if available)
+    if prev_delta is not None:
+        print("\n--- Method 5: delta - prev_delta ---")
+        delta_diff = delta - prev_delta  # 変化の加速度
+        r5 = train_and_evaluate(
+            delta_diff[train_idx], labels[train_idx],
+            delta_diff[val_idx], labels[val_idx],
+            input_dim=dim, hidden_dim=hidden_dim,
+        )
+        print(f"F1: {r5['f1'] * 100:.1f}%")
+        results['delta_diff'] = r5
+    else:
+        print("\n--- Method 5: delta - prev_delta (N/A for layer 1) ---")
+        results['delta_diff'] = None
 
     results['saturation_rate'] = saturation_rate
 
@@ -262,13 +277,14 @@ def main():
     print("SUMMARY")
     print("=" * 60)
 
-    print(f"\n{'Layer':<8} {'Sat%':<8} {'h_out':<10} {'delta':<10} {'h+d':<10} {'d+prev':<10}")
-    print("-" * 56)
+    print(f"\n{'Layer':<8} {'Sat%':<8} {'h_out':<10} {'delta':<10} {'h.d':<10} {'d.prev':<10} {'d-prev':<10}")
+    print("-" * 68)
 
     h_out_f1s = []
     delta_f1s = []
     h_out_delta_f1s = []
     delta_prev_f1s = []
+    delta_diff_f1s = []
 
     for layer, results in all_results.items():
         sat = results['saturation_rate'] * 100
@@ -280,21 +296,24 @@ def main():
         delta_f1s.append(delta_f1)
         h_out_delta_f1s.append(h_out_delta_f1)
 
-        if results['delta_prev'] is not None:
-            delta_prev_f1 = results['delta_prev']['f1'] * 100
+        if results['delta.prev'] is not None:
+            delta_prev_f1 = results['delta.prev']['f1'] * 100
+            delta_diff_f1 = results['delta_diff']['f1'] * 100
             delta_prev_f1s.append(delta_prev_f1)
-            print(f"{layer:<8} {sat:<7.1f}% {h_out_f1:<9.1f}% {delta_f1:<9.1f}% {h_out_delta_f1:<9.1f}% {delta_prev_f1:<9.1f}%")
+            delta_diff_f1s.append(delta_diff_f1)
+            print(f"{layer:<8} {sat:<7.1f}% {h_out_f1:<9.1f}% {delta_f1:<9.1f}% {h_out_delta_f1:<9.1f}% {delta_prev_f1:<9.1f}% {delta_diff_f1:<9.1f}%")
         else:
-            print(f"{layer:<8} {sat:<7.1f}% {h_out_f1:<9.1f}% {delta_f1:<9.1f}% {h_out_delta_f1:<9.1f}% {'N/A':<10}")
+            print(f"{layer:<8} {sat:<7.1f}% {h_out_f1:<9.1f}% {delta_f1:<9.1f}% {h_out_delta_f1:<9.1f}% {'N/A':<10} {'N/A':<10}")
 
-    print("-" * 56)
+    print("-" * 68)
 
     avg_h_out = np.mean(h_out_f1s)
     avg_delta = np.mean(delta_f1s)
     avg_h_out_delta = np.mean(h_out_delta_f1s)
     avg_delta_prev = np.mean(delta_prev_f1s) if delta_prev_f1s else 0
+    avg_delta_diff = np.mean(delta_diff_f1s) if delta_diff_f1s else 0
 
-    print(f"{'Average':<8} {'':<8} {avg_h_out:<9.1f}% {avg_delta:<9.1f}% {avg_h_out_delta:<9.1f}% {avg_delta_prev:<9.1f}%")
+    print(f"{'Average':<8} {'':<8} {avg_h_out:<9.1f}% {avg_delta:<9.1f}% {avg_h_out_delta:<9.1f}% {avg_delta_prev:<9.1f}% {avg_delta_diff:<9.1f}%")
 
     # Analysis
     print("\n" + "=" * 60)
@@ -319,7 +338,7 @@ def main():
         print(f"   → 情報が冗長")
 
     if delta_prev_f1s:
-        print(f"\n3. delta + prev_delta の効果:")
+        print(f"\n3. delta.prev_delta の効果:")
         improvement_prev = avg_delta_prev - avg_delta
         if improvement_prev > 0:
             print(f"   前層の delta で改善（+{improvement_prev:.1f}%）")
@@ -327,14 +346,26 @@ def main():
         else:
             print(f"   前層の delta による改善なし（{improvement_prev:.1f}%）")
 
+    if delta_diff_f1s:
+        print(f"\n4. delta - prev_delta の効果:")
+        improvement_diff = avg_delta_diff - avg_delta
+        if improvement_diff > 0:
+            print(f"   変化の加速度で改善（+{improvement_diff:.1f}%）")
+            print(f"   → 変化のトレンドが有用")
+        else:
+            print(f"   変化の加速度による改善なし（{improvement_diff:.1f}%）")
+            print(f"   → 絶対的な変化量の方が重要")
+
     # Best method
     methods = {
         'h_out': avg_h_out,
         'delta': avg_delta,
-        'h_out + delta': avg_h_out_delta,
+        'h_out.delta': avg_h_out_delta,
     }
     if delta_prev_f1s:
-        methods['delta + prev_delta'] = avg_delta_prev
+        methods['delta.prev_delta'] = avg_delta_prev
+    if delta_diff_f1s:
+        methods['delta - prev_delta'] = avg_delta_diff
 
     best_method = max(methods, key=methods.get)
     print(f"\n結論: 最良の入力は「{best_method}」（平均 F1 = {methods[best_method]:.1f}%）")
