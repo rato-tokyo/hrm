@@ -1,13 +1,14 @@
 """
-LEGO Framework - ExitClassifier
+LEGO Framework - ExitClassifier (CALM Style)
 
-Predicts per-token loss from hidden states using MLP (2-layer).
-Low predicted loss = easy token = should exit early.
+Uses cosine similarity between layer input and output for exit decision.
+No training required - purely based on representation stability.
 
-Architecture decision (2024-12-15):
-- Linear Router: 17.2% Oracle
-- MLP Router (2-layer): 30.2% Oracle
-- MLP provides +13% improvement over Linear.
+CALM paper reference:
+"State Propagation: the cosine similarity between the hidden states
+of consecutive layers"
+
+High cos_sim = small change in layer = representation stabilized = should exit.
 """
 
 from __future__ import annotations
@@ -20,77 +21,49 @@ from typing import Tuple
 
 class ExitClassifier(nn.Module):
     """
-    MLP-based loss predictor for early exit decision.
+    CALM-style exit classifier using cosine similarity.
 
-    Uses 2-layer MLP to predict per-token loss from hidden states.
-    This approach showed 30.2% Oracle performance vs 17.2% for Linear.
+    Computes cos_sim(h_in, h_out) to determine if representation has stabilized.
+    High similarity means the layer made little change, suggesting saturation.
 
-    Architecture:
-        fc1: Linear(dim, hidden_dim) + ReLU
-        fc2: Linear(hidden_dim, 1)
-
-    Exit decision: predicted_loss <= threshold means the token should exit.
-
-    Args:
-        dim: Input dimension (model dimension)
-        hidden_dim: Hidden layer dimension for MLP
+    No parameters to train - threshold is set based on quantile analysis.
     """
 
-    def __init__(self, dim: int, hidden_dim: int):
+    def __init__(self):
         super().__init__()
-        self.fc1 = nn.Linear(dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, 1)
-        self.threshold = 0.0  # Set by trainer after training
+        self.threshold = 0.0  # Set by trainer after analysis
 
-    @property
-    def dim(self) -> int:
-        """Input dimension."""
-        return self.fc1.in_features
-
-    @property
-    def hidden_dim(self) -> int:
-        """Hidden layer dimension."""
-        return self.fc1.out_features
-
-    def forward(self, h: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self, h_in: torch.Tensor, h_out: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Compute predicted loss and exit decision.
+        Compute cosine similarity and exit decision.
 
         Args:
-            h: Hidden states (batch_size, seq_len, dim)
+            h_in: Input hidden states (batch_size, seq_len, dim)
+            h_out: Output hidden states (batch_size, seq_len, dim)
 
         Returns:
-            predicted_loss: Token-level predicted loss (batch_size, seq_len)
+            cos_sim: Cosine similarity per token (batch_size, seq_len)
             should_exit: Boolean mask where True = should exit (batch_size, seq_len)
         """
-        predicted_loss = self._mlp_forward(h)
-        should_exit = predicted_loss <= self.threshold
-        return predicted_loss, should_exit
+        cos_sim = self.compute_similarity(h_in, h_out)
+        should_exit = cos_sim >= self.threshold
+        return cos_sim, should_exit
 
-    def compute_confidence(self, h: torch.Tensor) -> torch.Tensor:
+    def compute_similarity(
+        self, h_in: torch.Tensor, h_out: torch.Tensor
+    ) -> torch.Tensor:
         """
-        Compute predicted loss (kept as compute_confidence for API compatibility).
-
-        Note: Lower value = higher confidence = easier token.
-        This is the opposite of the old sigmoid-based approach.
+        Compute cosine similarity between h_in and h_out.
 
         Args:
-            h: Hidden states (batch_size, seq_len, dim)
+            h_in: Input hidden states (batch_size, seq_len, dim)
+            h_out: Output hidden states (batch_size, seq_len, dim)
 
         Returns:
-            predicted_loss: Token-level predicted loss (batch_size, seq_len)
+            cos_sim: Cosine similarity per token (batch_size, seq_len)
         """
-        return self._mlp_forward(h)
-
-    def _mlp_forward(self, h: torch.Tensor) -> torch.Tensor:
-        """
-        MLP forward pass: fc1 -> ReLU -> fc2.
-
-        Args:
-            h: Hidden states (batch_size, seq_len, dim)
-
-        Returns:
-            predicted_loss: Token-level predicted loss (batch_size, seq_len)
-        """
-        x = F.relu(self.fc1(h))
-        return self.fc2(x).squeeze(-1)
+        h_in_norm = F.normalize(h_in, dim=-1)
+        h_out_norm = F.normalize(h_out, dim=-1)
+        return (h_in_norm * h_out_norm).sum(dim=-1)

@@ -15,7 +15,7 @@
 ```
 TransformerLayer    → 1層（Attention + FFN）
 TransformerBlock    → 複数層のスタック（標準Transformer）
-LEGOBlock           → TransformerBlock + early exit機能
+LEGOBlock           → TransformerBlock + CALM-style early exit
 LEGOLLM             → LEGOBlock × N（モデル全体）
 train_block()       → Block訓練関数（外部）
 ```
@@ -30,11 +30,10 @@ lego/
 │   ├── ffn.py          # GatedLinearUnit
 │   └── norm.py         # RMSNorm
 ├── block.py            # LEGOBlock（推論のみ）
-├── exit_classifier.py  # ExitClassifier（信頼度計算・exit判定）
+├── exit_classifier.py  # ExitClassifier（CALM-style cos_sim）
 ├── model.py            # LEGOLLM（推論のみ）
-├── model_trainer.py    # train_legollm(), evaluate_legollm()（LEGOLLM訓練・評価）
-├── trainer.py          # train_block(), _train_lm()（LEGOBlock訓練）
-├── exit_trainer.py     # train_exit_classifier(), collect_hard_examples()
+├── model_trainer.py    # train_legollm(), evaluate_legollm()
+├── trainer.py          # train_block(), _train_lm()
 ├── data.py             # SequenceData
 └── config.py           # ExperimentConfig, TrainerConfig
 ```
@@ -48,57 +47,26 @@ LEGOは、**LEGOBlock単位の段階的訓練**と**TRUE Early Exit**推論を�
 ### 訓練フロー
 
 1. **Block 0**: 最初のブロックを全データで訓練
-2. **exit_classifier訓練**: LM訓練後、exit_classifierを訓練（loss方式）
-3. **Hard Sequence収集**: 信頼度の低いトークンを含むシーケンスを自動出力
+2. **cos_sim計算**: LM訓練後、cos_sim(h_in, h_out)を計算してthreshold設定
+3. **Hard Sequence収集**: cos_simが低い（変化が大きい）トークンを収集
 4. **Block 1+**: Hard Sequencesのみで訓練
-5. **推論**: TRUE Early Exitで高信頼度トークンは後続Blockを**実際にスキップ**
+5. **推論**: TRUE Early Exitで高cos_simトークンは後続Blockを**実際にスキップ**
 
-### train_block()の内部フロー（重要）
-
-**exit_classifierの訓練はLM訓練完了後に行う**：
+### train_block()の内部フロー
 
 ```
 train_block()
-├── 1. データ分割 (train/val)
-├── 2. _train_lm()                          ← Transformer + output_head の訓練（early stopping付き）
-├── 3. block.forward()で全データを処理       ← hidden_states, logits を取得
-├── 4. train_exit_classifier()              ← exit_classifier のみ訓練（hidden_states, logits, targets を渡す）
-├── 5. collect_hard_examples()              ← threshold設定 + hard example収集
-└── 6. 統計をまとめてreturn
+├── 1. _train_lm()                     ← Transformer + output_head の訓練（early stopping付き）
+├── 2. cos_sim計算（全データ）          ← cos_sim(h_in, h_out) を計算
+├── 3. threshold設定                    ← hard_ratio quantileで設定
+├── 4. hard example収集                 ← cos_sim < threshold のトークンを抽出
+└── 5. 統計をまとめてreturn
 ```
 
-**この順序の理由**：
-- exit_classifierの訓練ラベルはLMの出力（logits）に依存する
-- `exit_labels = torch.exp(-cross_entropy_loss)` を計算するため、LMが収束してからでないと適切なラベルが得られない
-- train_exit_classifier()はLEGOBlockの内部構造を知らない（hidden_states, logits, targetsのみ受け取る）
-
-### exit_trainer.pyの設計（重要）
-
-**exit_trainerはLEGOBlockに依存しない**：
-
-```python
-# train_exit_classifier()の引数
-train_exit_classifier(
-    exit_classifier,   # 訓練対象
-    hidden_states,     # block.forward()の出力
-    exit_labels,       # 事前計算済みラベル（exp(-loss)）
-    lr, num_epochs, is_verbose
-)
-
-# collect_hard_examples()の引数
-collect_hard_examples(
-    exit_classifier,   # 訓練済みExitClassifier
-    hidden_states,     # block.forward()の出力
-    targets,           # 正解ラベル
-    seq_len,           # シーケンス長
-    hard_ratio         # hard example比率
-)
-```
-
-**この設計の利点**：
-- exit_trainerはLEGOBlockの内部構造を知らない
-- ExitClassifierを単体でテスト可能
-- 別のモデル構造でもlogitsさえあれば使える
+**CALM式の利点**：
+- exit_classifierの訓練が不要（計算コスト削減）
+- cos_simは訓練不要で計算可能
+- 深い層ほど高精度（実験で確認済み）
 
 ---
 
@@ -106,13 +74,12 @@ collect_hard_examples(
 
 1. **事前学習専用** - generate、KVキャッシュは実装しない
 2. **コンポジション方式** - LEGOBlockはTransformerBlockをラップ（継承ではない）
-3. **LEGOBlockがexit判定を所有** - 各Blockはthresholdを持ち、exit_classifierで信頼度計算
+3. **CALM-style exit判定** - cos_sim(h_in, h_out) >= threshold でexit
 4. **LEGOLLMはルーティングのみ** - Block間のインデックス管理と統計計算
 5. **トークン単位のEarly Exit** - exit判定はトークン単位（バッチ単位ではない）
 6. **TRUE Early Exit** - exitしたトークンの後続blockは処理しない
 7. **訓練と推論の分離** - LEGOBlockは推論のみ、訓練は`train_block()`関数
-8. **デフォルト値禁止** - 関数・クラスの引数にデフォルト値を設定しない（意図しない動作の原因）
-9. **シーケンス単位処理** - Attention計算のためシーケンス全体を処理、exit判定のみトークン単位
+8. **シーケンス単位処理** - Attention計算のためシーケンス全体を処理、exit判定のみトークン単位
 
 ---
 
@@ -121,20 +88,20 @@ collect_hard_examples(
 1. `LEGOBlock.forward()` - Transformer処理 + exit判定（h, logits, should_exit）
 2. `LEGOLLM.forward()` - TRUE Early Exit推論
 3. `train_legollm()` - LEGOLLM全体の訓練（model_trainer.py）
-4. `train_block()` - LEGOBlock訓練 + exit_classifier訓練 + hard example収集（trainer.py）
+4. `train_block()` - LEGOBlock訓練 + hard example収集（trainer.py）
 5. `evaluate_legollm()` - LEGOLLM評価（model_trainer.py）
 6. `SequenceData` - hidden states + targetsのコンテナ（シーケンス単位）
 
 ### LEGOBlockの責務（シンプル）
 
 ```python
-# LEGOBlockはTransformerBlockとexit_hidden_dimを引数で受け取る（明示的コンポジション）
-block = LEGOBlock(TransformerBlock(dim=256, num_heads=8, num_layers=4, ...), exit_hidden_dim=128)
+# LEGOBlockはTransformerBlockのみを引数で受け取る
+block = LEGOBlock(TransformerBlock(dim=256, num_heads=8, num_layers=4, ...))
 
 class LEGOBlock(nn.Module):
-    def __init__(self, transformer: TransformerBlock, exit_hidden_dim: int):
+    def __init__(self, transformer: TransformerBlock):
         self.transformer = transformer           # 外部から注入
-        self.exit_classifier = ExitClassifier(transformer.dim, exit_hidden_dim)  # MLP-based
+        self.exit_classifier = ExitClassifier()  # CALM-style (パラメータなし)
         self.output_head: nn.Linear | None = None  # LEGOLLMが設定
 
     # プロパティ（transformerに委譲）
@@ -148,73 +115,64 @@ class LEGOBlock(nn.Module):
     set_output_head()                      # 共有出力層の設定
 ```
 
-### ExitClassifierの責務（MLP-based）
+### ExitClassifierの責務（CALM-style）
 
-**2024-12-15実験結果**：MLP Router（30.2% Oracle）vs Linear Router（17.2% Oracle）
-MLPは+13%の性能向上をもたらすため、MLPを採用。
+**2024-12-15 方針変更**: MLP方式からCALM式（cos_sim）に変更。
+訓練不要で計算コストが低く、深い層で高精度。
 
 ```python
 class ExitClassifier(nn.Module):
-    def __init__(self, dim: int, hidden_dim: int):
-        # 2-layer MLP: fc1 -> ReLU -> fc2
-        self.fc1 = nn.Linear(dim, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, 1)
+    def __init__(self):
         self.threshold = 0.0  # trainerが設定
 
     # メソッド
-    forward(h) → (predicted_loss, should_exit)
-    compute_confidence(h) → predicted_loss
-    _mlp_forward(h) → predicted_loss  # 内部: ReLU(fc1(h)) -> fc2
+    forward(h_in, h_out) → (cos_sim, should_exit)
+    compute_similarity(h_in, h_out) → cos_sim
 ```
 
 ---
 
-## 信頼度計算方式（重要：削除禁止）
+## 信頼度計算方式（CALM-style）
 
-**MLP-based exit_classifier + loss方式を使用する**：
+**cos_sim(h_in, h_out) を使用する**：
 
 ```python
-# BDR-style: exit_classifierはlossを直接予測（MLP: 2-layer）
-predicted_loss = block.exit_classifier.compute_confidence(h)
-# 内部: fc2(ReLU(fc1(h))).squeeze(-1)  # 2-layer MLP
+# CALM State Propagation
+cos_sim = exit_classifier.compute_similarity(h_in, h_out)
+# 内部: F.normalize(h_in) · F.normalize(h_out)
 
-# exit_classifierの訓練ラベル（LM訓練完了後）- exit_trainer.pyで使用
-per_token_loss = F.cross_entropy(logits, y, reduction='none')
-exit_labels = per_token_loss  # lossそのもの（exp(-loss)ではない）
+# Exit判定
+should_exit = cos_sim >= threshold
+# 高いcos_sim = 層による変化が小さい = 収束 = exit可能
 ```
 
-### BDR-style方式の理由
+### CALM式の理由
 
-**問題**: 以前の `exp(-loss)` 方式では、ラベルがほぼ0に集中（mean=0.06）し、
-sigmoid出力（0.5付近）との乖離が大きく、学習が機能しなかった。
+**CALM論文より**:
+> "State Propagation: the cosine similarity between the hidden states of consecutive layers"
 
-**解決**: BDR（Bimodal Distribution Removal）研究に倣い、lossを直接予測。
-- **低い predicted_loss = easy token = early exit**
-- **高い predicted_loss = hard token = 次のBlockへ**
-
-### 訓練フロー
-
-1. **LM訓練**: 言語モデリング損失でTransformerを訓練（early stopping付き）
-2. **exit_classifier訓練**: LM訓練完了後、hidden_statesからlossを予測するよう訓練
-3. **threshold設定**: predicted_lossの分布からquantileでthresholdを計算
+**利点**:
+- **訓練不要**: MLP等の訓練が不要
+- **計算コスト低**: 内積のみ
+- **深い層で高精度**: 実験でLayer 7で69.2% F1（Recall 93.1%）
 
 ---
 
 ## Hard Example収集方式（重要：削除禁止）
 
-**トークン単位で収集**：`hard_ratio=0.5`ならpredicted_loss上位50%のトークンのみをhard exampleとして収集。
+**トークン単位で収集**：`hard_ratio=0.5`ならcos_sim下位50%のトークンをhard exampleとして収集。
 
 ```python
-# 正しい実装（トークン単位）- exit_trainer.py の collect_hard_examples()
-# 1. exit_classifierでpredicted_lossを計算
-predicted_loss = block.exit_classifier.compute_confidence(h_out)
+# 正しい実装（トークン単位）- trainer.py の _collect_hard_examples_calm()
+# 1. cos_simを計算
+cos_sim = block.exit_classifier.compute_similarity(h_in, h_out)
 
-# 2. thresholdを計算（上位hard_ratio%がhard）
-# high predicted_loss = hard token
-threshold = torch.quantile(all_preds_flat, 1.0 - hard_ratio)
+# 2. thresholdを計算（下位hard_ratio%がhard）
+# low cos_sim = hard token
+threshold = torch.quantile(all_cos_flat, hard_ratio)
 
 # 3. 各トークンがhardかどうか判定
-hard_token_mask = predicted_loss > threshold  # (num_sequences, seq_len)
+hard_token_mask = cos_sim < threshold  # (num_sequences, seq_len)
 
 # 4. hardトークンのみを抽出
 hard_hidden = hidden_out[hard_token_mask]  # (num_hard_tokens, dim)
@@ -236,22 +194,8 @@ return SequenceData(hard_hidden, hard_targets)
 
 | 用語 | 対象 | 選択基準 | 結果 |
 |------|------|----------|------|
-| **トークン単位収集** | 個々のトークン | 各トークンのconfidence < threshold | hardトークンのみ抽出、repackして新シーケンス作成 |
-| **シーケンス単位収集** | シーケンス全体 | シーケンス内の最小confidenceで判定 | hardシーケンス全体を選択（easyトークンも含む） |
-
-### シーケンス単位収集の詳細（⚠️ 使用禁止）
-
-```python
-# シーケンス単位収集（使用禁止）
-# 対象: シーケンス全体
-# 選択基準: シーケンス内の最小confidence（= 最も難しいトークンのconfidence）
-min_confidence_per_seq = confidences.min(dim=-1).values  # (num_sequences,)
-hard_seq_mask = min_confidence_per_seq < threshold  # (num_sequences,)
-
-# 結果: 難しいトークンを1つでも含むシーケンス全体を選択
-hard_hidden = hidden_out[hard_seq_mask]  # シーケンス全体（easyトークンも含む）
-hard_targets = targets[hard_seq_mask]
-```
+| **トークン単位収集** | 個々のトークン | 各トークンのcos_sim < threshold | hardトークンのみ抽出、repackして新シーケンス作成 |
+| **シーケンス単位収集** | シーケンス全体 | シーケンス内の最小cos_simで判定 | hardシーケンス全体を選択（easyトークンも含む） |
 
 ### 禁止理由
 
@@ -262,25 +206,6 @@ hard_targets = targets[hard_seq_mask]
 ### 永続的な方針
 
 **トークン単位収集のみを使用する**。シーケンス単位収集は今後一切実装しない。
-
-文脈が失われる問題は、repack後のシーケンスでAttentionが新たな文脈を構築することで対処する。
-元のシーケンス境界を維持する必要はない。
-
-### Threshold自動設定方式（重要：削除禁止）
-
-**thresholdは`train_block()`内で自動計算される**：外部からハードコードしない。
-
-```python
-# 正しい実装（quantile方式）
-# hard_ratio=0.5なら、下位50%がhardトークン
-threshold = torch.quantile(all_confidences, hard_ratio)
-block.threshold = threshold
-```
-
-これにより：
-- exit_classifierの出力分布に基づいた適切なthreshold
-- `hard_ratio`と推論時のexit率が一致
-- 外部での手動調整が不要
 
 ---
 
@@ -322,69 +247,47 @@ h = block.forward(tokens)  # (batch, 1, dim)
 
 **教訓：** 責務を適切に分離する。Blockはexit判定、Transformerはルーティング。
 
-### 4. 「保持する」を複雑に実装
-
-**問題：** 「後続blockのKVキャッシュを保持する」処理を複雑に実装しようとした。
-
-**教訓：** 「Xを保持する」は「Xを変更しない」と同義。何もしなければいい。
-
-### 5. モデルに訓練ロジックを含める
+### 4. モデルに訓練ロジックを含める
 
 **問題：** LEGOBlockに`fit()`メソッドを実装し、300行超のクラスになっていた。
 
 **教訓：** 訓練と推論を分離する。モデルは推論のみ、訓練は外部関数で。
 
-### 6. トークン単位でAttention処理
+### 5. トークン単位でAttention処理
 
 **問題：** 訓練時にトークンを独立して `(batch, 1, dim)` で処理し、Attentionが機能していなかった。
 
 **教訓：** Attentionはシーケンス全体を必要とする。シーケンス単位で処理し、exit判定のみトークン単位にする。
 
-### 7. Hard example収集でシーケンス全体を渡す
+### 6. Hard example収集でシーケンス全体を渡す
 
 **問題：** 「hardトークンを含むシーケンス全体」をBlock 1に渡し、easyトークンも含めて訓練していた。
 
 **教訓：** Block 1が受け取るべきはhardトークンのみ。easyトークンのhidden statesはBlock 1に流れてはいけない。
 
-### 8. 複数の信頼度計算方式を保持
+### 7. 複数の信頼度計算方式を保持
 
-**問題：** softmax方式、exit_classifier + correct/distill/loss など複数の方式をオプションとして保持していた。
+**問題：** softmax方式、MLP方式、CALM方式など複数の方式をオプションとして保持していた。
 
-**教訓：** 実験で最良と判明した方式（exit_classifier + loss）に一本化する。メンテナンス性 > 柔軟性。
+**教訓：** 最良と判明した方式（CALM式）に一本化する。メンテナンス性 > 柔軟性。
 
-### 9. 訓練データでvalidation PPLを計算
+### 8. 訓練データでvalidation PPLを計算
 
-**問題：** `train_block()`内で訓練データを80/20分割し、20%側でval_pplを計算していた。結果として「val_ppl」は訓練データの一部の性能であり、真のvalidationセットの性能ではなかった。
-
-**発覚経緯：** サニティチェック（Final PPL > worst block val_ppl）が失敗し、調査の結果バグと判明。
-
-**解決：** `train_block()`と`train_legollm()`に別々の`train_data`と`val_data`を渡す設計に変更。WikiTextのvalidationセットを独立して使用するようにした。
+**問題：** `train_block()`内で訓練データを80/20分割し、20%側でval_pplを計算していた。
 
 **教訓：** 訓練データとvalidationデータは完全に分離する。内部分割は混乱の元。
 
-### 10. 巨大なlogitsテンソルをメモリに保持
+### 9. MLP-based ExitClassifierの採用と廃止
 
-**問題：** exit_classifier訓練のため、全データのlogits `(num_sequences, seq_len, vocab_size)` をメモリに保持。vocab_size=50000の場合、~40GBのRAMを消費していた。
+**問題：** ExitClassifierにMLP（2-layer）を使用し、訓練が必要だった。
 
-**解決：** logitsを保持せず、各バッチで即座に`exit_labels = exp(-loss)`を計算してCPUに移動。train_exit_classifierの引数を`(hidden_states, logits, targets)`から`(hidden_states, exit_labels)`に変更。
+**解決（2024-12-15）：** CALM式（cos_sim）に変更。訓練不要で深い層で高精度。
 
-**教訓：** 巨大な中間テンソルは保持せず、必要な値（ここではexit_labels）だけを計算して保存する。
-
-### 11. ExitClassifierにLinear層を使用
-
-**問題：** ExitClassifierに単一のLinear層（`nn.Linear(dim, 1)`）を使用していた。Easy/Hard分離性能が17.2% Oracleと低かった。
-
-**発覚経緯：** MoD (Mixture of Depths) 方式との比較実験（2024-12-15）で、MLP（2-layer）が30.2% Oracleを達成し、+13%の性能向上を確認。
-
-**解決：** ExitClassifierを2-layer MLP（`fc1 -> ReLU -> fc2`）に変更。`hidden_dim`を必須引数として追加。
-
-**教訓：** シンプルさと性能のトレードオフを実験で検証する。hidden statesからlossを予測するタスクは非線形性が必要。
+**教訓：** 訓練コストと精度のトレードオフを考慮する。訓練不要で十分な精度が出るならそちらを採用。
 
 ---
 
 ## 頻発する設計ミス（⚠️ 要注意）
-
-以下のミスは繰り返し発生している。実装時に必ず確認すること。
 
 ### 1. シーケンス単位処理とトークン単位early exitの混同
 
@@ -393,11 +296,6 @@ h = block.forward(tokens)  # (batch, 1, dim)
 - **Early exit判定** → トークン単位（各トークンが独立してexit）
 - **Hard example収集** → トークン単位（hardトークンのみ抽出）
 - **訓練時のforward** → シーケンス単位（Attentionのため）
-
-**よくあるミス**：
-- Attentionをトークン単位で処理（文脈なし）
-- Hard exampleをシーケンス単位で収集（easyトークンも含む）
-- Exit判定をシーケンス単位で行う（全トークン一律）
 
 ### 2. Block間のデータフローの誤解
 

@@ -2,6 +2,7 @@
 LEGO Framework - Block Training
 
 Functions for training LEGOBlocks with hard example mining (token-level).
+Uses CALM-style exit (cos_sim threshold) - no exit_classifier training needed.
 """
 
 from __future__ import annotations
@@ -15,7 +16,6 @@ if TYPE_CHECKING:
     from .data import SequenceData
 
 from .config import TrainerConfig
-from .exit_trainer import train_exit_classifier, collect_hard_examples
 
 
 def train_block(
@@ -30,9 +30,8 @@ def train_block(
 
     This function orchestrates the complete block training workflow:
     1. Train LM with early stopping (using val_data for validation)
-    2. Train exit_classifier (post mode, loss-based labels)
+    2. Compute cos_sim for all tokens and set threshold (CALM-style)
     3. Collect hard examples (token-level extraction, repacked into sequences)
-    4. Set block's threshold based on confidence distribution
 
     Args:
         block: LEGOBlock to train
@@ -57,60 +56,17 @@ def train_block(
         print(f"Training block: {len(train_data)} train, {len(val_data)} val sequences")
         print(f"  ({train_data.num_tokens} train, {val_data.num_tokens} val tokens)")
 
-    # 2. Train LM with early stopping
+    # 1. Train LM with early stopping
     lm_stats = _train_lm(block, train_data, val_data, optimizer, config, device, is_verbose)
 
-    # 3. Compute hidden_states and exit_labels for exit_classifier training
-    # BDR-style: use per-token loss directly as labels (no exp(-loss))
+    # 2. Compute cos_sim and collect hard examples (CALM-style)
     block.eval()
-    all_hidden: List[torch.Tensor] = []
-    all_exit_labels: List[torch.Tensor] = []
-    all_targets: List[torch.Tensor] = []
-
-    with torch.no_grad():
-        for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=False):
-            h_out, logits, _ = block.forward(h)
-            # Compute per-token loss as exit_labels (BDR-style)
-            per_token_loss = F.cross_entropy(
-                logits.view(-1, logits.size(-1)),
-                y.view(-1),
-                reduction='none'
-            ).view(h_out.size(0), h_out.size(1))
-            exit_labels = per_token_loss  # Direct loss prediction
-            # Move to CPU to save GPU memory
-            all_hidden.append(h_out.cpu())
-            all_exit_labels.append(exit_labels.cpu())
-            all_targets.append(y.cpu())
-
-    hidden_states = torch.cat(all_hidden).to(device)  # (num_sequences, seq_len, dim)
-    exit_labels_all = torch.cat(all_exit_labels).to(device)  # (num_sequences, seq_len)
-    targets_all = torch.cat(all_targets)  # Keep on CPU
-
-    # 4. Train exit_classifier
-    # BDR-style needs more epochs to converge (predicting loss values 0-15)
-    # Higher LR for exit_classifier since it's a simple linear layer
-    num_exit_epochs = min(50, config.max_epochs)
-    exit_lr = config.lr * 10  # 10x higher LR for faster convergence
-    train_exit_classifier(
-        block.exit_classifier,
-        hidden_states,
-        exit_labels_all,
-        exit_lr,
-        num_exit_epochs,
-        is_verbose,
-    )
-
-    # 5. Collect hard examples and set threshold
-    hard_examples, threshold = collect_hard_examples(
-        block.exit_classifier,
-        hidden_states,
-        targets_all,
-        train_data.seq_len,
-        config.hard_ratio,
+    hard_examples, threshold = _collect_hard_examples_calm(
+        block, train_data, config, device, is_verbose
     )
     block.threshold = threshold
 
-    # 6. Build final statistics
+    # 3. Build final statistics
     actual_hard_ratio = hard_examples.num_tokens / train_data.num_tokens if train_data.num_tokens > 0 else 0.0
     stats: Dict[str, Any] = {
         **lm_stats,
@@ -119,10 +75,99 @@ def train_block(
     }
 
     if is_verbose:
-        print(f"  Threshold: {threshold:.4f}")
+        print(f"  Threshold (cos_sim): {threshold:.4f}")
         print(f"  Hard examples: {len(hard_examples)} sequences ({hard_examples.num_tokens} tokens, {actual_hard_ratio*100:.1f}%)")
 
     return hard_examples, stats
+
+
+def _collect_hard_examples_calm(
+    block: "LEGOBlock",
+    train_data: "SequenceData",
+    config: TrainerConfig,
+    device: torch.device,
+    is_verbose: bool,
+) -> Tuple["SequenceData", float]:
+    """
+    Collect hard examples using CALM-style cos_sim.
+
+    Low cos_sim = large change in layer = hard token = should NOT exit.
+
+    Args:
+        block: LEGOBlock (trained)
+        train_data: Training SequenceData
+        config: TrainerConfig with hard_ratio
+        device: Device to run on
+        is_verbose: Print progress
+
+    Returns:
+        Tuple of:
+        - SequenceData with hard examples only
+        - threshold: cos_sim threshold for early exit
+    """
+    from .data import SequenceData
+
+    all_cos_sim: List[torch.Tensor] = []
+    all_hidden_out: List[torch.Tensor] = []
+    all_targets: List[torch.Tensor] = []
+
+    with torch.no_grad():
+        for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=False):
+            h_in = h
+            h_out = block.transformer(h)
+
+            # Compute cos_sim
+            cos_sim = block.exit_classifier.compute_similarity(h_in, h_out)
+
+            all_cos_sim.append(cos_sim.cpu())
+            all_hidden_out.append(h_out.cpu())
+            all_targets.append(y.cpu())
+
+    cos_sim_all = torch.cat(all_cos_sim)  # (num_sequences, seq_len)
+    hidden_out_all = torch.cat(all_hidden_out)  # (num_sequences, seq_len, dim)
+    targets_all = torch.cat(all_targets)  # (num_sequences, seq_len)
+
+    # Compute threshold: quantile such that hard_ratio tokens are hard
+    # Hard tokens have LOW cos_sim (large change), so threshold = hard_ratio quantile
+    all_cos_flat = cos_sim_all.view(-1)
+    hard_ratio = config.hard_ratio
+
+    if hard_ratio >= 1.0:
+        threshold = float('inf')  # All tokens are hard
+    elif hard_ratio <= 0.0:
+        threshold = float('-inf')  # No tokens are hard
+    else:
+        # Threshold = hard_ratio quantile
+        # Tokens with cos_sim < threshold are hard
+        threshold = float(torch.quantile(all_cos_flat, hard_ratio).item())
+
+    if is_verbose:
+        print(f"  cos_sim stats: mean={all_cos_flat.mean():.4f}, std={all_cos_flat.std():.4f}")
+
+    # Token-level hard mask: cos_sim < threshold (low similarity = hard)
+    hard_token_mask = cos_sim_all < threshold  # (num_sequences, seq_len)
+
+    # Extract only hard tokens
+    hard_hidden = hidden_out_all[hard_token_mask]  # (num_hard_tokens, dim)
+    hard_targets = targets_all[hard_token_mask]  # (num_hard_tokens,)
+
+    num_hard_tokens = hard_hidden.shape[0]
+    seq_len = train_data.seq_len
+    dim = hidden_out_all.shape[-1]
+
+    if num_hard_tokens == 0:
+        return SequenceData.empty(seq_len, dim, str(device)), threshold
+
+    # Repack into sequences
+    num_complete_sequences = num_hard_tokens // seq_len
+    if num_complete_sequences == 0:
+        return SequenceData.empty(seq_len, dim, str(device)), threshold
+
+    usable_tokens = num_complete_sequences * seq_len
+    hard_hidden = hard_hidden[:usable_tokens].view(num_complete_sequences, seq_len, -1)
+    hard_targets = hard_targets[:usable_tokens].view(num_complete_sequences, seq_len)
+
+    return SequenceData(hard_hidden, hard_targets), threshold
 
 
 def _train_lm(

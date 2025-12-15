@@ -1,8 +1,8 @@
 """
 LEGO Framework - LEGOBlock
 
-TransformerBlock wrapper with early exit capability.
-Separates standard transformer functionality from LEGO-specific features.
+TransformerBlock wrapper with CALM-style early exit capability.
+Uses cosine similarity between layer input and output for exit decision.
 """
 
 from __future__ import annotations
@@ -17,29 +17,23 @@ from .exit_classifier import ExitClassifier
 
 class LEGOBlock(nn.Module):
     """
-    TransformerBlock with early exit capability.
+    TransformerBlock with CALM-style early exit capability.
 
     Wraps a standard TransformerBlock and adds:
-    - ExitClassifier (MLP-based) for confidence computation and exit decision
+    - ExitClassifier (CALM-style cos_sim) for exit decision
     - Shared output_head for logits computation
 
-    Exit classifier uses MLP (2-layer) which showed 30.2% Oracle performance
-    vs 17.2% for Linear (experiment 2024-12-15).
-
-    This separation allows:
-    - Standard TransformerBlock to be used independently
-    - Easy replacement of transformer implementation (e.g., Flash Attention)
-    - Clear distinction between standard and LEGO-specific functionality
+    CALM-style exit: cos_sim(h_in, h_out) >= threshold means exit.
+    High similarity = layer made little change = representation stabilized.
 
     Args:
         transformer: TransformerBlock to wrap
-        exit_hidden_dim: Hidden dimension for ExitClassifier MLP
     """
 
-    def __init__(self, transformer: TransformerBlock, exit_hidden_dim: int):
+    def __init__(self, transformer: TransformerBlock):
         super().__init__()
         self.transformer = transformer
-        self.exit_classifier = ExitClassifier(transformer.dim, exit_hidden_dim)
+        self.exit_classifier = ExitClassifier()
         self.output_head: nn.Linear | None = None  # Set by LEGOLLM
 
     @property
@@ -71,29 +65,31 @@ class LEGOBlock(nn.Module):
         self, h: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
-        Forward pass through transformer with exit decision.
+        Forward pass through transformer with CALM-style exit decision.
 
         Args:
             h: Hidden states (batch_size, seq_len, dim)
 
         Returns:
-            h: Output hidden states (batch_size, seq_len, dim)
+            h_out: Output hidden states (batch_size, seq_len, dim)
             logits: Output logits (batch_size, seq_len, vocab_size)
             should_exit: Boolean mask where True = should exit (batch_size, seq_len)
         """
         if self.output_head is None:
             raise RuntimeError("output_head not set. Call set_output_head() first.")
 
+        h_in = h
+
         # Standard transformer forward
-        h = self.transformer(h)
+        h_out = self.transformer(h)
 
         # Output logits
-        logits = self.output_head(h)
+        logits = self.output_head(h_out)
 
-        # Compute confidence and exit decision
-        _, should_exit = self.exit_classifier(h)
+        # CALM-style exit decision: cos_sim(h_in, h_out)
+        _, should_exit = self.exit_classifier(h_in, h_out)
 
-        return h, logits, should_exit
+        return h_out, logits, should_exit
 
     def set_output_head(self, output_head: nn.Linear) -> None:
         """Set the shared output head reference."""
