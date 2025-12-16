@@ -259,7 +259,7 @@ def main() -> None:
     base_model, tokenizer = load_pretrained(
         args.base_model,
         device="auto" if is_cuda else None,
-        torch_dtype=torch.float16 if is_cuda else None,
+        dtype=torch.float16 if is_cuda else None,
     )
 
     llm = LLM(base_model)
