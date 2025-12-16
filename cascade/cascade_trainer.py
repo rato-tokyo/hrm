@@ -199,10 +199,15 @@ class CascadeTrainer:
 
             # 深いLLMほど学習率を減衰
             llm_lr = self.training_args.learning_rate * (self.cascade_config.lr_decay ** llm_idx)
+            # モデルがfloat16の場合、AMPを無効化（float16勾配のunscaleエラー回避）
+            model_dtype = next(llm.parameters()).dtype
+            use_fp16 = model_dtype != torch.float16
             llm_training_args = replace(
                 self.training_args,
                 learning_rate=llm_lr,
                 output_dir=f"{self.training_args.output_dir}/llm_{llm_idx}",
+                fp16=use_fp16 and self.training_args.fp16,
+                bf16=False,  # bf16も無効化
             )
 
             # HF Trainerで訓練
