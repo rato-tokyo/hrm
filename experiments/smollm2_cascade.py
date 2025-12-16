@@ -252,6 +252,8 @@ def main() -> None:
     print(f"検証Dataset: {len(val_dataset)} samples")
 
     # 訓練設定
+    # Note: save_strategy="no" はCascadeTrainerで上書きされるが、
+    # weight tyingモデルのsafetensorsエラーを回避するため明示的に設定
     training_args = TrainingArguments(
         output_dir=args.output_dir,
         num_train_epochs=args.epochs,
@@ -260,8 +262,8 @@ def main() -> None:
         learning_rate=args.lr,
         max_grad_norm=1.0,
         eval_strategy="epoch",
-        save_strategy="epoch",
-        load_best_model_at_end=True,
+        save_strategy="no",  # weight tyingモデルのsafetensorsエラー回避
+        load_best_model_at_end=False,  # save_strategy="no"のため無効化
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         logging_steps=10,

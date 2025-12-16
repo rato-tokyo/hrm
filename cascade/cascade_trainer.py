@@ -204,12 +204,18 @@ class CascadeTrainer:
             # AMPを無効化: CASCADEではhidden_statesがfloat16/float32混在するため、
             # GradScalerが正しく動作しない。LLMWrapper内でfloat32にキャストして
             # loss計算を行うことで、AMPなしでも安定した訓練を実現。
+            #
+            # save_strategyを"no"に設定: LLMWrapperはweight tyingされたモデル
+            # （lm_head.weightとembed_tokens.weightが共有）をラップしているため、
+            # safetensorsでの保存でエラーが発生する。CASCADEでは中間チェックポイントは
+            # 不要なので、保存を無効化する。
             llm_training_args = replace(
                 self.training_args,
                 learning_rate=llm_lr,
                 output_dir=f"{self.training_args.output_dir}/llm_{llm_idx}",
                 fp16=False,  # AMPを無効化
                 bf16=False,
+                save_strategy="no",  # weight tyingモデルのsafetensorsエラー回避
             )
 
             # HF Trainerで訓練
