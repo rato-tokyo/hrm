@@ -19,7 +19,6 @@ CASCADE閾値キャリブレーション
 import argparse
 from typing import List, Tuple, Optional
 import torch
-import numpy as np
 from transformers import AutoTokenizer
 
 from cascade import (
@@ -225,10 +224,18 @@ def compute_threshold_for_ratio(
     Returns:
         threshold値
     """
-    # hard_ratio分位点を計算
+    # hard_ratio分位点を計算（PyTorchのquantileを使用、メモリ効率向上）
     # hard_ratio=0.5 → 下位50%がhard → 50パーセンタイル
-    percentile = hard_ratio * 100
-    threshold = float(np.percentile(cos_sims.numpy(), percentile))
+    # 大きなテンソルの場合はサンプリングして計算
+    if len(cos_sims) > 1_000_000:
+        # ランダムサンプリング（100万サンプル）
+        indices = torch.randperm(len(cos_sims))[:1_000_000]
+        cos_sims_sample = cos_sims[indices]
+    else:
+        cos_sims_sample = cos_sims
+
+    # float32に変換してquantile計算
+    threshold = float(torch.quantile(cos_sims_sample.float(), hard_ratio))
     return threshold
 
 
