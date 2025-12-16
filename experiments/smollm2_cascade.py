@@ -140,6 +140,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="利用可能なモデル一覧を表示して終了",
     )
+    parser.add_argument(
+        "--save-model",
+        action="store_true",
+        help="訓練済みモデルを保存する",
+    )
 
     return parser.parse_args()
 
@@ -354,6 +359,42 @@ def main() -> None:
     print("\n" + "=" * 60)
     print("実験完了！")
     print("=" * 60)
+
+    # モデル保存
+    if args.save_model:
+        import os
+        save_dir = os.path.join(args.output_dir, "trained_model")
+        os.makedirs(save_dir, exist_ok=True)
+
+        # 後付けLLMのみ保存（ベースモデルはHFからロード可能）
+        additional_model_path = os.path.join(save_dir, "additional_llm")
+        llm_additional.base_llm.save_pretrained(additional_model_path)
+        print(f"\n後付けLLM保存: {additional_model_path}")
+
+        # 閾値情報を保存
+        import json
+        config_path = os.path.join(save_dir, "cascade_config.json")
+        cascade_info = {
+            "base_model": args.base_model,
+            "additional_layers": args.additional_layers,
+            "threshold_llm0": float(ensemble.llms[0].threshold),
+            "threshold_llm1": float(ensemble.llms[1].threshold) if len(ensemble.llms) > 1 else None,
+            "hard_ratio": args.hard_ratio,
+            "train_stats": {
+                "llm0_full_val_ppl": llm0_stat.get('full_val_ppl'),
+                "llm0_hard_val_ppl": llm0_stat.get('hard_val_ppl_before'),
+                "llm1_val_ppl_before": llm1_stat.get('val_ppl_before') if len(train_stats["llm_stats"]) > 1 else None,
+                "llm1_val_ppl_after": llm1_stat.get('val_ppl_after') if len(train_stats["llm_stats"]) > 1 else None,
+            }
+        }
+        with open(config_path, 'w') as f:
+            json.dump(cascade_info, f, indent=2)
+        print(f"CASCADE設定保存: {config_path}")
+
+        print("\nColabでダウンロード:")
+        print("  from google.colab import files")
+        print(f"  !zip -r trained_model.zip {save_dir}")
+        print("  files.download('trained_model.zip')")
 
 
 if __name__ == "__main__":
