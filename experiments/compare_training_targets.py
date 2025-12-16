@@ -15,6 +15,12 @@ Hard vs All Tokens 訓練比較実験
 """
 
 import argparse
+import sys
+from pathlib import Path
+
+# プロジェクトルートをパスに追加
+project_root = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(project_root))
 import time
 from dataclasses import dataclass
 from typing import List, Tuple, Dict, Any
