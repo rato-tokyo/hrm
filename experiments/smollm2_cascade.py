@@ -1,23 +1,26 @@
 """
-CASCADE実験: SmolLM2-135M + 後付けLLM
+CASCADE実験: SmolLM2-135M + 後付けLLM (2層)
 
-既存の訓練済みLLM（SmolLM2-135M-Instruct）に、新規LLMを後付けして訓練する実験。
+既存の訓練済みLLM（SmolLM2-135M-Instruct）に、2層の新規LLMを後付けして訓練する実験。
 
 実験概要:
 1. SmolLM2-135M-Instructをフリーズ（訓練しない）
-2. SmolLM2のhard tokensを収集
-3. 新規の小規模LLMをhard tokensで訓練
+2. SmolLM2のhard tokensを収集（事前にcalibrate_threshold.pyで閾値決定）
+3. 2層の新規LLM（同じアーキテクチャ）をhard tokensで訓練
 4. TRUE Early Exitで評価
 
 使用方法:
-    # デフォルト設定で実行
+    # デフォルト設定で実行（2層追加）
     python experiments/smollm2_cascade.py
+
+    # 閾値を指定して実行（calibrate_threshold.pyで事前計算）
+    python experiments/smollm2_cascade.py --threshold 0.85
 
     # モデルを切り替えて実行
     python experiments/smollm2_cascade.py --base-model smollm2-360m
 
     # パラメータをカスタマイズ
-    python experiments/smollm2_cascade.py --additional-layers 6 --hard-ratio 0.2
+    python experiments/smollm2_cascade.py --additional-layers 4 --hard-ratio 0.3
 """
 
 import argparse
@@ -32,7 +35,7 @@ from cascade import (
     get_device,
     load_pretrained,
     list_available_models,
-    create_small_llm,
+    create_llm_from_base,
     create_wikitext_dataloaders,
     train_ensemble,
     create_initial_dataset,
@@ -55,8 +58,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--additional-layers",
         type=int,
-        default=4,
-        help="後付けLLMのレイヤー数 (default: 4)",
+        default=2,
+        help="後付けLLMのレイヤー数 (default: 2)",
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help="hard token判定の閾値（省略時はhard_ratioから自動計算）",
     )
 
     # データ設定
@@ -141,12 +150,14 @@ def main() -> None:
     # デバイス設定
     device = get_device()
     print("=" * 60)
-    print("CASCADE実験: 事前学習済みLLM + 後付けLLM")
+    print("CASCADE実験: 事前学習済みLLM + 後付けLLM (2層)")
     print("=" * 60)
     print(f"デバイス: {device}")
     print(f"ベースモデル: {args.base_model}")
     print(f"後付けLLMレイヤー数: {args.additional_layers}")
     print(f"hard ratio: {args.hard_ratio}")
+    if args.threshold is not None:
+        print(f"threshold: {args.threshold} (固定値)")
 
     set_seed(args.seed)
 
@@ -171,21 +182,18 @@ def main() -> None:
 
     print(f"ベースLLM: dim={llm_base.dim}, layers={llm_base.num_layers}, frozen=True")
 
-    # 後付けLLMの作成
-    additional_model = create_small_llm(
-        dim=llm_base.dim,
-        num_layers=args.additional_layers,
-        vocab_size=llm_base.vocab_size,
-    )
+    # 後付けLLMの作成（ベースモデルと同じアーキテクチャ）
+    additional_model = create_llm_from_base(base_model, num_layers=args.additional_layers)
 
     if device == "cuda":
         additional_model = additional_model.to(device).half()
 
     llm_additional = LLM(additional_model)
 
+    arch = base_model.config.architectures[0] if base_model.config.architectures else "Unknown"
     print(
         f"後付けLLM: dim={llm_additional.dim}, "
-        f"layers={llm_additional.num_layers}, trainable=True"
+        f"layers={llm_additional.num_layers}, arch={arch}, trainable=True"
     )
 
     # Ensembleの構築

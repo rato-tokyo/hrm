@@ -270,11 +270,13 @@ def create_small_llm(
     num_heads: Optional[int] = None,
     ffn_dim: Optional[int] = None,
     max_seq_len: int = 2048,
+    architecture: str = "llama",
 ) -> PreTrainedModel:
     """
     新規の小規模LLMを作成（未訓練）。
 
     後続LLMとして追加する小規模モデルを作成。
+    ベースモデルと同じアーキテクチャを使用することを推奨。
 
     Args:
         dim: hidden次元
@@ -283,33 +285,123 @@ def create_small_llm(
         num_heads: Attentionヘッド数（デフォルト: dim // 64）
         ffn_dim: FFN次元（デフォルト: dim * 4）
         max_seq_len: 最大シーケンス長
+        architecture: アーキテクチャ種別 ("llama" or "gpt2")
 
     Returns:
         未訓練のCausalLM
 
     使用例:
-        # 既存モデルに合わせた後続LLMを作成
+        # SmolLM2に合わせたLlamaアーキテクチャで作成
         base_model, _ = load_pretrained("smollm2-135m")
         new_llm = create_small_llm(
             dim=base_model.config.hidden_size,
-            num_layers=4,
+            num_layers=2,
             vocab_size=base_model.config.vocab_size,
+            architecture="llama",
+        )
+
+        # GPT-2アーキテクチャで作成
+        new_llm = create_small_llm(
+            dim=768,
+            num_layers=4,
+            vocab_size=50257,
+            architecture="gpt2",
         )
     """
-    from transformers import GPT2Config
-
     if num_heads is None:
         num_heads = max(1, dim // 64)
     if ffn_dim is None:
         ffn_dim = dim * 4
 
-    config = GPT2Config(
-        vocab_size=vocab_size,
-        n_embd=dim,
-        n_head=num_heads,
-        n_inner=ffn_dim,
-        n_layer=num_layers,
-        n_positions=max_seq_len,
-    )
+    if architecture == "llama":
+        from transformers import LlamaConfig
+
+        config = LlamaConfig(
+            vocab_size=vocab_size,
+            hidden_size=dim,
+            intermediate_size=ffn_dim,
+            num_hidden_layers=num_layers,
+            num_attention_heads=num_heads,
+            num_key_value_heads=num_heads,  # MHAを使用（GQAではない）
+            max_position_embeddings=max_seq_len,
+            rms_norm_eps=1e-5,
+            rope_theta=100000,  # SmolLM2と同じ
+            hidden_act="silu",
+            tie_word_embeddings=False,
+        )
+    elif architecture == "gpt2":
+        from transformers import GPT2Config
+
+        config = GPT2Config(
+            vocab_size=vocab_size,
+            n_embd=dim,
+            n_head=num_heads,
+            n_inner=ffn_dim,
+            n_layer=num_layers,
+            n_positions=max_seq_len,
+        )
+    else:
+        raise ValueError(f"未対応のアーキテクチャ: {architecture}")
 
     return AutoModelForCausalLM.from_config(config)
+
+
+def create_llm_from_base(
+    base_model: PreTrainedModel,
+    num_layers: int,
+) -> PreTrainedModel:
+    """
+    ベースモデルと同じアーキテクチャで新規LLMを作成。
+
+    ベースモデルのconfig（次元、語彙サイズ、アーキテクチャ）を継承し、
+    指定されたレイヤー数で新しいモデルを作成。
+
+    Args:
+        base_model: ベースとなるモデル
+        num_layers: 新しいモデルのレイヤー数
+
+    Returns:
+        未訓練のCausalLM（ベースモデルと同じアーキテクチャ）
+
+    使用例:
+        base_model, tokenizer = load_pretrained("smollm2-135m")
+        additional_llm = create_llm_from_base(base_model, num_layers=2)
+    """
+    config = base_model.config
+
+    # アーキテクチャを判定
+    arch = config.architectures[0] if config.architectures else ""
+
+    if "Llama" in arch:
+        from transformers import LlamaConfig
+
+        new_config = LlamaConfig(
+            vocab_size=config.vocab_size,
+            hidden_size=config.hidden_size,
+            intermediate_size=config.intermediate_size,
+            num_hidden_layers=num_layers,
+            num_attention_heads=config.num_attention_heads,
+            num_key_value_heads=getattr(
+                config, "num_key_value_heads", config.num_attention_heads
+            ),
+            max_position_embeddings=config.max_position_embeddings,
+            rms_norm_eps=config.rms_norm_eps,
+            rope_theta=getattr(config, "rope_theta", 10000),
+            hidden_act=config.hidden_act,
+            tie_word_embeddings=config.tie_word_embeddings,
+        )
+    elif "GPT2" in arch:
+        from transformers import GPT2Config
+
+        new_config = GPT2Config(
+            vocab_size=config.vocab_size,
+            n_embd=config.n_embd,
+            n_head=config.n_head,
+            n_inner=config.n_inner,
+            n_layer=num_layers,
+            n_positions=config.n_positions,
+        )
+    else:
+        raise ValueError(f"未対応のアーキテクチャ: {arch}")
+
+    return AutoModelForCausalLM.from_config(new_config)

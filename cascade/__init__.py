@@ -41,6 +41,7 @@ from .model_registry import (
     load_pretrained,
     list_available_models,
     create_small_llm,
+    create_llm_from_base,
     PRETRAINED_MODELS,
 )
 
@@ -85,5 +86,6 @@ __all__ = [
     'load_pretrained',
     'list_available_models',
     'create_small_llm',
+    'create_llm_from_base',
     'PRETRAINED_MODELS',
 ]
