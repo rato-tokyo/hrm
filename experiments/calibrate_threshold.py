@@ -19,7 +19,7 @@ CASCADE閾値キャリブレーション
 import argparse
 from typing import List, Tuple, Optional
 import torch
-from transformers import AutoTokenizer
+from transformers import PreTrainedTokenizerBase
 
 from cascade import (
     LLM,
@@ -105,7 +105,7 @@ def parse_args() -> argparse.Namespace:
 
 def load_calibration_data(
     data_file: Optional[str],
-    tokenizer: AutoTokenizer,
+    tokenizer: PreTrainedTokenizerBase,
     seq_len: int,
     batch_size: int,
 ) -> List[torch.Tensor]:
@@ -139,7 +139,7 @@ def load_calibration_data(
         text = text * 100
 
     # トークナイズ
-    tokens = tokenizer.encode(text, add_special_tokens=False)  # type: ignore[attr-defined]
+    tokens = tokenizer.encode(text, add_special_tokens=False)
     tokens = torch.tensor(tokens, dtype=torch.long)
 
     # シーケンスに分割
@@ -160,7 +160,7 @@ def load_calibration_data(
 def compute_layer_cos_sim(
     llm: LLM,
     batches: List[torch.Tensor],
-    device: str,
+    device: torch.device,
 ) -> List[Tuple[int, torch.Tensor]]:
     """
     各レイヤーのcos_simを計算。
@@ -255,14 +255,15 @@ def main() -> None:
 
     # モデルロード
     print(f"\nモデルをロード中: {args.base_model}")
+    is_cuda = device.type == "cuda"
     base_model, tokenizer = load_pretrained(
         args.base_model,
-        device="auto" if device == "cuda" else None,
-        torch_dtype=torch.float16 if device == "cuda" else None,
+        device="auto" if is_cuda else None,
+        torch_dtype=torch.float16 if is_cuda else None,
     )
 
     llm = LLM(base_model)
-    if device == "cuda" and not hasattr(base_model, "hf_device_map"):
+    if is_cuda and not hasattr(base_model, "hf_device_map"):
         llm = llm.to(device)
 
     num_layers = llm.num_layers

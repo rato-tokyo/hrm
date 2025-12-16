@@ -16,6 +16,6 @@ def set_seed(seed: int) -> None:
         torch.cuda.manual_seed_all(seed)
 
 
-def get_device() -> str:
+def get_device() -> torch.device:
     """利用可能な計算デバイスを取得（CUDAが利用可能ならCUDA、それ以外はCPU）。"""
-    return 'cuda' if torch.cuda.is_available() else 'cpu'
+    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')

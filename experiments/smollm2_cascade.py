@@ -172,10 +172,11 @@ def main() -> None:
 
     # ベースモデルのロード
     print(f"\nベースモデルをロード中: {args.base_model}")
+    is_cuda = device.type == "cuda"
     base_model, tokenizer = load_pretrained(
         args.base_model,
-        device="auto" if device == "cuda" else None,
-        torch_dtype=torch.float16 if device == "cuda" else None,
+        device="auto" if is_cuda else None,
+        torch_dtype=torch.float16 if is_cuda else None,
     )
 
     print(f"  次元: {base_model.config.hidden_size}")
@@ -196,8 +197,10 @@ def main() -> None:
     # AMPを使用する場合、TrainerがAMP管理下でfloat16計算を自動実行
     additional_model = create_llm_from_base(base_model, num_layers=args.additional_layers)
 
-    if device == "cuda":
-        additional_model = additional_model.to(device)  # float32のまま
+    if is_cuda:
+        # Note: mypyがHugging Face transformersの.to()の型シグネチャを誤認識する
+        # transformersライブラリの型定義の問題であり、ロジックに問題はない
+        additional_model = additional_model.to(device)  # type: ignore[arg-type]
 
     llm_additional = LLM(additional_model)
 
@@ -209,7 +212,7 @@ def main() -> None:
 
     # Ensembleの構築
     ensemble = Ensemble([llm_base, llm_additional])
-    if device == "cuda":
+    if is_cuda:
         ensemble = ensemble.to(device)
 
     print("\nEnsemble構成:")
@@ -264,7 +267,7 @@ def main() -> None:
         logging_steps=10,
         report_to="none",
         remove_unused_columns=False,
-        fp16=device == "cuda",
+        fp16=is_cuda,
     )
 
     cascade_config = CascadeConfig(

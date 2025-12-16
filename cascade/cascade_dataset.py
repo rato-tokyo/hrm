@@ -8,7 +8,7 @@ SequenceDataの代替として、HF Datasetをそのまま活用。
 from __future__ import annotations
 
 import torch
-from typing import Iterator, Tuple, Optional, Dict, Any, List, TYPE_CHECKING
+from typing import Iterator, Tuple, Optional, Dict, Any, List, TYPE_CHECKING, Union
 from datasets import Dataset
 
 if TYPE_CHECKING:
@@ -94,7 +94,7 @@ def iterate_batches(
     dataset: Dataset,
     batch_size: int,
     shuffle: bool = False,
-    device: Optional[str] = None,
+    device: Optional[Union[str, torch.device]] = None,
 ) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
     """
     Datasetからバッチを反復。
@@ -209,7 +209,7 @@ def collect_hard_tokens_from_dataset(
     all_targets: List[torch.Tensor] = []
 
     with torch.no_grad():
-        for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=str(device)):
+        for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=device):
             # dtype変換はLLM.forwardで自動実行
             h_out, hidden_history = llm.forward(h, input_type="hidden_states")
             h_in = hidden_history[-2]
@@ -270,7 +270,7 @@ def transform_dataset(
     all_targets: List[torch.Tensor] = []
 
     with torch.no_grad():
-        for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=str(device)):
+        for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=device):
             # dtype変換はLLM.forwardで自動実行
             h_out, _ = llm.forward(h, input_type="hidden_states")
             all_hidden.append(h_out.cpu())

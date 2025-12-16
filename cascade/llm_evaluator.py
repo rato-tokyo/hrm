@@ -49,7 +49,7 @@ def compute_ppl(
     total_tokens = 0
 
     with torch.no_grad():
-        for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=str(device)):
+        for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=device):
             # dtype変換はLLM.forwardで自動実行
             h_out, _ = llm.forward(h)
             logits = llm.get_logits(h_out)
@@ -99,7 +99,7 @@ def evaluate_llm(
     continue_targets: List[torch.Tensor] = []
 
     with torch.no_grad():
-        for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=str(device)):
+        for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=device):
             # dtype変換はLLM.forwardで自動実行
             h_out, hidden_history = llm.forward(h)
             logits = llm.get_logits(h_out)
