@@ -377,6 +377,20 @@ def main() -> None:
     results: List[ExperimentResult] = []
 
     # ========================================
+    # 訓練データ数を揃える（公平な比較のため）
+    # ========================================
+    num_train_tokens = len(train_hard_labels)
+    print(f"\n訓練データ数を揃えます: {num_train_tokens} tokens")
+
+    # All tokensから先頭N個を取得（文脈の連続性を保持）
+    if len(train_all_labels) > num_train_tokens:
+        train_all_hidden_sampled = train_all_hidden[:num_train_tokens]
+        train_all_labels_sampled = train_all_labels[:num_train_tokens]
+    else:
+        train_all_hidden_sampled = train_all_hidden
+        train_all_labels_sampled = train_all_labels
+
+    # ========================================
     # 条件A: Hard tokensのみで訓練
     # ========================================
     print("\n" + "=" * 70)
@@ -408,12 +422,12 @@ def main() -> None:
     ))
 
     # ========================================
-    # 条件B: All tokensで訓練
+    # 条件B: All tokens（サンプリング）で訓練
     # ========================================
     print("\n" + "=" * 70)
-    print("条件B: All tokensで訓練")
+    print("条件B: All tokens（サンプリング）で訓練")
     print("=" * 70)
-    print(f"訓練トークン数: {len(train_all_labels)}")
+    print(f"訓練トークン数: {len(train_all_labels_sampled)} (Hard数と同じ)")
     print(f"検証トークン数: {len(val_hard_labels)} (Hard tokens)")
 
     head_b = SimpleHead(hidden_dim, vocab_size)
@@ -421,7 +435,7 @@ def main() -> None:
 
     train_loss_b, val_loss_b, val_ppl_b = train_head(
         head_b,
-        train_all_hidden, train_all_labels,
+        train_all_hidden_sampled, train_all_labels_sampled,
         val_hard_hidden, val_hard_labels,
         args.epochs, args.batch_size, args.lr, device
     )
@@ -429,8 +443,8 @@ def main() -> None:
     training_time_b = time.time() - start_time
 
     results.append(ExperimentResult(
-        condition="All tokens",
-        train_tokens=len(train_all_labels),
+        condition="All (sampled)",
+        train_tokens=len(train_all_labels_sampled),
         val_tokens=len(val_hard_labels),
         final_train_loss=train_loss_b,
         final_val_loss=val_loss_b,
