@@ -450,8 +450,18 @@ print(f"PPL: {stats['ppl']:.2f}, Accuracy: {stats['accuracy']:.2%}")
 3. **GradScaler**: float16勾配のunscaleでエラーが発生する
 4. **メモリ効率**: AMPが必要な場所だけfloat16を使用し、メモリと精度を両立
 
-### CascadeTrainerの自動制御
+### CascadeTrainerのAMP設定
 
-CascadeTrainerは訓練対象モデルのdtypeを検出し、AMPを自動設定:
-- float32モデル → `fp16=True`（AMPで効率化）
-- float16モデル → `fp16=False`（エラー回避）
+CascadeTrainerは**AMPを無効化**して訓練:
+- hidden_statesがfloat16/float32混在するため、GradScalerが正しく動作しない
+- LLMWrapper内で`.float()`によりfloat32でloss計算
+- AMPなしでも安定した訓練を実現
+
+```python
+# CascadeTrainerでのAMP設定
+llm_training_args = replace(
+    self.training_args,
+    fp16=False,  # AMPを無効化
+    bf16=False,
+)
+```
