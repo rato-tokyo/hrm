@@ -139,7 +139,7 @@ def load_calibration_data(
         text = text * 100
 
     # トークナイズ
-    tokens = tokenizer.encode(text, add_special_tokens=False)
+    tokens = tokenizer.encode(text, add_special_tokens=False)  # type: ignore[attr-defined]
     tokens = torch.tensor(tokens, dtype=torch.long)
 
     # シーケンスに分割
@@ -173,7 +173,7 @@ def compute_layer_cos_sim(
     Returns:
         (レイヤー番号, cos_simテンソル)のリスト
     """
-    all_cos_sims = []
+    all_cos_sims: List[List[torch.Tensor]] = []
 
     llm.eval()
     with torch.no_grad():

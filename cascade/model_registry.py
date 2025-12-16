@@ -8,8 +8,8 @@ CASCADEフレームワーク - モデルレジストリ
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Any, Callable
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel
+from typing import Dict, Optional, Any, Callable, Union
+from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedModel, PretrainedConfig
 
 
 @dataclass
@@ -313,6 +313,7 @@ def create_small_llm(
     if ffn_dim is None:
         ffn_dim = dim * 4
 
+    config: PretrainedConfig
     if architecture == "llama":
         from transformers import LlamaConfig
 
@@ -372,6 +373,7 @@ def create_llm_from_base(
     # アーキテクチャを判定
     arch = config.architectures[0] if config.architectures else ""
 
+    new_config: PretrainedConfig
     if "Llama" in arch:
         from transformers import LlamaConfig
 

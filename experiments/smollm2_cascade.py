@@ -195,7 +195,7 @@ def main() -> None:
     additional_model = create_llm_from_base(base_model, num_layers=args.additional_layers)
 
     if device == "cuda":
-        additional_model = additional_model.to(device).half()
+        additional_model = additional_model.to(device).half()  # type: ignore[arg-type]
 
     llm_additional = LLM(additional_model)
 
