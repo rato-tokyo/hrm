@@ -184,7 +184,7 @@ def main() -> None:
 
     print(f"\n保存完了: {args.output}")
     print("\nColabでダウンロード:")
-    print(f"  from google.colab import files")
+    print("  from google.colab import files")
     print(f"  files.download('{args.output}')")
 
 
