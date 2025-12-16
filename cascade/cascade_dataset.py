@@ -226,8 +226,8 @@ def collect_hard_tokens_from_dataset(
     hidden_out_all = torch.cat(all_hidden_out)
     targets_all = torch.cat(all_targets)
 
-    # 閾値を計算
-    all_cos_flat = cos_sim_all.view(-1)
+    # 閾値を計算（float32に変換してquantile計算）
+    all_cos_flat = cos_sim_all.view(-1).float()
     if hard_ratio >= 1.0:
         threshold = float('inf')
     elif hard_ratio <= 0.0:
