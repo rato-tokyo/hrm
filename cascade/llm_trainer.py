@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from .llm import LLM
     from .sequence_data import SequenceData
 
-from .config import TrainerConfig
+from .config import CascadeConfig
 
 
 class LLMWrapper(nn.Module):
@@ -106,8 +106,8 @@ def train_llm(
     llm: "LLM",
     train_data: "SequenceData",
     val_data: "SequenceData",
-    optimizer: torch.optim.Optimizer,
-    config: TrainerConfig,
+    training_args: TrainingArguments,
+    cascade_config: CascadeConfig,
 ) -> Tuple["SequenceData", Dict[str, Any]]:
     """
     LLMを訓練し、次のLLM用のhard tokensを返す。
@@ -120,23 +120,26 @@ def train_llm(
         llm: 訓練するLLM
         train_data: 訓練SequenceData (hidden_states, targets)
         val_data: Early stopping用の検証SequenceData
-        optimizer: LLMパラメータ用オプティマイザ（Trainer内で再作成されるため参考用）
-        config: 訓練ハイパーパラメータを含むTrainerConfig
+        training_args: Hugging Face TrainingArguments
+        cascade_config: CASCADE固有の設定（patience, hard_ratio）
 
     Returns:
         タプル:
         - SequenceData: 次のLLM用のhard tokens（出力hidden states）
         - Dict: 訓練統計 (train_ppls, val_ppls, best_epoch等)
     """
-    if config.verbose:
+    verbose = not training_args.disable_tqdm
+    batch_size = training_args.per_device_train_batch_size
+
+    if verbose:
         print(f"LLM訓練: {len(train_data)}訓練, {len(val_data)}検証シーケンス")
         print(f"  ({train_data.num_tokens}訓練, {val_data.num_tokens}検証トークン)")
 
     # 1. Hugging Face Trainerで訓練
-    lm_stats = _train_with_hf_trainer(llm, train_data, val_data, config)
+    lm_stats = _train_with_hf_trainer(llm, train_data, val_data, training_args, cascade_config)
 
     # 2. hard tokens収集（llm.thresholdも設定）
-    hard_tokens = llm.collect_hard_tokens(train_data, config.hard_ratio, config.batch_size)
+    hard_tokens = llm.collect_hard_tokens(train_data, cascade_config.hard_ratio, batch_size)
 
     # 3. 最終統計を構築
     actual_hard_ratio = hard_tokens.num_tokens / train_data.num_tokens if train_data.num_tokens > 0 else 0.0
@@ -146,7 +149,7 @@ def train_llm(
         'threshold': llm.threshold,
     }
 
-    if config.verbose:
+    if verbose:
         print(f"  閾値 (cos_sim): {llm.threshold:.4f}")
         print(f"  Hard tokens: {len(hard_tokens)}シーケンス ({hard_tokens.num_tokens}トークン, {actual_hard_ratio*100:.1f}%)")
 
@@ -157,7 +160,8 @@ def _train_with_hf_trainer(
     llm: "LLM",
     train_data: "SequenceData",
     val_data: "SequenceData",
-    config: TrainerConfig,
+    training_args: TrainingArguments,
+    cascade_config: CascadeConfig,
 ) -> Dict[str, Any]:
     """
     Hugging Face Trainerを使用した訓練。
@@ -166,44 +170,27 @@ def _train_with_hf_trainer(
         llm: 訓練するLLM
         train_data: 訓練SequenceData
         val_data: 検証SequenceData
-        config: 訓練ハイパーパラメータを含むTrainerConfig
+        training_args: Hugging Face TrainingArguments
+        cascade_config: CASCADE固有の設定
 
     Returns:
         train_ppls, val_ppls, best_epoch, best_val_ppl, total_epochs, stopped_earlyを含むDict
     """
     device = next(llm.parameters()).device
+    verbose = not training_args.disable_tqdm
 
     # Hugging Face Datasetに変換
     train_dataset = train_data.to_hf_dataset()
     val_dataset = val_data.to_hf_dataset()
-
-    # TrainingArgumentsを作成
-    training_args = TrainingArguments(
-        output_dir="./cascade_trainer_output",
-        num_train_epochs=config.max_epochs,
-        per_device_train_batch_size=config.batch_size,
-        per_device_eval_batch_size=config.batch_size,
-        learning_rate=config.lr,
-        max_grad_norm=config.grad_clip,
-        eval_strategy="epoch",
-        save_strategy="epoch",
-        load_best_model_at_end=True,
-        metric_for_best_model="eval_loss",
-        greater_is_better=False,
-        logging_steps=1 if config.verbose else 10,
-        report_to="none",
-        remove_unused_columns=False,
-        disable_tqdm=not config.verbose,
-    )
 
     # LLMラッパーを作成
     wrapper = LLMWrapper(llm)
     wrapper.to(device)
 
     # コールバックを設定
-    ppl_callback = PPLLoggingCallback(verbose=config.verbose)
+    ppl_callback = PPLLoggingCallback(verbose=verbose)
     callbacks = [
-        EarlyStoppingCallback(early_stopping_patience=config.patience),
+        EarlyStoppingCallback(early_stopping_patience=cascade_config.patience),
         ppl_callback,
     ]
 
@@ -233,8 +220,8 @@ def _train_with_hf_trainer(
         'val_ppls': ppl_callback.val_ppls,
         'best_epoch': best_epoch,
         'best_val_ppl': best_val_ppl,
-        'total_epochs': int(train_result.metrics.get('epoch', config.max_epochs)),
-        'stopped_early': len(ppl_callback.val_ppls) < config.max_epochs,
+        'total_epochs': int(train_result.metrics.get('epoch', training_args.num_train_epochs)),
+        'stopped_early': len(ppl_callback.val_ppls) < int(training_args.num_train_epochs),
     }
 
 
@@ -243,7 +230,8 @@ def train_llm_simple(
     train_data: "SequenceData",
     val_data: "SequenceData",
     optimizer: torch.optim.Optimizer,
-    config: TrainerConfig,
+    training_args: TrainingArguments,
+    cascade_config: CascadeConfig,
 ) -> Tuple["SequenceData", Dict[str, Any]]:
     """
     シンプルな訓練ループ（Hugging Face Trainerを使わない場合用）。
@@ -255,22 +243,26 @@ def train_llm_simple(
         train_data: 訓練SequenceData (hidden_states, targets)
         val_data: Early stopping用の検証SequenceData
         optimizer: LLMパラメータ用オプティマイザ
-        config: 訓練ハイパーパラメータを含むTrainerConfig
+        training_args: Hugging Face TrainingArguments
+        cascade_config: CASCADE固有の設定
 
     Returns:
         タプル:
         - SequenceData: 次のLLM用のhard tokens（出力hidden states）
         - Dict: 訓練統計 (train_ppls, val_ppls, best_epoch等)
     """
-    if config.verbose:
+    verbose = not training_args.disable_tqdm
+    batch_size = training_args.per_device_train_batch_size
+
+    if verbose:
         print(f"LLM訓練 (simple): {len(train_data)}訓練, {len(val_data)}検証シーケンス")
         print(f"  ({train_data.num_tokens}訓練, {val_data.num_tokens}検証トークン)")
 
     # 1. Early stopping付きLM訓練
-    lm_stats = _train_lm_simple(llm, train_data, val_data, optimizer, config)
+    lm_stats = _train_lm_simple(llm, train_data, val_data, optimizer, training_args, cascade_config)
 
     # 2. hard tokens収集（llm.thresholdも設定）
-    hard_tokens = llm.collect_hard_tokens(train_data, config.hard_ratio, config.batch_size)
+    hard_tokens = llm.collect_hard_tokens(train_data, cascade_config.hard_ratio, batch_size)
 
     # 3. 最終統計を構築
     actual_hard_ratio = hard_tokens.num_tokens / train_data.num_tokens if train_data.num_tokens > 0 else 0.0
@@ -280,7 +272,7 @@ def train_llm_simple(
         'threshold': llm.threshold,
     }
 
-    if config.verbose:
+    if verbose:
         print(f"  閾値 (cos_sim): {llm.threshold:.4f}")
         print(f"  Hard tokens: {len(hard_tokens)}シーケンス ({hard_tokens.num_tokens}トークン, {actual_hard_ratio*100:.1f}%)")
 
@@ -292,7 +284,8 @@ def _train_lm_simple(
     train_data: "SequenceData",
     val_data: "SequenceData",
     optimizer: torch.optim.Optimizer,
-    config: TrainerConfig,
+    training_args: TrainingArguments,
+    cascade_config: CascadeConfig,
 ) -> Dict[str, Any]:
     """
     シンプルなEarly stopping付き言語モデル訓練。
@@ -302,12 +295,18 @@ def _train_lm_simple(
         train_data: 訓練SequenceData
         val_data: 検証SequenceData
         optimizer: LLMパラメータ用オプティマイザ
-        config: 訓練ハイパーパラメータを含むTrainerConfig
+        training_args: Hugging Face TrainingArguments
+        cascade_config: CASCADE固有の設定
 
     Returns:
         train_ppls, val_ppls, best_epoch, best_val_ppl, total_epochs, stopped_earlyを含むDict
     """
     device = next(llm.parameters()).device
+    verbose = not training_args.disable_tqdm
+    max_epochs = int(training_args.num_train_epochs)
+    batch_size = training_args.per_device_train_batch_size
+    grad_clip = training_args.max_grad_norm
+
     best_ppl = float('inf')
     best_state: Dict[str, torch.Tensor] | None = None
     patience_counter = 0
@@ -317,14 +316,14 @@ def _train_lm_simple(
     train_ppls: List[float] = []
     val_ppls: List[float] = []
 
-    for epoch in range(config.max_epochs):
+    for epoch in range(max_epochs):
         # 訓練エポック
-        train_ppl = _run_train_epoch(llm, train_data, optimizer, config)
+        train_ppl = _run_train_epoch(llm, train_data, optimizer, batch_size, grad_clip)
         train_ppls.append(train_ppl)
 
         # 検証PPL計算（early stopping用）
         from .llm_evaluator import compute_ppl
-        val_ppl = compute_ppl(llm, val_data, config.batch_size)
+        val_ppl = compute_ppl(llm, val_data, batch_size)
         val_ppls.append(val_ppl)
 
         # Early stoppingチェック
@@ -337,12 +336,12 @@ def _train_lm_simple(
         else:
             patience_counter += 1
 
-        if config.verbose:
-            status = "best" if is_best else f"{patience_counter}/{config.patience}"
-            print(f"  Epoch {epoch+1}/{config.max_epochs}: train_ppl={train_ppl:.2f}, val_ppl={val_ppl:.2f} [{status}]")
+        if verbose:
+            status = "best" if is_best else f"{patience_counter}/{cascade_config.patience}"
+            print(f"  Epoch {epoch+1}/{max_epochs}: train_ppl={train_ppl:.2f}, val_ppl={val_ppl:.2f} [{status}]")
 
-        if patience_counter >= config.patience:
-            if config.verbose:
+        if patience_counter >= cascade_config.patience:
+            if verbose:
                 print(f"  Early stopping at epoch {epoch+1}")
             break
 
@@ -356,7 +355,7 @@ def _train_lm_simple(
         'best_epoch': best_epoch,
         'best_val_ppl': best_ppl,
         'total_epochs': epoch + 1,
-        'stopped_early': patience_counter >= config.patience,
+        'stopped_early': patience_counter >= cascade_config.patience,
     }
 
 
@@ -364,7 +363,8 @@ def _run_train_epoch(
     llm: "LLM",
     train_data: "SequenceData",
     optimizer: torch.optim.Optimizer,
-    config: TrainerConfig,
+    batch_size: int,
+    grad_clip: float,
 ) -> float:
     """
     【訓練用】1訓練エポックを実行。
@@ -375,7 +375,8 @@ def _run_train_epoch(
         llm: 訓練するLLM
         train_data: 訓練SequenceData
         optimizer: LLMパラメータ用オプティマイザ
-        config: 訓練ハイパーパラメータを含むTrainerConfig
+        batch_size: バッチサイズ
+        grad_clip: 勾配クリッピング値
 
     Returns:
         このエポックの訓練パープレキシティ
@@ -385,12 +386,12 @@ def _run_train_epoch(
     total_loss = 0.0
     total_tokens = 0
 
-    for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=True):
+    for h, y in train_data.to(str(device)).batches(batch_size, shuffle=True):
         optimizer.zero_grad()
         h_out, _ = llm.forward(h, input_type="hidden_states")
         logits = llm.get_logits(h_out)
 
-        batch_size, seq_len, vocab_size = logits.shape
+        batch_size_actual, seq_len, vocab_size = logits.shape
         loss = F.cross_entropy(
             logits.view(-1, vocab_size),
             y.view(-1),
@@ -398,10 +399,10 @@ def _run_train_epoch(
         )
 
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(llm.parameters(), config.grad_clip)
+        torch.nn.utils.clip_grad_norm_(llm.parameters(), grad_clip)
         optimizer.step()
 
         total_loss += loss.item()
-        total_tokens += batch_size * seq_len
+        total_tokens += batch_size_actual * seq_len
 
     return float(np.exp(total_loss / total_tokens))

@@ -8,7 +8,7 @@ CASCADE: Confidence-Aware Sequential Compute Allocation for Dynamic Exit
 
 Hugging Face Transformersとの統合:
 - AutoTokenizer, AutoModelForCausalLMを使用
-- TrainingArgumentsとの互換性
+- TrainingArgumentsを直接使用
 - datasets.Datasetとの相互変換
 """
 
@@ -18,7 +18,7 @@ from .exit_fn import ExitFn, default_exit_fn, compute_cos_sim
 from .llm_trainer import train_llm, train_llm_simple
 from .llm_evaluator import compute_ppl, evaluate_llm
 from .ensemble_trainer import train_ensemble, create_sequence_data
-from .config import TrainerConfig, ExperimentConfig
+from .config import CascadeConfig, ExperimentConfig
 from .sequence_data import SequenceData
 from .dataloader import (
     create_wikitext_dataloaders,
@@ -26,7 +26,7 @@ from .dataloader import (
 )
 from .utils import set_seed, get_device
 
-__version__ = "0.19.0"
+__version__ = "0.20.0"
 
 __all__ = [
     # コア
@@ -45,7 +45,7 @@ __all__ = [
     'compute_ppl',
     'evaluate_llm',
     # 設定
-    'TrainerConfig',
+    'CascadeConfig',
     'ExperimentConfig',
     # データ
     'SequenceData',

@@ -64,7 +64,7 @@ cascade/
 ├── llm_evaluator.py    # compute_ppl(), evaluate_llm()（単一LLM評価）
 ├── ensemble_trainer.py # train_ensemble(), create_sequence_data()
 ├── sequence_data.py    # SequenceData（HF Dataset連携）
-├── config.py           # TrainerConfig（HF TrainingArguments互換）, ExperimentConfig
+├── config.py           # CascadeConfig（CASCADE固有設定）, ExperimentConfig
 ├── dataloader.py       # create_wikitext_dataloaders（HF tokenizer使用）
 └── utils.py            # set_seed, get_device
 ```
@@ -73,7 +73,7 @@ cascade/
 
 - **Tokenizer**: `AutoTokenizer`（GPT-2 BPE）を使用
 - **Dataset**: `datasets.Dataset`と相互変換可能
-- **Trainer**: `Trainer` + `TrainingArguments`で訓練
+- **Trainer**: `Trainer` + `TrainingArguments`を直接使用
 - **Model**: `AutoModelForCausalLM`をラップ
 
 ---
@@ -263,12 +263,12 @@ hard_hidden = h_out[hard_mask]
 ## 使用例
 
 ```python
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, TrainingArguments
 from cascade import (
     Ensemble,
     LLM,
     ExperimentConfig,
-    TrainerConfig,
+    CascadeConfig,
     train_ensemble,
     create_sequence_data,
     create_wikitext_dataloaders,
@@ -307,21 +307,35 @@ ensemble = Ensemble(llms)
 train_data = create_sequence_data(ensemble, train_batches)
 val_data = create_sequence_data(ensemble, val_batches)
 
-# 訓練設定（TrainingArgumentsと互換）
-trainer_config = TrainerConfig(
-    batch_size=32, max_epochs=50, patience=3,
-    grad_clip=1.0, hard_ratio=0.5, lr=1e-3, verbose=True,
+# Hugging Face TrainingArgumentsを直接使用
+training_args = TrainingArguments(
+    output_dir="./cascade_output",
+    num_train_epochs=50,
+    per_device_train_batch_size=32,
+    learning_rate=1e-3,
+    max_grad_norm=1.0,
+    eval_strategy="epoch",
+    save_strategy="epoch",
+    load_best_model_at_end=True,
+    metric_for_best_model="eval_loss",
+    greater_is_better=False,
+    report_to="none",
+    remove_unused_columns=False,
+)
+
+# CASCADE固有の設定
+cascade_config = CascadeConfig(
+    patience=3,
+    hard_ratio=0.5,
+    lr_decay=0.5,
 )
 
 # 訓練（Hugging Face Trainerを使用）
-train_ensemble(ensemble, train_data, val_data, trainer_config, lr_decay=0.5)
+train_ensemble(ensemble, train_data, val_data, training_args, cascade_config)
 
 # 評価（TRUE Early Exit）
 stats = ensemble.evaluate(val_batches, batch_size=32)
 print(f"PPL: {stats['ppl']:.2f}, Accuracy: {stats['accuracy']:.2%}")
-
-# TrainingArgumentsへの変換も可能
-hf_args = trainer_config.to_training_arguments()
 ```
 
 ---
@@ -379,6 +393,12 @@ hf_args = trainer_config.to_training_arguments()
 - mixed precision, gradient accumulation等が自動
 - SequenceDataとdatasets.Datasetの相互変換
 
+### 9. 独自TrainerConfigの維持
+
+**問題：** `TrainerConfig`を独自定義し、`TrainingArguments`との変換を維持していた。
+
+**解決：** `TrainingArguments`を直接使用。CASCADE固有のパラメータ（patience, hard_ratio, lr_decay）のみ`CascadeConfig`に分離。
+
 ---
 
 ## ⛔ 禁止事項
@@ -393,3 +413,4 @@ hf_args = trainer_config.to_training_arguments()
 8. **Ensembleにembeddingを持たせる** - 各LLMが保持
 9. **独自トークナイザ実装** - Hugging Face AutoTokenizerを使用
 10. **独自訓練ループの再実装** - Hugging Face Trainerを使用
+11. **TrainingArgumentsのラッパー作成** - TrainingArgumentsを直接使用

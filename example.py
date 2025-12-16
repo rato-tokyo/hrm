@@ -7,16 +7,16 @@ TRUE Early Exitにより、簡単なトークンは前段LLMで処理完了。
 Hugging Face Transformersとの統合:
 - AutoTokenizer（GPT-2 BPEトークナイザ）を使用
 - AutoModelForCausalLMでモデル作成
-- TrainingArgumentsとの互換性
+- TrainingArgumentsを直接使用
 """
 
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM, TrainingArguments
 
 from cascade import (
     Ensemble,
     LLM,
     ExperimentConfig,
-    TrainerConfig,
+    CascadeConfig,
     set_seed,
     get_device,
     create_wikitext_dataloaders,
@@ -40,14 +40,30 @@ def main() -> None:
         tokenizer_name="gpt2",  # Hugging Face GPT-2トークナイザを使用
     )
 
-    trainer_config = TrainerConfig(
-        batch_size=64,
-        max_epochs=50,
+    # Hugging Face TrainingArgumentsを直接使用
+    training_args = TrainingArguments(
+        output_dir="./cascade_output",
+        num_train_epochs=50,
+        per_device_train_batch_size=64,
+        per_device_eval_batch_size=64,
+        learning_rate=1e-3,
+        max_grad_norm=1.0,
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
+        logging_steps=1,
+        report_to="none",
+        remove_unused_columns=False,
+        disable_tqdm=False,
+    )
+
+    # CASCADE固有の設定
+    cascade_config = CascadeConfig(
         patience=3,
-        grad_clip=1.0,
         hard_ratio=0.5,
-        lr=1e-3,
-        verbose=True,
+        lr_decay=0.1,
     )
 
     device = get_device()
@@ -66,7 +82,7 @@ def main() -> None:
     # Hugging Face tokenizerを使用してデータをロード
     train_batches, val_batches, vocab_size = create_wikitext_dataloaders(
         num_samples=config.num_samples,
-        batch_size=trainer_config.batch_size,
+        batch_size=training_args.per_device_train_batch_size,
         seq_len=config.seq_len,
         seed=42,
         tokenizer_name=config.tokenizer_name,
@@ -103,8 +119,8 @@ def main() -> None:
         ensemble=ensemble,
         train_data=train_data,
         val_data=val_data,
-        config=trainer_config,
-        lr_decay=0.1,
+        training_args=training_args,
+        cascade_config=cascade_config,
     )
 
     # 評価
@@ -112,7 +128,7 @@ def main() -> None:
     print("評価: TRUE Early Exit")
     print("=" * 60)
 
-    eval_stats = ensemble.evaluate(val_batches, trainer_config.batch_size)
+    eval_stats = ensemble.evaluate(val_batches, training_args.per_device_eval_batch_size)
 
     print("\n最終結果:")
     print(f"  Accuracy: {eval_stats['accuracy']*100:.2f}%")
