@@ -60,14 +60,21 @@ cascade/
 ├── llm.py              # LLM（Hugging Face CausalLM + Early Exit）
 ├── ensemble.py         # Ensemble（統合・ルーティング）
 ├── exit_fn.py          # ExitFn, default_exit_fn, compute_cos_sim
-├── llm_trainer.py      # train_llm()（単一LLM訓練）
+├── llm_trainer.py      # train_llm()（HF Trainer使用）, train_llm_simple()
 ├── llm_evaluator.py    # compute_ppl(), evaluate_llm()（単一LLM評価）
 ├── ensemble_trainer.py # train_ensemble(), create_sequence_data()
-├── sequence_data.py    # SequenceData
-├── config.py           # TrainerConfig, ExperimentConfig
-├── dataloader.py       # create_wikitext_dataloaders
+├── sequence_data.py    # SequenceData（HF Dataset連携）
+├── config.py           # TrainerConfig（HF TrainingArguments互換）, ExperimentConfig
+├── dataloader.py       # create_wikitext_dataloaders（HF tokenizer使用）
 └── utils.py            # set_seed, get_device
 ```
+
+### Hugging Face統合
+
+- **Tokenizer**: `AutoTokenizer`（GPT-2 BPE）を使用
+- **Dataset**: `datasets.Dataset`と相互変換可能
+- **Trainer**: `Trainer` + `TrainingArguments`で訓練
+- **Model**: `AutoModelForCausalLM`をラップ
 
 ---
 
@@ -256,41 +263,65 @@ hard_hidden = h_out[hard_mask]
 ## 使用例
 
 ```python
-from transformers import AutoModelForCausalLM, GPT2Config
+from transformers import AutoModelForCausalLM
 from cascade import (
     Ensemble,
     LLM,
+    ExperimentConfig,
+    TrainerConfig,
     train_ensemble,
     create_sequence_data,
-    TrainerConfig,
+    create_wikitext_dataloaders,
+)
+
+# 実験設定
+config = ExperimentConfig(
+    dim=64, num_heads=4, ffn_dim=256, max_seq_len=1024,
+    causal=True, eps=1e-6, seq_len=32, num_samples=10000,
+    llm_layers=(2, 2),
+    tokenizer_name="gpt2",  # Hugging Face tokenizer
+)
+
+# Hugging Face tokenizerでデータをロード
+train_batches, val_batches, vocab_size = create_wikitext_dataloaders(
+    num_samples=config.num_samples,
+    batch_size=64, seq_len=config.seq_len, seed=42,
+    tokenizer_name=config.tokenizer_name,
 )
 
 # Hugging Face CausalLMを使用してLLMを作成
-gpt2_config = GPT2Config(vocab_size=50257, n_embd=64, n_head=4, n_layer=2)
-llm_0 = LLM(AutoModelForCausalLM.from_config(gpt2_config))
-llm_1 = LLM(AutoModelForCausalLM.from_config(gpt2_config))
+llms = []
+for num_layers in config.llm_layers:
+    gpt2_config = config.to_gpt2_config(vocab_size)
+    gpt2_config.n_layer = num_layers
+    llm = LLM(AutoModelForCausalLM.from_config(gpt2_config))
+    llms.append(llm)
 
 # または訓練済みモデルを使用
-# llm_0 = LLM(AutoModelForCausalLM.from_pretrained("gpt2"))
+# llm = LLM(AutoModelForCausalLM.from_pretrained("gpt2"))
 
 # Ensembleで統合（vocab_size, dim引数不要）
-ensemble = Ensemble([llm_0, llm_1])
+ensemble = Ensemble(llms)
 
 # トークンを埋め込んでSequenceDataを作成
 train_data = create_sequence_data(ensemble, train_batches)
 val_data = create_sequence_data(ensemble, val_batches)
 
-# 訓練（各LLMは順番に訓練され、hard tokensを次に渡す）
-config = TrainerConfig(batch_size=32, max_epochs=50, ...)
-train_ensemble(ensemble, train_data, val_data, config, lr_decay=0.5)
+# 訓練設定（TrainingArgumentsと互換）
+trainer_config = TrainerConfig(
+    batch_size=32, max_epochs=50, patience=3,
+    grad_clip=1.0, hard_ratio=0.5, lr=1e-3, verbose=True,
+)
+
+# 訓練（Hugging Face Trainerを使用）
+train_ensemble(ensemble, train_data, val_data, trainer_config, lr_decay=0.5)
 
 # 評価（TRUE Early Exit）
 stats = ensemble.evaluate(val_batches, batch_size=32)
 print(f"PPL: {stats['ppl']:.2f}, Accuracy: {stats['accuracy']:.2%}")
 
-# 後からLLMを追加することも可能
-llm_2 = LLM(AutoModelForCausalLM.from_config(gpt2_config))
-ensemble.add_llm(llm_2)
+# TrainingArgumentsへの変換も可能
+hf_args = trainer_config.to_training_arguments()
 ```
 
 ---
@@ -339,6 +370,15 @@ ensemble.add_llm(llm_2)
 
 **解決：** CausalLM（lm_head内蔵）を使用。独自管理不要に。
 
+### 8. 独自トークナイザと訓練ループ
+
+**問題：** 素朴なsplit()トークナイザと独自訓練ループを維持していた。
+
+**解決：** Hugging Face AutoTokenizer, Trainer, TrainingArgumentsに移行。
+- BPEトークナイザで現実的な語彙サイズ
+- mixed precision, gradient accumulation等が自動
+- SequenceDataとdatasets.Datasetの相互変換
+
 ---
 
 ## ⛔ 禁止事項
@@ -351,3 +391,5 @@ ensemble.add_llm(llm_2)
 6. **独自Transformer実装** - Hugging Face Transformersを使用
 7. **output_headの独自管理** - CausalLMのlm_headを使用
 8. **Ensembleにembeddingを持たせる** - 各LLMが保持
+9. **独自トークナイザ実装** - Hugging Face AutoTokenizerを使用
+10. **独自訓練ループの再実装** - Hugging Face Trainerを使用

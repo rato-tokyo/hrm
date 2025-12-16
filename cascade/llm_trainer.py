@@ -1,7 +1,7 @@
 """
-CASCADEフレームワーク - LLM訓練（訓練専用）
+CASCADEフレームワーク - LLM訓練（Hugging Face Trainer使用）
 
-LLMの訓練関数。
+LLMの訓練関数。Hugging Face TrainerとTrainingArgumentsを使用。
 Hard token収集はLLM.collect_hard_tokens()で処理。
 
 注意: このモジュールは訓練専用。評価はEnsemble.evaluate()またはllm_evaluator.pyを使用。
@@ -10,14 +10,96 @@ Hard token収集はLLM.collect_hard_tokens()で処理。
 from __future__ import annotations
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
-from typing import Tuple, Dict, Any, List, TYPE_CHECKING
+import numpy as np
+from typing import Tuple, Dict, Any, List, Optional, TYPE_CHECKING
+from dataclasses import dataclass
+
+from transformers import Trainer, TrainingArguments, EarlyStoppingCallback
+from transformers.trainer_callback import TrainerCallback, TrainerState, TrainerControl
 
 if TYPE_CHECKING:
     from .llm import LLM
     from .sequence_data import SequenceData
 
 from .config import TrainerConfig
+
+
+class LLMWrapper(nn.Module):
+    """
+    Hugging Face Trainer用のLLMラッパー。
+
+    SequenceDataのhidden_statesを入力として受け取り、
+    loss計算を行うためのラッパー。
+    """
+
+    def __init__(self, llm: "LLM"):
+        super().__init__()
+        self.llm = llm
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        labels: Optional[torch.Tensor] = None,
+    ) -> Dict[str, Any]:
+        """
+        Forward pass with loss computation.
+
+        Args:
+            hidden_states: (batch_size, seq_len, dim)
+            labels: (batch_size, seq_len)
+
+        Returns:
+            Dict with 'loss' and 'logits'
+        """
+        h_out, _ = self.llm.forward(hidden_states, input_type="hidden_states")
+        logits = self.llm.get_logits(h_out)
+
+        loss: Optional[torch.Tensor] = None
+        if labels is not None:
+            batch_size, seq_len, vocab_size = logits.shape
+            loss = F.cross_entropy(
+                logits.view(-1, vocab_size),
+                labels.view(-1),
+                reduction='mean'
+            )
+
+        return {"loss": loss, "logits": logits}
+
+
+@dataclass
+class SequenceDataCollator:
+    """SequenceData用のData Collator。"""
+
+    def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, torch.Tensor]:
+        hidden_states = torch.stack([torch.tensor(f['hidden_states']) for f in features])
+        labels = torch.stack([torch.tensor(f['labels']) for f in features])
+        return {
+            'hidden_states': hidden_states,
+            'labels': labels,
+        }
+
+
+class PPLLoggingCallback(TrainerCallback):
+    """PPL（パープレキシティ）をログするコールバック。"""
+
+    def __init__(self, verbose: bool = True):
+        self.verbose = verbose
+        self.train_ppls: List[float] = []
+        self.val_ppls: List[float] = []
+
+    def on_log(  # noqa: ARG002
+        self, args, state: TrainerState, control: TrainerControl, logs=None, **kwargs
+    ):
+        if logs and self.verbose:
+            if 'loss' in logs:
+                ppl = np.exp(logs['loss'])
+                self.train_ppls.append(ppl)
+            if 'eval_loss' in logs:
+                ppl = np.exp(logs['eval_loss'])
+                self.val_ppls.append(ppl)
+                print(f"  Epoch {state.epoch:.0f}: val_ppl={ppl:.2f}")
 
 
 def train_llm(
@@ -30,7 +112,7 @@ def train_llm(
     """
     LLMを訓練し、次のLLM用のhard tokensを返す。
 
-    完全なLLM訓練ワークフローを調整:
+    Hugging Face Trainerを使用した訓練ワークフロー:
     1. Early stopping付きLM訓練（val_dataで検証）
     2. llm.collect_hard_tokens()でhard tokens収集（閾値も設定）
 
@@ -38,7 +120,7 @@ def train_llm(
         llm: 訓練するLLM
         train_data: 訓練SequenceData (hidden_states, targets)
         val_data: Early stopping用の検証SequenceData
-        optimizer: LLMパラメータ用オプティマイザ
+        optimizer: LLMパラメータ用オプティマイザ（Trainer内で再作成されるため参考用）
         config: 訓練ハイパーパラメータを含むTrainerConfig
 
     Returns:
@@ -50,8 +132,8 @@ def train_llm(
         print(f"LLM訓練: {len(train_data)}訓練, {len(val_data)}検証シーケンス")
         print(f"  ({train_data.num_tokens}訓練, {val_data.num_tokens}検証トークン)")
 
-    # 1. Early stopping付きLM訓練
-    lm_stats = _train_lm(llm, train_data, val_data, optimizer, config)
+    # 1. Hugging Face Trainerで訓練
+    lm_stats = _train_with_hf_trainer(llm, train_data, val_data, config)
 
     # 2. hard tokens収集（llm.thresholdも設定）
     hard_tokens = llm.collect_hard_tokens(train_data, config.hard_ratio, config.batch_size)
@@ -71,7 +153,141 @@ def train_llm(
     return hard_tokens, stats
 
 
-def _train_lm(
+def _train_with_hf_trainer(
+    llm: "LLM",
+    train_data: "SequenceData",
+    val_data: "SequenceData",
+    config: TrainerConfig,
+) -> Dict[str, Any]:
+    """
+    Hugging Face Trainerを使用した訓練。
+
+    Args:
+        llm: 訓練するLLM
+        train_data: 訓練SequenceData
+        val_data: 検証SequenceData
+        config: 訓練ハイパーパラメータを含むTrainerConfig
+
+    Returns:
+        train_ppls, val_ppls, best_epoch, best_val_ppl, total_epochs, stopped_earlyを含むDict
+    """
+    device = next(llm.parameters()).device
+
+    # Hugging Face Datasetに変換
+    train_dataset = train_data.to_hf_dataset()
+    val_dataset = val_data.to_hf_dataset()
+
+    # TrainingArgumentsを作成
+    training_args = TrainingArguments(
+        output_dir="./cascade_trainer_output",
+        num_train_epochs=config.max_epochs,
+        per_device_train_batch_size=config.batch_size,
+        per_device_eval_batch_size=config.batch_size,
+        learning_rate=config.lr,
+        max_grad_norm=config.grad_clip,
+        eval_strategy="epoch",
+        save_strategy="epoch",
+        load_best_model_at_end=True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
+        logging_steps=1 if config.verbose else 10,
+        report_to="none",
+        remove_unused_columns=False,
+        disable_tqdm=not config.verbose,
+    )
+
+    # LLMラッパーを作成
+    wrapper = LLMWrapper(llm)
+    wrapper.to(device)
+
+    # コールバックを設定
+    ppl_callback = PPLLoggingCallback(verbose=config.verbose)
+    callbacks = [
+        EarlyStoppingCallback(early_stopping_patience=config.patience),
+        ppl_callback,
+    ]
+
+    # Trainerを作成
+    trainer = Trainer(
+        model=wrapper,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
+        data_collator=SequenceDataCollator(),
+        callbacks=callbacks,
+    )
+
+    # 訓練実行
+    train_result = trainer.train()
+
+    # 統計を収集
+    best_val_ppl = float('inf')
+    if ppl_callback.val_ppls:
+        best_val_ppl = min(ppl_callback.val_ppls)
+        best_epoch = ppl_callback.val_ppls.index(best_val_ppl)
+    else:
+        best_epoch = 0
+
+    return {
+        'train_ppls': ppl_callback.train_ppls,
+        'val_ppls': ppl_callback.val_ppls,
+        'best_epoch': best_epoch,
+        'best_val_ppl': best_val_ppl,
+        'total_epochs': int(train_result.metrics.get('epoch', config.max_epochs)),
+        'stopped_early': len(ppl_callback.val_ppls) < config.max_epochs,
+    }
+
+
+def train_llm_simple(
+    llm: "LLM",
+    train_data: "SequenceData",
+    val_data: "SequenceData",
+    optimizer: torch.optim.Optimizer,
+    config: TrainerConfig,
+) -> Tuple["SequenceData", Dict[str, Any]]:
+    """
+    シンプルな訓練ループ（Hugging Face Trainerを使わない場合用）。
+
+    軽量な実装が必要な場合に使用。
+
+    Args:
+        llm: 訓練するLLM
+        train_data: 訓練SequenceData (hidden_states, targets)
+        val_data: Early stopping用の検証SequenceData
+        optimizer: LLMパラメータ用オプティマイザ
+        config: 訓練ハイパーパラメータを含むTrainerConfig
+
+    Returns:
+        タプル:
+        - SequenceData: 次のLLM用のhard tokens（出力hidden states）
+        - Dict: 訓練統計 (train_ppls, val_ppls, best_epoch等)
+    """
+    if config.verbose:
+        print(f"LLM訓練 (simple): {len(train_data)}訓練, {len(val_data)}検証シーケンス")
+        print(f"  ({train_data.num_tokens}訓練, {val_data.num_tokens}検証トークン)")
+
+    # 1. Early stopping付きLM訓練
+    lm_stats = _train_lm_simple(llm, train_data, val_data, optimizer, config)
+
+    # 2. hard tokens収集（llm.thresholdも設定）
+    hard_tokens = llm.collect_hard_tokens(train_data, config.hard_ratio, config.batch_size)
+
+    # 3. 最終統計を構築
+    actual_hard_ratio = hard_tokens.num_tokens / train_data.num_tokens if train_data.num_tokens > 0 else 0.0
+    stats: Dict[str, Any] = {
+        **lm_stats,
+        'hard_ratio': actual_hard_ratio,
+        'threshold': llm.threshold,
+    }
+
+    if config.verbose:
+        print(f"  閾値 (cos_sim): {llm.threshold:.4f}")
+        print(f"  Hard tokens: {len(hard_tokens)}シーケンス ({hard_tokens.num_tokens}トークン, {actual_hard_ratio*100:.1f}%)")
+
+    return hard_tokens, stats
+
+
+def _train_lm_simple(
     llm: "LLM",
     train_data: "SequenceData",
     val_data: "SequenceData",
@@ -79,7 +295,7 @@ def _train_lm(
     config: TrainerConfig,
 ) -> Dict[str, Any]:
     """
-    Early stopping付き言語モデル訓練。
+    シンプルなEarly stopping付き言語モデル訓練。
 
     Args:
         llm: 訓練するLLM
@@ -164,8 +380,6 @@ def _run_train_epoch(
     Returns:
         このエポックの訓練パープレキシティ
     """
-    import numpy as np
-
     device = next(llm.parameters()).device
     llm.train()
     total_loss = 0.0
@@ -173,7 +387,7 @@ def _run_train_epoch(
 
     for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=True):
         optimizer.zero_grad()
-        h_out, _ = llm.forward(h)
+        h_out, _ = llm.forward(h, input_type="hidden_states")
         logits = llm.get_logits(h_out)
 
         batch_size, seq_len, vocab_size = logits.shape
@@ -191,5 +405,3 @@ def _run_train_epoch(
         total_tokens += batch_size * seq_len
 
     return float(np.exp(total_loss / total_tokens))
-
-

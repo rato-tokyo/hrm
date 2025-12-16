@@ -3,9 +3,14 @@ CASCADEフレームワーク実行例 - LLM統合
 
 任意のHugging Face CausalLMをLLMクラスでラップし、Ensembleで統合する例。
 TRUE Early Exitにより、簡単なトークンは前段LLMで処理完了。
+
+Hugging Face Transformersとの統合:
+- AutoTokenizer（GPT-2 BPEトークナイザ）を使用
+- AutoModelForCausalLMでモデル作成
+- TrainingArgumentsとの互換性
 """
 
-from transformers import AutoModelForCausalLM, GPT2Config
+from transformers import AutoModelForCausalLM
 
 from cascade import (
     Ensemble,
@@ -32,6 +37,7 @@ def main() -> None:
         seq_len=32,
         num_samples=10000,
         llm_layers=(2, 2),  # LLM 0: 2層, LLM 1: 2層
+        tokenizer_name="gpt2",  # Hugging Face GPT-2トークナイザを使用
     )
 
     trainer_config = TrainerConfig(
@@ -52,24 +58,29 @@ def main() -> None:
     print(f"デバイス: {device}")
     print(f"モデル: dim={config.dim}, heads={config.num_heads}")
     print(f"LLM構成: {config.llm_layers}")
+    print(f"トークナイザ: {config.tokenizer_name}")
 
     # セットアップ
     set_seed(42)
+
+    # Hugging Face tokenizerを使用してデータをロード
     train_batches, val_batches, vocab_size = create_wikitext_dataloaders(
-        config.num_samples, trainer_config.batch_size, config.seq_len, seed=42
+        num_samples=config.num_samples,
+        batch_size=trainer_config.batch_size,
+        seq_len=config.seq_len,
+        seed=42,
+        tokenizer_name=config.tokenizer_name,
     )
+
+    print(f"語彙サイズ: {vocab_size}")
 
     # Hugging Face AutoModelForCausalLMを使用してLLMを作成
     llms = []
     for num_layers in config.llm_layers:
-        gpt2_config = GPT2Config(
-            vocab_size=vocab_size,
-            n_embd=config.dim,
-            n_head=config.num_heads,
-            n_layer=num_layers,
-            n_inner=config.ffn_dim,
-            n_positions=config.max_seq_len,
-        )
+        # ExperimentConfig.to_gpt2_config()を使用
+        gpt2_config = config.to_gpt2_config(vocab_size)
+        gpt2_config.n_layer = num_layers
+
         # AutoModelForCausalLM.from_config()で新規モデル作成
         # または from_pretrained("gpt2") で訓練済みモデルを使用
         causal_lm = AutoModelForCausalLM.from_config(gpt2_config)
