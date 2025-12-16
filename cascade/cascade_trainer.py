@@ -85,8 +85,9 @@ class PPLLoggingCallback(TrainerCallback):
         self.val_ppls: List[float] = []
 
     def on_log(  # noqa: ARG002
-        self, args, state: TrainerState, control: TrainerControl, logs=None, **kwargs
+        self, args, state: TrainerState, control: TrainerControl, logs=None, **kwargs  # noqa: ARG002
     ):
+        del args, control, kwargs  # unused but required by TrainerCallback interface
         if logs and self.verbose:
             if 'loss' in logs:
                 ppl = np.exp(logs['loss'])
@@ -164,7 +165,7 @@ class CascadeTrainer:
             # フリーズされたLLMは訓練せずhard token収集のみ
             if is_frozen:
                 if verbose:
-                    print(f"  訓練可能パラメータ: 0 - 訓練スキップ")
+                    print("  訓練可能パラメータ: 0 - 訓練スキップ")
 
                 # hard tokens収集
                 batch_size = self.training_args.per_device_train_batch_size
