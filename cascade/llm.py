@@ -105,6 +105,10 @@ class LLM(nn.Module):
                 return_dict=True,
             )
         else:  # hidden_states
+            # hidden_statesの場合、モデルのdtypeに自動変換（float16対応）
+            model_dtype = next(self.base_llm.parameters()).dtype
+            if x.dtype != model_dtype:
+                x = x.to(dtype=model_dtype)
             outputs = self.base_llm(
                 inputs_embeds=x,
                 output_hidden_states=True,

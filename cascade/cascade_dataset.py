@@ -198,8 +198,6 @@ def collect_hard_tokens_from_dataset(
     from .exit_fn import compute_cos_sim
 
     device = next(llm.parameters()).device
-    # モデルのdtypeを取得（float16対応）
-    model_dtype = next(llm.parameters()).dtype
     llm.eval()
 
     info = get_dataset_info(dataset)
@@ -212,8 +210,7 @@ def collect_hard_tokens_from_dataset(
 
     with torch.no_grad():
         for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=str(device)):
-            # モデルのdtypeに合わせる（float16対応）
-            h = h.to(dtype=model_dtype)
+            # dtype変換はLLM.forwardで自動実行
             h_out, hidden_history = llm.forward(h, input_type="hidden_states")
             h_in = hidden_history[-2]
             cos_sim = compute_cos_sim(h_in, h_out)
@@ -263,8 +260,6 @@ def transform_dataset(
         変換されたDataset
     """
     device = next(llm.parameters()).device
-    # モデルのdtypeを取得（float16対応）
-    model_dtype = next(llm.parameters()).dtype
     llm.eval()
 
     info = get_dataset_info(dataset)
@@ -276,8 +271,7 @@ def transform_dataset(
 
     with torch.no_grad():
         for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=str(device)):
-            # モデルのdtypeに合わせる（float16対応）
-            h = h.to(dtype=model_dtype)
+            # dtype変換はLLM.forwardで自動実行
             h_out, _ = llm.forward(h, input_type="hidden_states")
             all_hidden.append(h_out.cpu())
             all_targets.append(y.cpu())
