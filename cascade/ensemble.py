@@ -3,7 +3,7 @@ CASCADEフレームワーク - Ensemble
 
 複数のLLMを統合し、TRUE Early Exitによるルーティングを管理。
 
-注意: evaluate()は評価専用。訓練はensemble_trainer.pyを使用。
+注意: evaluate()は評価専用。訓練はCascadeTrainerを使用。
 """
 
 from __future__ import annotations
@@ -13,8 +13,12 @@ import torch.nn as nn
 import numpy as np
 from typing import Dict, List, Any, Tuple
 
+
 from .llm import LLM
-from .sequence_data import SequenceData
+from .cascade_dataset import (
+    create_cascade_dataset,
+    get_dataset_info,
+)
 
 
 class Ensemble(nn.Module):
@@ -129,12 +133,15 @@ class Ensemble(nn.Module):
             for x, y in val_batches:
                 x, y = x.to(device), y.to(device)
                 h_out, _ = first_llm.forward(x, input_type="token_ids")
-                all_hidden.append(h_out)
-                all_targets.append(y)
+                all_hidden.append(h_out.cpu())
+                all_targets.append(y.cpu())
 
-        # 最初のLLMの評価
-        data = SequenceData(torch.cat(all_hidden), torch.cat(all_targets))
-        total_tokens = data.num_tokens
+        # 最初のLLMの評価用Dataset作成
+        hidden_cat = torch.cat(all_hidden)
+        targets_cat = torch.cat(all_targets)
+        current_dataset = create_cascade_dataset(hidden_cat, targets_cat)
+        info = get_dataset_info(current_dataset)
+        total_tokens = info['num_tokens']
 
         from .llm_evaluator import evaluate_llm
 
@@ -142,18 +149,19 @@ class Ensemble(nn.Module):
         total_loss = 0.0
         total_correct = 0
 
-        # 最初のLLMの統計を計算（forwardは既に実行済みなので、logitsから計算）
+        # 最初のLLMの統計を計算
         is_last = (len(self.llms) == 1)
-        continue_data, stats = evaluate_llm(first_llm, data, batch_size, is_last=is_last)
+        continue_dataset, stats = evaluate_llm(first_llm, current_dataset, batch_size, is_last=is_last)
         llm_stats.append(stats)
         total_loss += stats['loss']
         total_correct += stats['correct']
 
-        current_data = continue_data
+        current_dataset = continue_dataset
 
         # 2番目以降のLLMで評価
         for llm_idx, llm in enumerate(self.llms[1:], 1):
-            if len(current_data) == 0:
+            info = get_dataset_info(current_dataset)
+            if info['num_sequences'] == 0:
                 llm_stats.append({
                     'loss': 0.0,
                     'correct': 0,
@@ -164,13 +172,13 @@ class Ensemble(nn.Module):
                 continue
 
             is_last = (llm_idx == len(self.llms) - 1)
-            continue_data, stats = evaluate_llm(llm, current_data, batch_size, is_last=is_last)
+            continue_dataset, stats = evaluate_llm(llm, current_dataset, batch_size, is_last=is_last)
 
             llm_stats.append(stats)
             total_loss += stats['loss']
             total_correct += stats['correct']
 
-            current_data = continue_data
+            current_dataset = continue_dataset
 
         total_layers_computed = sum(s['layers_computed'] for s in llm_stats)
         max_layers_computed = total_tokens * self.num_layers

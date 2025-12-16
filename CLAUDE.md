@@ -42,6 +42,7 @@
 |----------|------|------|
 | `LLM` | Hugging Face CausalLMをラップするクラス | 「CascadeLLM」等にしない |
 | `Ensemble` | 複数のLLMを統合するクラス | 「CascadeEnsemble」等にしない |
+| `CascadeTrainer` | HF Trainerベースの訓練クラス | 訓練専用なので例外的にCascade接頭辞を使用 |
 
 **禁止事項**:
 - ❌ クラス名にフレームワーク名を含めない（例: `CascadeLLM`, `LEGOBlock`）
@@ -60,20 +61,19 @@ cascade/
 ├── llm.py                # LLM（Hugging Face CausalLM + Early Exit）
 ├── ensemble.py           # Ensemble（統合・ルーティング）
 ├── exit_fn.py            # ExitFn, default_exit_fn, compute_cos_sim
-├── llm_trainer.py        # train_llm()（HF Trainer使用）
-├── llm_trainer_simple.py # train_llm_simple()（シンプル訓練ループ）
+├── cascade_trainer.py    # CascadeTrainer（HF Trainerベース訓練）
+├── cascade_dataset.py    # HF Dataset操作関数
+├── ensemble_trainer.py   # train_ensemble()（CascadeTrainerへの薄いラッパー）
 ├── llm_evaluator.py      # compute_ppl(), evaluate_llm()（単一LLM評価）
-├── ensemble_trainer.py   # train_ensemble(), create_sequence_data()
-├── sequence_data.py      # SequenceData（HF Dataset連携）
 ├── config.py             # CascadeConfig（CASCADE固有設定）, ExperimentConfig
 ├── dataloader.py         # create_wikitext_dataloaders（HF tokenizer使用）
 └── utils.py              # set_seed, get_device
 ```
 
-### Hugging Face統合
+### Hugging Face完全統合
 
 - **Tokenizer**: `AutoTokenizer`（GPT-2 BPE）を使用
-- **Dataset**: `datasets.Dataset`と相互変換可能
+- **Dataset**: `datasets.Dataset`を直接使用（SequenceData廃止）
 - **Trainer**: `Trainer` + `TrainingArguments`を直接使用
 - **Model**: `AutoModelForCausalLM`をラップ
 
@@ -94,6 +94,7 @@ Ensemble   → LLM × N のルーティング管理のみ
 | `CausalLM` | Hugging Faceの完全なLLM（embedding + transformer + lm_head） |
 | `LLM` | CausalLMをラップし、Early Exit機能を追加 |
 | `Ensemble` | 複数のLLMを統合、ルーティング管理のみ |
+| `CascadeTrainer` | HF Trainerを使用した訓練、hard token収集 |
 
 ---
 
@@ -103,7 +104,7 @@ Ensemble   → LLM × N のルーティング管理のみ
 
 1. **LLMをラップ**: 任意のHugging Face CausalLMを`LLM`クラスでラップ
 2. **Ensembleで統合**: 複数の`LLM`を`Ensemble`に登録
-3. **順次訓練**: 各LLMを訓練し、hard tokensを次に渡す
+3. **順次訓練**: `CascadeTrainer`で各LLMを訓練し、hard tokensを次に渡す
 4. **Early Exit機能**: threshold設定、hard token判定
 5. **推論時**: 簡単なトークンは前段でexit、難しいトークンだけ後段へ
 
@@ -144,6 +145,7 @@ Ensemble   → LLM × N のルーティング管理のみ
 7. **トークン単位のEarly Exit** - exit判定はトークン単位
 8. **TRUE Early Exit** - exitしたトークンは後続LLMを実際に通過しない
 9. **動的拡張** - `Ensemble.add_llm()`で後からLLMを追加可能
+10. **HF Dataset直接使用** - 独自データ構造を持たない
 
 ---
 
@@ -165,7 +167,7 @@ class LLM(nn.Module):
     def __init__(self, base_llm: PreTrainedModel, exit_fn: Optional[ExitFn] = None):
         self.base_llm = base_llm
         self.exit_fn = exit_fn or default_exit_fn
-        self.threshold = 0.0  # collect_hard_tokensで設定
+        self.threshold = 0.0  # CascadeTrainerで設定
 
     def forward(self, x, input_type="token_ids") -> Tuple[Tensor, List[Tensor]]:
         """token_idsまたはhidden_statesを処理"""
@@ -174,21 +176,31 @@ class LLM(nn.Module):
         """base_llm.lm_headを使用してlogits計算"""
         return self.base_llm.lm_head(h)
 
-    def collect_hard_tokens(self, data, hard_ratio, batch_size) -> SequenceData:
-        """hard tokens収集、thresholdも設定"""
-
-    def transform_data(self, data, batch_size) -> SequenceData:
-        """データをこのLLMで変換"""
+    def should_exit(self, hidden_history) -> Tensor:
+        """exit判定（thresholdとcos_simを比較）"""
 ```
 
-### LLM評価関数（llm_evaluator.py）
+### CascadeTrainerの責務
 
 ```python
-def compute_ppl(llm, data, batch_size) -> float:
-    """パープレキシティを計算（exit判定なし）"""
+class CascadeTrainer:
+    """
+    HF Trainerを活用したCASCADE訓練クラス。
 
-def evaluate_llm(llm, data, batch_size, is_last) -> Tuple[SequenceData, Dict]:
-    """exit判定あり、統計と継続データを返す"""
+    各LLMを順番にHF Trainerで訓練し、hard tokensを次のLLMに渡す。
+    """
+
+    def __init__(self, training_args: TrainingArguments, cascade_config: CascadeConfig):
+        ...
+
+    def train(self, ensemble, train_dataset, val_dataset) -> Dict:
+        """全LLMを順番に訓練"""
+        for llm in ensemble.llms:
+            # HF Trainerで訓練
+            trainer = Trainer(model=LLMWrapper(llm), ...)
+            trainer.train()
+            # hard token収集
+            hard_dataset = collect_hard_tokens_from_dataset(llm, ...)
 ```
 
 ### Ensembleクラスの責務
@@ -221,7 +233,7 @@ class Ensemble(nn.Module):
 **トークン単位で収集**：cos_sim下位N%のトークンがhard。
 
 ```python
-# LLM.collect_hard_tokens()の内部処理
+# cascade_dataset.collect_hard_tokens_from_dataset()の内部処理
 h_out, hidden_history = llm.forward(h, input_type="hidden_states")
 h_in = hidden_history[-2]
 cos_sim = compute_cos_sim(h_in, h_out)
@@ -231,6 +243,7 @@ hard_mask = cos_sim < threshold
 hard_hidden = h_out[hard_mask]
 
 # 新シーケンスに再構成して次のLLMへ
+hard_dataset = reconstruct_sequences(hard_hidden, hard_labels, seq_len)
 ```
 
 **重要**: 後段LLMが受け取るのはhardトークンのみ。easyトークンは前段LLMで処理完了。
@@ -243,7 +256,7 @@ hard_hidden = h_out[hard_mask]
 【全体の流れ】
 
 1. LLM 0 訓練（全データ）
-   └─ 訓練完了
+   └─ HF Trainerで訓練完了
 
 2. LLM 0 の hard tokens 収集
    ├─ 全データを通す
@@ -271,7 +284,7 @@ from cascade import (
     ExperimentConfig,
     CascadeConfig,
     train_ensemble,
-    create_sequence_data,
+    create_initial_dataset,
     create_wikitext_dataloaders,
 )
 
@@ -298,15 +311,12 @@ for num_layers in config.llm_layers:
     llm = LLM(AutoModelForCausalLM.from_config(gpt2_config))
     llms.append(llm)
 
-# または訓練済みモデルを使用
-# llm = LLM(AutoModelForCausalLM.from_pretrained("gpt2"))
-
-# Ensembleで統合（vocab_size, dim引数不要）
+# Ensembleで統合
 ensemble = Ensemble(llms)
 
-# トークンを埋め込んでSequenceDataを作成
-train_data = create_sequence_data(ensemble, train_batches)
-val_data = create_sequence_data(ensemble, val_batches)
+# トークンを埋め込んでHF Datasetを作成
+train_dataset = create_initial_dataset(ensemble, train_batches)
+val_dataset = create_initial_dataset(ensemble, val_batches)
 
 # Hugging Face TrainingArgumentsを直接使用
 training_args = TrainingArguments(
@@ -331,8 +341,8 @@ cascade_config = CascadeConfig(
     lr_decay=0.5,
 )
 
-# 訓練（Hugging Face Trainerを使用）
-train_ensemble(ensemble, train_data, val_data, training_args, cascade_config)
+# 訓練（CascadeTrainer使用）
+train_ensemble(ensemble, train_dataset, val_dataset, training_args, cascade_config)
 
 # 評価（TRUE Early Exit）
 stats = ensemble.evaluate(val_batches, batch_size=32)
@@ -390,15 +400,18 @@ print(f"PPL: {stats['ppl']:.2f}, Accuracy: {stats['accuracy']:.2%}")
 **問題：** 素朴なsplit()トークナイザと独自訓練ループを維持していた。
 
 **解決：** Hugging Face AutoTokenizer, Trainer, TrainingArgumentsに移行。
-- BPEトークナイザで現実的な語彙サイズ
-- mixed precision, gradient accumulation等が自動
-- SequenceDataとdatasets.Datasetの相互変換
 
 ### 9. 独自TrainerConfigの維持
 
 **問題：** `TrainerConfig`を独自定義し、`TrainingArguments`との変換を維持していた。
 
-**解決：** `TrainingArguments`を直接使用。CASCADE固有のパラメータ（patience, hard_ratio, lr_decay）のみ`CascadeConfig`に分離。
+**解決：** `TrainingArguments`を直接使用。CASCADE固有のパラメータのみ`CascadeConfig`に分離。
+
+### 10. SequenceDataの維持
+
+**問題：** 独自の`SequenceData`クラスを維持し、HF Datasetとの相互変換を行っていた。
+
+**解決：** `SequenceData`を廃止し、HF `Dataset`を直接使用。`cascade_dataset.py`で操作関数を提供。
 
 ---
 
@@ -408,10 +421,11 @@ print(f"PPL: {stats['ppl']:.2f}, Accuracy: {stats['accuracy']:.2%}")
 2. **シーケンス単位のhard収集** - トークン単位のみ使用
 3. **easyトークンを後段LLMに渡す** - hardトークンのみ
 4. **generateやKVキャッシュの実装** - 事前学習専用
-5. **モデルクラスに訓練ロジック** - 外部関数で分離
+5. **モデルクラスに訓練ロジック** - CascadeTrainerで分離
 6. **独自Transformer実装** - Hugging Face Transformersを使用
 7. **output_headの独自管理** - CausalLMのlm_headを使用
 8. **Ensembleにembeddingを持たせる** - 各LLMが保持
 9. **独自トークナイザ実装** - Hugging Face AutoTokenizerを使用
 10. **独自訓練ループの再実装** - Hugging Face Trainerを使用
 11. **TrainingArgumentsのラッパー作成** - TrainingArgumentsを直接使用
+12. **独自データ構造の作成** - HF Datasetを直接使用

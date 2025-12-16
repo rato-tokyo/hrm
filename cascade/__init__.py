@@ -6,28 +6,36 @@ CASCADE: Confidence-Aware Sequential Compute Allocation for Dynamic Exit
 - Early Exit機能により、簡単なトークンは前段LLMで処理完了
 - Hard tokens（難しいトークン）だけを後段に渡す
 
-Hugging Face Transformersとの統合:
+Hugging Face Transformersとの完全統合:
 - AutoTokenizer, AutoModelForCausalLMを使用
 - TrainingArgumentsを直接使用
-- datasets.Datasetとの相互変換
+- datasets.Datasetを直接使用
+- HF Trainerで訓練
 """
 
 from .ensemble import Ensemble
 from .llm import LLM
 from .exit_fn import ExitFn, default_exit_fn, compute_cos_sim
-from .llm_trainer import train_llm
-from .llm_trainer_simple import train_llm_simple
+from .cascade_trainer import CascadeTrainer, create_initial_dataset
+from .ensemble_trainer import train_ensemble
 from .llm_evaluator import compute_ppl, evaluate_llm
-from .ensemble_trainer import train_ensemble, create_sequence_data
+from .cascade_dataset import (
+    create_cascade_dataset,
+    get_dataset_info,
+    iterate_batches,
+    collect_hard_tokens_from_dataset,
+    transform_dataset,
+    reconstruct_sequences,
+    create_empty_dataset,
+)
 from .config import CascadeConfig, ExperimentConfig
-from .sequence_data import SequenceData
 from .dataloader import (
     create_wikitext_dataloaders,
     create_dataset_from_tokenizer,
 )
 from .utils import set_seed, get_device
 
-__version__ = "0.21.0"
+__version__ = "0.22.0"
 
 __all__ = [
     # コア
@@ -37,19 +45,25 @@ __all__ = [
     'ExitFn',
     'default_exit_fn',
     'compute_cos_sim',
-    # 訓練
+    # 訓練（HF Trainerベース）
+    'CascadeTrainer',
     'train_ensemble',
-    'train_llm',
-    'train_llm_simple',
-    'create_sequence_data',
+    'create_initial_dataset',
+    # Dataset操作（HF Dataset直接使用）
+    'create_cascade_dataset',
+    'get_dataset_info',
+    'iterate_batches',
+    'collect_hard_tokens_from_dataset',
+    'transform_dataset',
+    'reconstruct_sequences',
+    'create_empty_dataset',
     # 評価
     'compute_ppl',
     'evaluate_llm',
     # 設定
     'CascadeConfig',
     'ExperimentConfig',
-    # データ
-    'SequenceData',
+    # データローダー
     'create_wikitext_dataloaders',
     'create_dataset_from_tokenizer',
     # ユーティリティ

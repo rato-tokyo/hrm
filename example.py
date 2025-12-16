@@ -8,6 +8,8 @@ Hugging Face Transformersとの統合:
 - AutoTokenizer（GPT-2 BPEトークナイザ）を使用
 - AutoModelForCausalLMでモデル作成
 - TrainingArgumentsを直接使用
+- datasets.Datasetを直接使用
+- HF Trainerで訓練
 """
 
 from transformers import AutoModelForCausalLM, TrainingArguments
@@ -21,7 +23,7 @@ from cascade import (
     get_device,
     create_wikitext_dataloaders,
     train_ensemble,
-    create_sequence_data,
+    create_initial_dataset,
 )
 
 
@@ -107,18 +109,17 @@ def main() -> None:
 
     print(f"LLMあたりのレイヤー数: {[llm.num_layers for llm in ensemble.llms]}")
 
-    # バッチからシーケンスデータを作成
-    train_data = create_sequence_data(ensemble, train_batches)
-    val_data = create_sequence_data(ensemble, val_batches)
-    print(f"訓練データ: {len(train_data)}シーケンス ({train_data.num_tokens}トークン)")
-    print(f"検証データ: {len(val_data)}シーケンス ({val_data.num_tokens}トークン)")
+    # バッチからHF Datasetを作成
+    train_dataset = create_initial_dataset(ensemble, train_batches)
+    val_dataset = create_initial_dataset(ensemble, val_batches)
+    print(f"訓練データ: {len(train_dataset)}シーケンス")
+    print(f"検証データ: {len(val_dataset)}シーケンス")
 
-    # 全LLMを訓練
-    # 各LLMは順番に訓練され、hard tokensを次に渡す
+    # 全LLMを訓練（CascadeTrainer使用）
     train_stats = train_ensemble(
         ensemble=ensemble,
-        train_data=train_data,
-        val_data=val_data,
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
         training_args=training_args,
         cascade_config=cascade_config,
     )

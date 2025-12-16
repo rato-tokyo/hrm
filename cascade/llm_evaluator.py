@@ -2,7 +2,7 @@
 CASCADEフレームワーク - LLM評価（評価専用）
 
 LLMの評価関数。
-訓練はllm_trainer.pyを使用。
+訓練はCascadeTrainerを使用。
 """
 
 from __future__ import annotations
@@ -12,14 +12,22 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Tuple, Dict, Any, List, TYPE_CHECKING
 
+from datasets import Dataset
+
+from .cascade_dataset import (
+    iterate_batches,
+    get_dataset_info,
+    reconstruct_sequences,
+    create_empty_dataset,
+)
+
 if TYPE_CHECKING:
     from .llm import LLM
-    from .sequence_data import SequenceData
 
 
 def compute_ppl(
     llm: "LLM",
-    data: "SequenceData",
+    dataset: Dataset,
     batch_size: int,
 ) -> float:
     """
@@ -29,7 +37,7 @@ def compute_ppl(
 
     Args:
         llm: 評価するLLM
-        data: 検証用SequenceData
+        dataset: 検証用HF Dataset
         batch_size: バッチサイズ
 
     Returns:
@@ -41,7 +49,7 @@ def compute_ppl(
     total_tokens = 0
 
     with torch.no_grad():
-        for h, y in data.to(str(device)).batches(batch_size, shuffle=False):
+        for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=str(device)):
             h_out, _ = llm.forward(h)
             logits = llm.get_logits(h_out)
             batch_sz, seq_len, vocab_size = logits.shape
@@ -53,32 +61,33 @@ def compute_ppl(
             total_loss += loss.item()
             total_tokens += batch_sz * seq_len
 
-    return float(np.exp(total_loss / total_tokens))
+    return float(np.exp(total_loss / total_tokens)) if total_tokens > 0 else float('inf')
 
 
 def evaluate_llm(
     llm: "LLM",
-    data: "SequenceData",
+    dataset: Dataset,
     batch_size: int,
     is_last: bool = False,
-) -> Tuple["SequenceData", Dict[str, Any]]:
+) -> Tuple[Dataset, Dict[str, Any]]:
     """
     LLMを評価し、exitトークンの統計と継続データを返す。
 
     Args:
         llm: 評価するLLM
-        data: 入力SequenceData (hidden_states, targets)
+        dataset: 入力HF Dataset (hidden_states, labels)
         batch_size: バッチサイズ
         is_last: 最終LLMの場合True（全トークンをexit扱い）
 
     Returns:
-        continue_data: 継続トークンのSequenceData（次LLM用）
+        continue_dataset: 継続トークンのDataset（次LLM用）
         stats: loss, correct, input_tokens, exit_tokens, layers_computedを含むDict
     """
-    from .sequence_data import SequenceData as SD
-
     device = next(llm.parameters()).device
     llm.eval()
+
+    info = get_dataset_info(dataset)
+    seq_len = info['seq_len']
 
     total_loss = 0.0
     total_correct = 0
@@ -89,14 +98,14 @@ def evaluate_llm(
     continue_targets: List[torch.Tensor] = []
 
     with torch.no_grad():
-        for h, y in data.to(str(device)).batches(batch_size, shuffle=False):
+        for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=str(device)):
             h_out, hidden_history = llm.forward(h)
             logits = llm.get_logits(h_out)
             should_exit = llm.should_exit(hidden_history)
 
             # フラット化
-            batch_sz, seq_len, vocab_size = logits.shape
-            num_tokens = batch_sz * seq_len
+            batch_sz, seq_len_actual, vocab_size = logits.shape
+            num_tokens = batch_sz * seq_len_actual
             total_input += num_tokens
 
             logits_flat = logits.view(-1, vocab_size)
@@ -129,19 +138,9 @@ def evaluate_llm(
     if continue_hidden:
         all_h = torch.cat(continue_hidden)
         all_y = torch.cat(continue_targets)
-        # シーケンスに再構成
-        seq_len = data.seq_len
-        num_complete = all_h.shape[0] // seq_len
-        if num_complete > 0:
-            usable = num_complete * seq_len
-            continue_data = SD(
-                all_h[:usable].view(num_complete, seq_len, -1),
-                all_y[:usable].view(num_complete, seq_len),
-            )
-        else:
-            continue_data = SD.empty(seq_len, llm.dim, str(device))
+        continue_dataset = reconstruct_sequences(all_h, all_y, seq_len)
     else:
-        continue_data = SD.empty(data.seq_len, llm.dim, str(device))
+        continue_dataset = create_empty_dataset(seq_len, llm.dim)
 
     stats = {
         'loss': total_loss,
@@ -151,4 +150,4 @@ def evaluate_llm(
         'layers_computed': total_input * llm.num_layers,
     }
 
-    return continue_data, stats
+    return continue_dataset, stats
