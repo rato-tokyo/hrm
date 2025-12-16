@@ -266,7 +266,8 @@ def main() -> None:
         load_best_model_at_end=False,  # save_strategy="no"のため無効化
         metric_for_best_model="eval_loss",
         greater_is_better=False,
-        logging_steps=10,
+        logging_strategy="epoch",  # エポック単位のみログ（冗長な進捗バー削減）
+        disable_tqdm=True,  # 進捗バーを無効化
         report_to="none",
         remove_unused_columns=False,
         fp16=is_cuda,
