@@ -16,14 +16,14 @@ ExitFn = Callable[[List[torch.Tensor], float], torch.Tensor]
 
 def default_exit_fn(hidden_history: List[torch.Tensor], threshold: float) -> torch.Tensor:
     """
-    Layer 28-29の平均cos_simを使用するexit関数。
+    レイヤー数に応じた適応的なexit関数。
 
-    Layer 30（最終レイヤー）は出力変換で全トークンが大きく変化するため、
-    exit判定には不適切。Layer 28-29の変化量の平均を使用する。
+    レイヤー数に応じて適切なcos_sim計算を行う:
+    - 4層以上: 最後から2-3番目のレイヤーの平均cos_sim（最終レイヤーは出力変換で不適切）
+    - 2-3層: 最後から1-2番目のcos_sim
+    - 1層: 入力と出力のcos_sim
 
-    注: hidden_historyは [embedding, layer1出力, ..., layer30出力] の31要素。
-        Layer 29の変化 = hidden_history[-2] vs hidden_history[-1] ではなく
-        hidden_history[29] vs hidden_history[30] = index 29 vs 30
+    注: hidden_historyは [入力, layer1出力, ..., layerN出力] の (N+1) 要素。
 
     Args:
         hidden_history: hidden statesのリスト [入力, レイヤー1出力, ...]
@@ -32,20 +32,26 @@ def default_exit_fn(hidden_history: List[torch.Tensor], threshold: float) -> tor
     Returns:
         should_exit: Booleanマスク (batch_size, seq_len) True = exitすべき
     """
-    # Layer 29の変化（Layer 28出力 → Layer 29出力）
-    # hidden_history[28] = Layer 28出力, hidden_history[29] = Layer 29出力
-    h_28 = hidden_history[-3]  # Layer 28出力（=Layer 29入力）
-    h_29 = hidden_history[-2]  # Layer 29出力（=Layer 30入力）
+    num_states = len(hidden_history)  # 入力 + 各レイヤー出力
 
-    # Layer 28の変化（Layer 27出力 → Layer 28出力）
-    h_27 = hidden_history[-4]  # Layer 27出力（=Layer 28入力）
-
-    # 各レイヤーのcos_sim計算
-    cos_sim_28 = compute_cos_sim(h_27, h_28)  # Layer 28での変化
-    cos_sim_29 = compute_cos_sim(h_28, h_29)  # Layer 29での変化
-
-    # 平均を取る
-    avg_cos_sim = (cos_sim_28 + cos_sim_29) / 2.0
+    if num_states >= 5:
+        # 4層以上: 最後から2-3番目のレイヤーの平均
+        h_prev2 = hidden_history[-4]
+        h_prev1 = hidden_history[-3]
+        h_last = hidden_history[-2]
+        cos_sim_1 = compute_cos_sim(h_prev2, h_prev1)
+        cos_sim_2 = compute_cos_sim(h_prev1, h_last)
+        avg_cos_sim = (cos_sim_1 + cos_sim_2) / 2.0
+    elif num_states >= 3:
+        # 2-3層: 最後から1-2番目のcos_sim
+        h_prev = hidden_history[-3]
+        h_last = hidden_history[-2]
+        avg_cos_sim = compute_cos_sim(h_prev, h_last)
+    else:
+        # 1層: 入力と出力のcos_sim
+        h_in = hidden_history[0]
+        h_out = hidden_history[-2] if num_states > 1 else hidden_history[-1]
+        avg_cos_sim = compute_cos_sim(h_in, h_out)
 
     return avg_cos_sim >= threshold
 

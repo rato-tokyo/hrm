@@ -313,13 +313,42 @@ def main() -> None:
     )
     print(f"\n計算コスト: {compute_cost*100:.1f}% (節約: {(1-compute_cost)*100:.1f}%)")
 
-    # 訓練統計の表示
-    print("\n訓練統計:")
-    for i, llm_stat in enumerate(train_stats["llm_stats"]):
-        print(
-            f"  LLM {i}: best_val_ppl={llm_stat['best_val_ppl']:.2f}, "
-            f"threshold={llm_stat.get('threshold', 'N/A')}"
-        )
+    # 訓練統計の表示（Before/After比較）
+    print("\n" + "=" * 60)
+    print("Before/After比較 (Hard Tokens)")
+    print("=" * 60)
+
+    # LLM 0（フリーズ）のhard tokens PPL
+    llm0_stat = train_stats["llm_stats"][0]
+    if llm0_stat.get('frozen', False):
+        print("\nLLM 0 (SmolLM2 - フリーズ):")
+        print(f"  全データ val PPL: {llm0_stat.get('full_val_ppl', 'N/A'):.2f}")
+        print(f"  Hard tokens val PPL (before): {llm0_stat.get('hard_val_ppl_before', 'N/A'):.2f}")
+        print(f"  Hard ratio: {llm0_stat.get('hard_ratio', 0)*100:.1f}%")
+        print(f"  Threshold: {llm0_stat.get('threshold', 'N/A'):.4f}")
+
+    # LLM 1（訓練済み）のhard tokens PPL
+    if len(train_stats["llm_stats"]) > 1:
+        llm1_stat = train_stats["llm_stats"][1]
+        print("\nLLM 1 (後付け - 訓練済み):")
+        ppl_before = llm1_stat.get('val_ppl_before', float('nan'))
+        ppl_after = llm1_stat.get('val_ppl_after', float('nan'))
+        improvement = llm1_stat.get('ppl_improvement', 0)
+        improvement_pct = llm1_stat.get('ppl_improvement_pct', 0)
+        print(f"  Hard tokens val PPL (before training): {ppl_before:.2f}")
+        print(f"  Hard tokens val PPL (after training): {ppl_after:.2f}")
+        print(f"  PPL改善: {improvement:.2f} ({improvement_pct:.1f}%)")
+
+        # 最終的なhard tokens PPL改善の比較
+        if llm0_stat.get('frozen', False):
+            llm0_hard_ppl = llm0_stat.get('hard_val_ppl_before', float('nan'))
+            if not (llm0_hard_ppl != llm0_hard_ppl):  # not NaN check
+                total_improvement = llm0_hard_ppl - ppl_after
+                total_improvement_pct = (total_improvement / llm0_hard_ppl * 100) if llm0_hard_ppl > 0 else 0.0
+                print("\n=== 総合改善 (LLM 0 hard tokens → LLM 1 訓練後) ===")
+                print(f"  LLM 0 Hard tokens PPL: {llm0_hard_ppl:.2f}")
+                print(f"  LLM 1 訓練後 PPL: {ppl_after:.2f}")
+                print(f"  改善: {total_improvement:.2f} ({total_improvement_pct:.1f}%)")
 
     print("\n" + "=" * 60)
     print("実験完了！")

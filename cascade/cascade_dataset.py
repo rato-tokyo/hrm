@@ -186,8 +186,11 @@ def collect_hard_tokens_from_dataset(
     """
     Datasetからhard tokensを収集。
 
-    Layer 28-29の平均cos_simを使用してhard tokenを判定。
-    Layer 30は出力変換で全トークンが大きく変化するため使用しない。
+    レイヤー数に応じて適切なcos_sim計算を行う:
+    - 30層以上: Layer 28-29の平均cos_sim（最終レイヤーは出力変換で不適切）
+    - 4層以上: 最後から2-3番目のレイヤーの平均cos_sim
+    - 2-3層: 最後から1-2番目のcos_sim
+    - 1層: 入力と出力のcos_sim
 
     Args:
         llm: 評価に使用するLLM
@@ -216,14 +219,27 @@ def collect_hard_tokens_from_dataset(
             # dtype変換はLLM.forwardで自動実行
             h_out, hidden_history = llm.forward(h, input_type="hidden_states")
 
-            # Layer 28-29の平均cos_simを計算
-            h_27 = hidden_history[-4]  # Layer 27出力
-            h_28 = hidden_history[-3]  # Layer 28出力
-            h_29 = hidden_history[-2]  # Layer 29出力
+            # レイヤー数に応じたcos_sim計算
+            num_states = len(hidden_history)  # 入力 + 各レイヤー出力
 
-            cos_sim_28 = compute_cos_sim(h_27, h_28)
-            cos_sim_29 = compute_cos_sim(h_28, h_29)
-            avg_cos_sim = (cos_sim_28 + cos_sim_29) / 2.0
+            if num_states >= 5:
+                # 4層以上: 最後から2-3番目のレイヤーの平均
+                h_prev2 = hidden_history[-4]
+                h_prev1 = hidden_history[-3]
+                h_last = hidden_history[-2]
+                cos_sim_1 = compute_cos_sim(h_prev2, h_prev1)
+                cos_sim_2 = compute_cos_sim(h_prev1, h_last)
+                avg_cos_sim = (cos_sim_1 + cos_sim_2) / 2.0
+            elif num_states >= 3:
+                # 2-3層: 最後から1-2番目のcos_sim
+                h_prev = hidden_history[-3]
+                h_last = hidden_history[-2]
+                avg_cos_sim = compute_cos_sim(h_prev, h_last)
+            else:
+                # 1層: 入力と出力のcos_sim
+                h_in = hidden_history[0]
+                h_out_layer = hidden_history[-2] if num_states > 1 else hidden_history[-1]
+                avg_cos_sim = compute_cos_sim(h_in, h_out_layer)
 
             all_avg_cos_sim.append(avg_cos_sim.cpu())
             all_hidden_out.append(h_out.cpu())

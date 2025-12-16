@@ -25,6 +25,7 @@ from .cascade_dataset import (
     collect_hard_tokens_from_dataset,
     transform_dataset,
 )
+from .llm_evaluator import compute_ppl
 
 if TYPE_CHECKING:
     from .llm import LLM
@@ -169,8 +170,13 @@ class CascadeTrainer:
                 if verbose:
                     print("  訓練可能パラメータ: 0 - 訓練スキップ")
 
-                # hard tokens収集
+                # 全データに対するval PPL（before）を計算
                 batch_size = self.training_args.per_device_train_batch_size
+                full_val_ppl = compute_ppl(llm, current_val, batch_size)
+                if verbose:
+                    print(f"  全データ val PPL: {full_val_ppl:.2f}")
+
+                # hard tokens収集
                 hard_dataset, threshold = collect_hard_tokens_from_dataset(
                     llm, current_train, self.cascade_config.hard_ratio, batch_size
                 )
@@ -179,9 +185,22 @@ class CascadeTrainer:
                 hard_info = get_dataset_info(hard_dataset)
                 actual_hard_ratio = hard_info['num_tokens'] / train_info['num_tokens'] if train_info['num_tokens'] > 0 else 0.0
 
+                # Hard tokensのval dataを収集（before計測用）
+                hard_val_dataset, _ = collect_hard_tokens_from_dataset(
+                    llm, current_val, self.cascade_config.hard_ratio, batch_size
+                )
+                hard_val_info = get_dataset_info(hard_val_dataset)
+
+                # Hard tokensに対するval PPL（before）を計算
+                hard_val_ppl_before = compute_ppl(llm, hard_val_dataset, batch_size) if hard_val_info['num_sequences'] > 0 else float('nan')
+                if verbose:
+                    print(f"  Hard tokens val PPL (before): {hard_val_ppl_before:.2f}")
+
                 all_stats.append({
                     'llm_idx': llm_idx,
                     'lr': 0.0,
+                    'full_val_ppl': full_val_ppl,
+                    'hard_val_ppl_before': hard_val_ppl_before,
                     'best_val_ppl': float('nan'),
                     'hard_ratio': actual_hard_ratio,
                     'threshold': threshold,
@@ -218,11 +237,24 @@ class CascadeTrainer:
                 save_strategy="no",  # weight tyingモデルのsafetensorsエラー回避
             )
 
+            # 訓練前のval PPL（before）を計算
+            batch_size = self.training_args.per_device_train_batch_size
+            val_ppl_before = compute_ppl(llm, current_val, batch_size)
+            if verbose:
+                print(f"  訓練前 val PPL: {val_ppl_before:.2f}")
+
             # HF Trainerで訓練
             train_stats = self._train_single_llm(llm, current_train, current_val, llm_training_args)
 
+            # 訓練後のval PPL（after）を計算
+            val_ppl_after = compute_ppl(llm, current_val, batch_size)
+            ppl_improvement = val_ppl_before - val_ppl_after
+            ppl_improvement_pct = (ppl_improvement / val_ppl_before * 100) if val_ppl_before > 0 else 0.0
+            if verbose:
+                print(f"  訓練後 val PPL: {val_ppl_after:.2f}")
+                print(f"  PPL改善: {ppl_improvement:.2f} ({ppl_improvement_pct:.1f}%)")
+
             # hard tokens収集
-            batch_size = self.training_args.per_device_train_batch_size
             hard_dataset, threshold = collect_hard_tokens_from_dataset(
                 llm, current_train, self.cascade_config.hard_ratio, batch_size
             )
@@ -235,6 +267,10 @@ class CascadeTrainer:
                 'llm_idx': llm_idx,
                 'lr': llm_lr,
                 **train_stats,
+                'val_ppl_before': val_ppl_before,
+                'val_ppl_after': val_ppl_after,
+                'ppl_improvement': ppl_improvement,
+                'ppl_improvement_pct': ppl_improvement_pct,
                 'hard_ratio': actual_hard_ratio,
                 'threshold': threshold,
             })
