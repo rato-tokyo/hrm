@@ -96,7 +96,7 @@ def collect_layer_cos_sims(
                 print(f"  バッチ {batch_idx + 1}/{len(batches)}")
 
             batch = batch.to(device)
-            _, hidden_history = llm.forward(batch, input_type="token_ids")
+            _, hidden_history = llm.forward_token_ids(batch)
 
             # 各レイヤー間のcos_simを計算
             for layer_idx in range(1, len(hidden_history)):

@@ -50,9 +50,8 @@ def compute_ppl(
 
     with torch.no_grad():
         for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=device):
-            # dtype変換はLLM.forwardで自動実行
-            # DatasetはCascade形式（hidden_states）なのでinput_type="hidden_states"
-            h_out, _ = llm.forward(h, input_type="hidden_states")
+            # DatasetはCascade形式（hidden_states）
+            h_out, _ = llm.forward_hidden_states(h)
             logits = llm.get_logits(h_out)
             batch_sz, seq_len, vocab_size = logits.shape
             loss = F.cross_entropy(
@@ -101,9 +100,8 @@ def evaluate_llm(
 
     with torch.no_grad():
         for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=device):
-            # dtype変換はLLM.forwardで自動実行
-            # DatasetはCascade形式（hidden_states）なのでinput_type="hidden_states"
-            h_out, hidden_history = llm.forward(h, input_type="hidden_states")
+            # DatasetはCascade形式（hidden_states）
+            h_out, hidden_history = llm.forward_hidden_states(h)
             logits = llm.get_logits(h_out)
             should_exit = llm.should_exit(hidden_history)
 

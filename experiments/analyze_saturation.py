@@ -97,7 +97,7 @@ def analyze_layer_saturation(
     with torch.no_grad():
         for batch in batches:
             batch = batch.to(device)
-            _, hidden_history = llm.forward(batch, input_type="token_ids")
+            _, hidden_history = llm.forward_token_ids(batch)
 
             # 各レイヤー間のcos_simを計算
             for layer_idx in range(1, len(hidden_history)):

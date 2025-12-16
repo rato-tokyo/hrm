@@ -216,8 +216,7 @@ def collect_hard_tokens_from_dataset(
 
     with torch.no_grad():
         for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=device):
-            # dtype変換はLLM.forwardで自動実行
-            h_out, hidden_history = llm.forward(h, input_type="hidden_states")
+            h_out, hidden_history = llm.forward_hidden_states(h)
 
             # レイヤー数に応じたcos_sim計算
             num_states = len(hidden_history)  # 入力 + 各レイヤー出力
@@ -297,8 +296,7 @@ def transform_dataset(
 
     with torch.no_grad():
         for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=device):
-            # dtype変換はLLM.forwardで自動実行
-            h_out, _ = llm.forward(h, input_type="hidden_states")
+            h_out, _ = llm.forward_hidden_states(h)
             all_hidden.append(h_out.cpu())
             all_targets.append(y.cpu())
 

@@ -50,7 +50,7 @@ class LLMWrapper(nn.Module):
     ) -> Dict[str, Any]:
         """Forward pass with loss computation."""
         # dtype変換はLLM.forwardで自動実行
-        h_out, _ = self.llm.forward(hidden_states, input_type="hidden_states")
+        h_out, _ = self.llm.forward_hidden_states(hidden_states)
         logits = self.llm.get_logits(h_out)
 
         loss: Optional[torch.Tensor] = None

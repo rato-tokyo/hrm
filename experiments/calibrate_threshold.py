@@ -179,7 +179,7 @@ def compute_layer_cos_sim(
     with torch.no_grad():
         for batch in batches:
             batch = batch.to(device)
-            _, hidden_history = llm.forward(batch, input_type="token_ids")
+            _, hidden_history = llm.forward_token_ids(batch)
 
             # 各レイヤー間のcos_simを計算
             # hidden_history: [embedding, layer0_out, layer1_out, ..., layerN_out]

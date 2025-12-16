@@ -155,6 +155,11 @@ Ensemble   → LLM × N のルーティング管理のみ
 
 ```python
 from transformers import PreTrainedModel
+from typing import NewType
+
+# 型エイリアス: 意味的な区別を明確化
+TokenTensor = NewType('TokenTensor', torch.Tensor)   # 整数テンソル (batch, seq_len)
+HiddenTensor = NewType('HiddenTensor', torch.Tensor) # 浮動小数点 (batch, seq_len, dim)
 
 class LLM(nn.Module):
     """
@@ -169,14 +174,17 @@ class LLM(nn.Module):
         self.exit_fn = exit_fn or default_exit_fn
         self.threshold = 0.0  # CascadeTrainerで設定
 
-    def forward(self, x, input_type="token_ids") -> Tuple[Tensor, List[Tensor]]:
-        """token_idsまたはhidden_statesを処理"""
+    def forward_token_ids(self, token_ids: TokenTensor) -> Tuple[HiddenTensor, List[HiddenTensor]]:
+        """token_idsを入力として処理"""
 
-    def get_logits(self, h) -> Tensor:
+    def forward_hidden_states(self, hidden_states: HiddenTensor) -> Tuple[HiddenTensor, List[HiddenTensor]]:
+        """hidden_statesを入力として処理"""
+
+    def get_logits(self, h: HiddenTensor) -> Tensor:
         """base_llm.lm_headを使用してlogits計算"""
         return self.base_llm.lm_head(h)
 
-    def should_exit(self, hidden_history) -> Tensor:
+    def should_exit(self, hidden_history: List[HiddenTensor]) -> Tensor:
         """exit判定（thresholdとcos_simを比較）"""
 ```
 
@@ -234,7 +242,7 @@ class Ensemble(nn.Module):
 
 ```python
 # cascade_dataset.collect_hard_tokens_from_dataset()の内部処理
-h_out, hidden_history = llm.forward(h, input_type="hidden_states")
+h_out, hidden_history = llm.forward_hidden_states(h)
 h_in = hidden_history[-2]
 cos_sim = compute_cos_sim(h_in, h_out)
 

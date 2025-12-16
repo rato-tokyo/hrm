@@ -14,7 +14,7 @@ Hugging Face Transformersとの完全統合:
 """
 
 from .ensemble import Ensemble
-from .llm import LLM
+from .llm import LLM, TokenTensor, HiddenTensor
 from .exit_fn import ExitFn, default_exit_fn, compute_cos_sim
 from .cascade_trainer import CascadeTrainer, create_initial_dataset
 from .ensemble_trainer import train_ensemble
@@ -52,6 +52,9 @@ __all__ = [
     # コア
     'Ensemble',
     'LLM',
+    # 型エイリアス
+    'TokenTensor',
+    'HiddenTensor',
     # Exit関数
     'ExitFn',
     'default_exit_fn',

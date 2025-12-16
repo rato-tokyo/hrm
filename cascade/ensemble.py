@@ -132,7 +132,7 @@ class Ensemble(nn.Module):
         with torch.no_grad():
             for x, y in val_batches:
                 x, y = x.to(device), y.to(device)
-                h_out, _ = first_llm.forward(x, input_type="token_ids")
+                h_out, _ = first_llm.forward_token_ids(x)
                 all_hidden.append(h_out.cpu())
                 all_targets.append(y.cpu())
 
