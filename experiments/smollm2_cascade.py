@@ -86,8 +86,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--num-samples",
         type=int,
-        default=5000,
-        help="訓練サンプル数 (default: 5000)",
+        default=2500,
+        help="訓練サンプル数 (default: 2500)",
     )
     parser.add_argument(
         "--batch-size",
@@ -112,14 +112,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hard-ratio",
         type=float,
-        default=0.3,
-        help="hard token比率 (default: 0.3)",
+        default=0.1,
+        help="hard token比率 (default: 0.1)",
     )
     parser.add_argument(
         "--patience",
         type=int,
-        default=3,
-        help="Early stoppingのpatience (default: 3)",
+        default=2,
+        help="Early stoppingのpatience (default: 2)",
     )
 
     # その他

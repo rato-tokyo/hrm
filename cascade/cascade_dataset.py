@@ -186,6 +186,9 @@ def collect_hard_tokens_from_dataset(
     """
     Datasetからhard tokensを収集。
 
+    Layer 28-29の平均cos_simを使用してhard tokenを判定。
+    Layer 30は出力変換で全トークンが大きく変化するため使用しない。
+
     Args:
         llm: 評価に使用するLLM
         dataset: 入力Dataset
@@ -204,7 +207,7 @@ def collect_hard_tokens_from_dataset(
     if info['num_sequences'] == 0:
         return create_empty_dataset(info['seq_len'], info['dim']), 0.0
 
-    all_cos_sim: List[torch.Tensor] = []
+    all_avg_cos_sim: List[torch.Tensor] = []
     all_hidden_out: List[torch.Tensor] = []
     all_targets: List[torch.Tensor] = []
 
@@ -212,19 +215,26 @@ def collect_hard_tokens_from_dataset(
         for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=device):
             # dtype変換はLLM.forwardで自動実行
             h_out, hidden_history = llm.forward(h, input_type="hidden_states")
-            h_in = hidden_history[-2]
-            cos_sim = compute_cos_sim(h_in, h_out)
 
-            all_cos_sim.append(cos_sim.cpu())
+            # Layer 28-29の平均cos_simを計算
+            h_27 = hidden_history[-4]  # Layer 27出力
+            h_28 = hidden_history[-3]  # Layer 28出力
+            h_29 = hidden_history[-2]  # Layer 29出力
+
+            cos_sim_28 = compute_cos_sim(h_27, h_28)
+            cos_sim_29 = compute_cos_sim(h_28, h_29)
+            avg_cos_sim = (cos_sim_28 + cos_sim_29) / 2.0
+
+            all_avg_cos_sim.append(avg_cos_sim.cpu())
             all_hidden_out.append(h_out.cpu())
             all_targets.append(y.cpu())
 
-    cos_sim_all = torch.cat(all_cos_sim)
+    avg_cos_sim_all = torch.cat(all_avg_cos_sim)
     hidden_out_all = torch.cat(all_hidden_out)
     targets_all = torch.cat(all_targets)
 
     # 閾値を計算（float32に変換してquantile計算）
-    all_cos_flat = cos_sim_all.view(-1).float()
+    all_cos_flat = avg_cos_sim_all.view(-1).float()
     if hard_ratio >= 1.0:
         threshold = float('inf')
     elif hard_ratio <= 0.0:
@@ -233,7 +243,7 @@ def collect_hard_tokens_from_dataset(
         threshold = float(torch.quantile(all_cos_flat, hard_ratio).item())
 
     # トークン単位のhardマスク
-    hard_token_mask = cos_sim_all < threshold
+    hard_token_mask = avg_cos_sim_all < threshold
     hard_hidden = hidden_out_all[hard_token_mask]
     hard_targets = targets_all[hard_token_mask]
 
