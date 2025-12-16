@@ -199,15 +199,19 @@ class CascadeTrainer:
 
             # 深いLLMほど学習率を減衰
             llm_lr = self.training_args.learning_rate * (self.cascade_config.lr_decay ** llm_idx)
-            # モデルがfloat16の場合、AMPを無効化（float16勾配のunscaleエラー回避）
+
+            # モデルのdtypeを確認し、AMPを適切に設定
+            # - float32モデル: AMPを使用可能（TrainerがAutocastで効率化）
+            # - float16モデル: AMPを無効化（float16勾配のunscaleエラー回避）
+            # 推奨: 訓練対象モデルはfloat32で作成し、AMPに最適化を任せる
             model_dtype = next(llm.parameters()).dtype
-            use_fp16 = model_dtype != torch.float16
+            use_fp16 = model_dtype == torch.float32  # float32モデルのみAMP有効
             llm_training_args = replace(
                 self.training_args,
                 learning_rate=llm_lr,
                 output_dir=f"{self.training_args.output_dir}/llm_{llm_idx}",
-                fp16=use_fp16 and self.training_args.fp16,
-                bf16=False,  # bf16も無効化
+                fp16=use_fp16 and torch.cuda.is_available(),
+                bf16=False,
             )
 
             # HF Trainerで訓練

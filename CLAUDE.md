@@ -430,3 +430,28 @@ print(f"PPL: {stats['ppl']:.2f}, Accuracy: {stats['accuracy']:.2%}")
 11. **TrainingArgumentsのラッパー作成** - TrainingArgumentsを直接使用
 12. **独自データ構造の作成** - HF Datasetを直接使用
 13. **Jupyter Notebook（.ipynb）の作成** - Colabを含め、Pythonスクリプト（.py）を使用
+14. **訓練対象モデルをfloat16で作成** - float32で作成し、AMPに最適化を任せる
+
+---
+
+## 訓練時のdtype設計
+
+### 原則
+
+| モデル | dtype | 理由 |
+|--------|-------|------|
+| ベースLLM（フリーズ） | float16 | 推論のみなのでメモリ効率優先 |
+| 後付けLLM（訓練対象） | **float32** | 勾配計算の安定性、AMPとの互換性 |
+
+### なぜ訓練対象をfloat32にするか
+
+1. **勾配の精度**: float16は勾配計算で数値的不安定性を引き起こす
+2. **AMPとの互換性**: PyTorch AMPはfloat32モデルを前提に設計
+3. **GradScaler**: float16勾配のunscaleでエラーが発生する
+4. **メモリ効率**: AMPが必要な場所だけfloat16を使用し、メモリと精度を両立
+
+### CascadeTrainerの自動制御
+
+CascadeTrainerは訓練対象モデルのdtypeを検出し、AMPを自動設定:
+- float32モデル → `fp16=True`（AMPで効率化）
+- float16モデル → `fp16=False`（エラー回避）

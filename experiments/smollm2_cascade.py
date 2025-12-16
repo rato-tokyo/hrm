@@ -192,10 +192,12 @@ def main() -> None:
     print(f"ベースLLM: dim={llm_base.dim}, layers={llm_base.num_layers}, frozen=True")
 
     # 後付けLLMの作成（ベースモデルと同じアーキテクチャ）
+    # 注: 訓練対象モデルはfloat32で作成（勾配計算の安定性のため）
+    # AMPを使用する場合、TrainerがAMP管理下でfloat16計算を自動実行
     additional_model = create_llm_from_base(base_model, num_layers=args.additional_layers)
 
     if device == "cuda":
-        additional_model = additional_model.to(device).half()  # type: ignore[arg-type]
+        additional_model = additional_model.to(device)  # float32のまま
 
     llm_additional = LLM(additional_model)
 
