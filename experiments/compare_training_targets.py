@@ -184,11 +184,11 @@ def collect_hidden_states(
             cos_sim_list.append(cos_sim.view(-1).cpu())
 
     # 結合
-    all_hidden = torch.cat(all_hidden_list, dim=0)
+    all_hidden = torch.cat(all_hidden_list, dim=0).float()  # float32に変換
     all_labels = torch.cat(all_labels_list, dim=0)
 
     if hard_hidden_list:
-        hard_hidden = torch.cat(hard_hidden_list, dim=0)
+        hard_hidden = torch.cat(hard_hidden_list, dim=0).float()  # float32に変換
         hard_labels = torch.cat(hard_labels_list, dim=0)
     else:
         hard_hidden = torch.empty(0, all_hidden.shape[1])
