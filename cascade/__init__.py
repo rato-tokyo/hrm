@@ -34,8 +34,17 @@ from .dataloader import (
     create_dataset_from_tokenizer,
 )
 from .utils import set_seed, get_device
+from .model_registry import (
+    ModelSpec,
+    ModelRegistry,
+    get_registry,
+    load_pretrained,
+    list_available_models,
+    create_small_llm,
+    PRETRAINED_MODELS,
+)
 
-__version__ = "0.22.0"
+__version__ = "0.23.0"
 
 __all__ = [
     # コア
@@ -69,4 +78,12 @@ __all__ = [
     # ユーティリティ
     'set_seed',
     'get_device',
+    # モデルレジストリ
+    'ModelSpec',
+    'ModelRegistry',
+    'get_registry',
+    'load_pretrained',
+    'list_available_models',
+    'create_small_llm',
+    'PRETRAINED_MODELS',
 ]

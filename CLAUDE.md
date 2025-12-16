@@ -429,3 +429,4 @@ print(f"PPL: {stats['ppl']:.2f}, Accuracy: {stats['accuracy']:.2%}")
 10. **独自訓練ループの再実装** - Hugging Face Trainerを使用
 11. **TrainingArgumentsのラッパー作成** - TrainingArgumentsを直接使用
 12. **独自データ構造の作成** - HF Datasetを直接使用
+13. **Jupyter Notebook（.ipynb）の作成** - Colabを含め、Pythonスクリプト（.py）を使用
