@@ -146,9 +146,13 @@ class CascadeTrainer:
         for llm_idx, llm in enumerate(ensemble.llms):
             is_last_llm = (llm_idx == len(ensemble.llms) - 1)
 
+            # フリーズされたLLMかどうかを確認
+            trainable_params = sum(p.numel() for p in llm.parameters() if p.requires_grad)
+            is_frozen = (trainable_params == 0)
+
             if verbose:
                 print(f"\n{'=' * 60}")
-                print(f"LLM {llm_idx} 訓練")
+                print(f"LLM {llm_idx} {'(フリーズ済み - 訓練スキップ)' if is_frozen else '訓練'}")
                 print("=" * 60)
 
             train_info = get_dataset_info(current_train)
@@ -156,6 +160,40 @@ class CascadeTrainer:
                 if verbose:
                     print(f"LLM {llm_idx}用のデータなし - スキップ")
                 break
+
+            # フリーズされたLLMは訓練せずhard token収集のみ
+            if is_frozen:
+                if verbose:
+                    print(f"  訓練可能パラメータ: 0 - 訓練スキップ")
+
+                # hard tokens収集
+                batch_size = self.training_args.per_device_train_batch_size
+                hard_dataset, threshold = collect_hard_tokens_from_dataset(
+                    llm, current_train, self.cascade_config.hard_ratio, batch_size
+                )
+                llm.threshold = threshold
+
+                hard_info = get_dataset_info(hard_dataset)
+                actual_hard_ratio = hard_info['num_tokens'] / train_info['num_tokens'] if train_info['num_tokens'] > 0 else 0.0
+
+                all_stats.append({
+                    'llm_idx': llm_idx,
+                    'lr': 0.0,
+                    'best_val_ppl': float('nan'),
+                    'hard_ratio': actual_hard_ratio,
+                    'threshold': threshold,
+                    'frozen': True,
+                })
+
+                if verbose:
+                    print(f"  閾値: {threshold:.4f}")
+                    print(f"  Hard tokens: {hard_info['num_sequences']}シーケンス ({hard_info['num_tokens']}トークン)")
+
+                # 次のLLM用にデータを更新
+                if not is_last_llm:
+                    current_train = hard_dataset
+                    current_val = transform_dataset(llm, current_val, batch_size)
+                continue
 
             # 深いLLMほど学習率を減衰
             llm_lr = self.training_args.learning_rate * (self.cascade_config.lr_decay ** llm_idx)
