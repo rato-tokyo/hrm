@@ -371,6 +371,7 @@ def main() -> None:
         args.base_model,
         device="auto" if is_cuda else None,
         torch_dtype=torch.float16 if is_cuda else None,
+        attn_implementation="eager",  # Attention weightsを取得するためeagerを使用
     )
 
     print(f"レイヤー数: {base_llm.config.num_hidden_layers}")
