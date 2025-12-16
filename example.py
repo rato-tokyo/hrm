@@ -1,21 +1,21 @@
 """
 CASCADEフレームワーク実行例 - LLM統合
 
-任意のLLMをLLMクラスでラップし、Ensembleで統合する例。
+任意のHugging Face CausalLMをLLMクラスでラップし、Ensembleで統合する例。
 TRUE Early Exitにより、簡単なトークンは前段LLMで処理完了。
 """
+
+from transformers import AutoModelForCausalLM, GPT2Config
 
 from cascade import (
     Ensemble,
     LLM,
-    TransformerBlock,
     ExperimentConfig,
     TrainerConfig,
     set_seed,
     get_device,
     create_wikitext_dataloaders,
     train_ensemble,
-    evaluate_ensemble,
     create_sequence_data,
 )
 
@@ -59,18 +59,24 @@ def main() -> None:
         config.num_samples, trainer_config.batch_size, config.seq_len, seed=42
     )
 
-    # LLMを作成
-    # 任意のLLMをLLMクラスでラップ
-    llms = [
-        LLM(
-            TransformerBlock(
-                config.dim, config.num_heads, num_layers,
-                config.ffn_dim, config.max_seq_len, config.causal, config.eps
-            )
+    # Hugging Face AutoModelForCausalLMを使用してLLMを作成
+    llms = []
+    for num_layers in config.llm_layers:
+        gpt2_config = GPT2Config(
+            vocab_size=vocab_size,
+            n_embd=config.dim,
+            n_head=config.num_heads,
+            n_layer=num_layers,
+            n_inner=config.ffn_dim,
+            n_positions=config.max_seq_len,
         )
-        for num_layers in config.llm_layers
-    ]
-    ensemble = Ensemble(vocab_size, config.dim, llms).to(device)
+        # AutoModelForCausalLM.from_config()で新規モデル作成
+        # または from_pretrained("gpt2") で訓練済みモデルを使用
+        causal_lm = AutoModelForCausalLM.from_config(gpt2_config)
+        llm = LLM(causal_lm)
+        llms.append(llm)
+
+    ensemble = Ensemble(llms).to(device)
 
     print(f"LLMあたりのレイヤー数: {[llm.num_layers for llm in ensemble.llms]}")
 
@@ -95,14 +101,20 @@ def main() -> None:
     print("評価: TRUE Early Exit")
     print("=" * 60)
 
-    eval_stats = evaluate_ensemble(ensemble, val_batches)
+    eval_stats = ensemble.evaluate(val_batches, trainer_config.batch_size)
 
     print("\n最終結果:")
     print(f"  Accuracy: {eval_stats['accuracy']*100:.2f}%")
     print(f"  PPL: {eval_stats['ppl']:.2f}")
-    print(f"  Shallow ratio: {eval_stats['shallow_ratio']*100:.1f}%")
-    print(f"  Compute cost: {eval_stats['compute_cost']*100:.1f}%")
-    print(f"  Compute savings: {eval_stats['compute_savings']*100:.1f}%")
+
+    # 各LLMの統計
+    print("\n各LLMの統計:")
+    for i, s in enumerate(eval_stats['llm_stats']):
+        print(f"  LLM {i}: input={s['input_tokens']}, exit={s['exit_tokens']}, layers_computed={s['layers_computed']}")
+
+    # 計算コスト
+    compute_cost = eval_stats['total_layers_computed'] / eval_stats['max_layers_computed']
+    print(f"\n計算コスト: {compute_cost*100:.1f}% (savings: {(1-compute_cost)*100:.1f}%)")
 
     # 健全性チェック: 最終PPLは最悪LLMのval_pplを超えてはならない
     llm_stats = train_stats['llm_stats']

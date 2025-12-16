@@ -1,5 +1,5 @@
 """
-LEGOフレームワーク - 設定クラス
+CASCADEフレームワーク - 設定クラス
 
 TrainerConfig: train_llm()用の訓練ハイパーパラメータ
 ExperimentConfig: モデルアーキテクチャと実験設定
@@ -39,7 +39,7 @@ class TrainerConfig:
 @dataclass
 class ExperimentConfig:
     """
-    LEGO実験用の設定。
+    CASCADE実験用の設定。
 
     モデルアーキテクチャとデータ設定。
     全フィールド必須（デフォルト値なし）。
@@ -50,7 +50,7 @@ class ExperimentConfig:
         ffn_dim: FFN隠れ層次元
         max_seq_len: 最大シーケンス長
         causal: Causalマスクを使用するか
-        eps: RMSNormのイプシロン
+        eps: 正規化のイプシロン
         seq_len: 言語モデリング用シーケンス長
         num_samples: 訓練サンプル数
         llm_layers: 各LLMのレイヤー数（例: (2, 2)は2層×2 LLM）

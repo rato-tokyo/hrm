@@ -108,14 +108,17 @@ def create_sequence_data(
     """
     トークンを埋め込んでSequenceDataを作成。
 
+    最初のLLMのembeddingを使用してtoken_idsをhidden statesに変換。
+
     Args:
-        ensemble: Ensemble（embeddingレイヤー用）
+        ensemble: Ensemble（最初のLLMのembedding使用）
         batches: (x, y)バッチのリスト
 
     Returns:
         埋め込み済みhidden statesとtargetsを持つSequenceData
     """
     device = next(ensemble.parameters()).device
+    first_llm = ensemble.llms[0]
 
     all_hidden: List[torch.Tensor] = []
     all_targets: List[torch.Tensor] = []
@@ -123,7 +126,11 @@ def create_sequence_data(
     with torch.no_grad():
         for x, y in batches:
             x, y = x.to(device), y.to(device)
-            h = ensemble.embedding(x)
+            # CausalLMのembeddingを使用
+            # GPT2の場合: base_llm.transformer.wte
+            # 一般的なHugging Faceモデルの場合: get_input_embeddings()
+            embedding = first_llm.base_llm.get_input_embeddings()
+            h = embedding(x)
             all_hidden.append(h)
             all_targets.append(y)
 

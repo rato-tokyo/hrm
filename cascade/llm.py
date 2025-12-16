@@ -1,7 +1,7 @@
 """
 CASCADEフレームワーク - LLMクラス
 
-任意のBaseLLMをラップし、Early Exit機能を追加する汎用クラス。
+任意のHugging Face CausalLMをラップし、Early Exit機能を追加する汎用クラス。
 既存の訓練済みLLMも、新規の未学習LLMも、同じLLMクラスでラップする。
 """
 
@@ -11,7 +11,8 @@ import torch
 import torch.nn as nn
 from typing import Tuple, List, Optional, TYPE_CHECKING
 
-from .modules import TransformerBlock
+from transformers import PreTrainedModel
+
 from .exit_fn import ExitFn, default_exit_fn, compute_cos_sim
 
 if TYPE_CHECKING:
@@ -20,108 +21,129 @@ if TYPE_CHECKING:
 
 class LLM(nn.Module):
     """
-    BaseLLM + Early Exit機能を持つ汎用LLMラッパー。
+    Hugging Face CausalLM + Early Exit機能を持つ汎用LLMラッパー。
 
-    任意のLLM（TransformerBlockなど）をラップし、以下を追加:
-    - exit_fnによるexit判定（デフォルト: CALM式cos_sim）
-    - logits計算用の共有output_head
-    - 推論時のexit判定用threshold
-    - 訓練後のhard token収集
+    任意のHugging Face CausalLM（GPT2LMHeadModel, LlamaForCausalLM等）をラップし、
+    Early Exit機能を追加する。LM Headは元モデルのものをそのまま使用。
+
+    設計方針:
+        各LLMは独立したモデルとして自己完結する。
+        LM Headは元のCausalLMが持つものを使用（独自実装不要）。
+        Early Exit機能のみを追加。
 
     使用例:
-        # 既存の訓練済みLLMをラップ
-        llm_0 = LLM(pretrained_transformer)
+        from transformers import AutoModelForCausalLM
 
-        # 新規の未学習LLMをラップ
-        llm_1 = LLM(TransformerBlock(...))
+        # 既存の訓練済みLLMをラップ
+        gpt2 = AutoModelForCausalLM.from_pretrained('gpt2')
+        llm = LLM(gpt2)
 
         # Ensembleで統合
-        ensemble = Ensemble(vocab_size, dim, [llm_0, llm_1])
+        ensemble = Ensemble([llm_0, llm_1])
 
     Args:
-        base_llm: ラップするBaseLLM（TransformerBlockなど）
+        base_llm: ラップするHugging Face CausalLM
         exit_fn: オプションのカスタムexit関数。Noneの場合default_exit_fn（CALM式）を使用
     """
 
     def __init__(
         self,
-        base_llm: TransformerBlock,
+        base_llm: PreTrainedModel,
         exit_fn: Optional[ExitFn] = None,
     ):
         super().__init__()
         self.base_llm = base_llm
         self.exit_fn = exit_fn or default_exit_fn
         self.threshold = 0.0  # collect_hard_tokensで設定
-        self.output_head: nn.Linear | None = None  # Ensembleが設定
+
+    @property
+    def vocab_size(self) -> int:
+        """語彙サイズ（base_llmのconfigから取得）。"""
+        return self.base_llm.config.vocab_size
 
     @property
     def dim(self) -> int:
-        """モデル次元（base_llmに委譲）。"""
-        return self.base_llm.dim
-
-    @property
-    def num_heads(self) -> int:
-        """Attentionヘッド数（base_llmに委譲）。"""
-        return self.base_llm.num_heads
+        """モデル次元（base_llmのconfigから取得）。"""
+        config = self.base_llm.config
+        # 様々なモデルに対応
+        if hasattr(config, 'hidden_size'):
+            return config.hidden_size
+        if hasattr(config, 'n_embd'):
+            return config.n_embd
+        if hasattr(config, 'd_model'):
+            return config.d_model
+        raise AttributeError("モデルの次元を特定できません")
 
     @property
     def num_layers(self) -> int:
-        """レイヤー数（base_llmに委譲）。"""
-        return self.base_llm.num_layers
+        """レイヤー数（base_llmのconfigから取得）。"""
+        config = self.base_llm.config
+        # 様々なモデルに対応
+        if hasattr(config, 'num_hidden_layers'):
+            return config.num_hidden_layers
+        if hasattr(config, 'n_layer'):
+            return config.n_layer
+        if hasattr(config, 'num_layers'):
+            return config.num_layers
+        raise AttributeError("モデルのレイヤー数を特定できません")
 
-    def train_forward(
-        self, h: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, List[torch.Tensor]]:
+    def forward(
+        self, x: torch.Tensor, input_type: str = "token_ids"
+    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         """
-        【訓練用】forward pass。
+        入力を処理し、hidden statesを返す。
 
-        exit判定は行わず、hidden statesとlogitsのみを計算。
-        llm_trainer.pyから呼ばれる。
+        Args:
+            x: 入力（token_ids or hidden states）
+            input_type: "token_ids" または "hidden_states"
+
+        Returns:
+            h_out: 出力hidden states (batch_size, seq_len, dim)
+            hidden_history: 各レイヤーのhidden statesリスト（exit判定用）
+        """
+        if input_type == "token_ids":
+            outputs = self.base_llm(
+                input_ids=x,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+        else:  # hidden_states
+            outputs = self.base_llm(
+                inputs_embeds=x,
+                output_hidden_states=True,
+                return_dict=True,
+            )
+
+        # hidden_statesは (入力埋め込み, layer1出力, layer2出力, ...) のタプル
+        hidden_history = list(outputs.hidden_states)
+        h_out = hidden_history[-1]
+
+        return h_out, hidden_history
+
+    def get_logits(self, h: torch.Tensor) -> torch.Tensor:
+        """
+        hidden statesからlogitsを計算。
 
         Args:
             h: hidden states (batch_size, seq_len, dim)
 
         Returns:
-            h_out: 出力hidden states (batch_size, seq_len, dim)
-            logits: 出力logits (batch_size, seq_len, vocab_size)
-            hidden_history: cos_sim計算用の全hidden statesリスト
+            logits: (batch_size, seq_len, vocab_size)
         """
-        if self.output_head is None:
-            raise RuntimeError("output_headが未設定。先にset_output_head()を呼んでください。")
+        # CausalLMのlm_headを使用
+        return self.base_llm.lm_head(h)
 
-        h_out, hidden_history = self.base_llm(h)
-        logits = self.output_head(h_out)
-
-        return h_out, logits, hidden_history
-
-    def evaluate(
-        self, h: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def should_exit(self, hidden_history: List[torch.Tensor]) -> torch.Tensor:
         """
-        【評価用】forward pass（TRUE Early Exit）。
-
-        exit判定を含む。Ensemble.evaluate()から呼ばれる。
+        exit判定。
 
         Args:
-            h: hidden states (batch_size, seq_len, dim)
+            hidden_history: 各レイヤーのhidden statesリスト
 
         Returns:
-            h_out: 出力hidden states (batch_size, seq_len, dim)
-            logits: 出力logits (batch_size, seq_len, vocab_size)
-            should_exit: Booleanマスク True = exitすべき (batch_size, seq_len)
+            should_exit: Booleanマスク True=exitすべき (batch_size, seq_len)
         """
-        if self.output_head is None:
-            raise RuntimeError("output_headが未設定。先にset_output_head()を呼んでください。")
-
-        h_out, hidden_history = self.base_llm(h)
-        logits = self.output_head(h_out)
-        should_exit = self.exit_fn(hidden_history, self.threshold)
-
-        return h_out, logits, should_exit
-
-    def set_output_head(self, output_head: nn.Linear) -> None:
-        """共有output headの参照を設定。"""
-        self.output_head = output_head
+        return self.exit_fn(hidden_history, self.threshold)
 
     def collect_hard_tokens(
         self,
@@ -155,7 +177,7 @@ class LLM(nn.Module):
 
         with torch.no_grad():
             for h, y in data.to(str(device)).batches(batch_size, shuffle=False):
-                h_out, _, hidden_history = self.train_forward(h)
+                h_out, hidden_history = self.forward(h, input_type="hidden_states")
                 h_in = hidden_history[-2]
                 cos_sim = compute_cos_sim(h_in, h_out)
 
@@ -223,7 +245,7 @@ class LLM(nn.Module):
 
         with torch.no_grad():
             for h, y in data.to(str(device)).batches(batch_size, shuffle=False):
-                h_out, _, _ = self.train_forward(h)
+                h_out, _ = self.forward(h, input_type="hidden_states")
                 all_hidden.append(h_out)
                 all_targets.append(y)
 

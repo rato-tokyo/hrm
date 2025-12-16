@@ -1,7 +1,7 @@
 """
-LEGOフレームワーク - SequenceData
+CASCADEフレームワーク - SequenceData
 
-LEGOブロック訓練用のデータコンテナ（シーケンスベース）。
+LLM訓練用のデータコンテナ（シーケンスベース）。
 """
 
 import torch
@@ -10,9 +10,9 @@ from typing import Iterator, Tuple, Optional
 
 class SequenceData:
     """
-    LEGOブロック訓練用データのコンテナ（シーケンスベース）。
+    LLM訓練用データのコンテナ（シーケンスベース）。
 
-    ブロック訓練用の(hidden_states, targets)シーケンスを保持。
+    LLM訓練用の(hidden_states, targets)シーケンスを保持。
     Attention計算のためにシーケンス構造を維持。
 
     Args:

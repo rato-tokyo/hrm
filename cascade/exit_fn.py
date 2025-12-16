@@ -1,5 +1,5 @@
 """
-LEGOフレームワーク - Exit関数
+CASCADEフレームワーク - Exit関数
 
 hidden_historyに基づいて早期exitを判定する関数群。
 デフォルト実装はCALM式のcosine similarityを使用。

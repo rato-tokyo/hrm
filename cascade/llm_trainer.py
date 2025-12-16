@@ -4,7 +4,7 @@ CASCADEフレームワーク - LLM訓練（訓練専用）
 LLMの訓練関数。
 Hard token収集はLLM.collect_hard_tokens()で処理。
 
-注意: このモジュールは訓練専用。評価はevaluator.pyを使用。
+注意: このモジュールは訓練専用。評価はEnsemble.evaluate()またはllm_evaluator.pyを使用。
 """
 
 from __future__ import annotations
@@ -46,9 +46,6 @@ def train_llm(
         - SequenceData: 次のLLM用のhard tokens（出力hidden states）
         - Dict: 訓練統計 (train_ppls, val_ppls, best_epoch等)
     """
-    if llm.output_head is None:
-        raise RuntimeError("output_headが未設定。先にset_output_head()を呼んでください。")
-
     if config.verbose:
         print(f"LLM訓練: {len(train_data)}訓練, {len(val_data)}検証シーケンス")
         print(f"  ({train_data.num_tokens}訓練, {val_data.num_tokens}検証トークン)")
@@ -110,7 +107,8 @@ def _train_lm(
         train_ppls.append(train_ppl)
 
         # 検証PPL計算（early stopping用）
-        val_ppl = _compute_val_ppl(llm, val_data, config.batch_size)
+        from .llm_evaluator import compute_ppl
+        val_ppl = compute_ppl(llm, val_data, config.batch_size)
         val_ppls.append(val_ppl)
 
         # Early stoppingチェック
@@ -175,7 +173,8 @@ def _run_train_epoch(
 
     for h, y in train_data.to(str(device)).batches(config.batch_size, shuffle=True):
         optimizer.zero_grad()
-        _, logits, _ = llm.train_forward(h)
+        h_out, _ = llm.forward(h)
+        logits = llm.get_logits(h_out)
 
         batch_size, seq_len, vocab_size = logits.shape
         loss = F.cross_entropy(
@@ -194,41 +193,3 @@ def _run_train_epoch(
     return float(np.exp(total_loss / total_tokens))
 
 
-def _compute_val_ppl(
-    llm: "LLM",
-    data: "SequenceData",
-    batch_size: int,
-) -> float:
-    """
-    【訓練用】検証データでパープレキシティを計算。
-
-    訓練中のearly stopping判定用。推論時のexit判定は行わない。
-
-    Args:
-        llm: 検証するLLM
-        data: 検証用SequenceData
-        batch_size: バッチサイズ
-
-    Returns:
-        検証パープレキシティ
-    """
-    import numpy as np
-
-    device = next(llm.parameters()).device
-    llm.eval()
-    total_loss = 0.0
-    total_tokens = 0
-
-    with torch.no_grad():
-        for h, y in data.to(str(device)).batches(batch_size, shuffle=False):
-            _, logits, _ = llm.train_forward(h)
-            batch_size_actual, seq_len, vocab_size = logits.shape
-            loss = F.cross_entropy(
-                logits.view(-1, vocab_size),
-                y.view(-1),
-                reduction='sum'
-            )
-            total_loss += loss.item()
-            total_tokens += batch_size_actual * seq_len
-
-    return float(np.exp(total_loss / total_tokens))

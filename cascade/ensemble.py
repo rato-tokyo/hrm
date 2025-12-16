@@ -1,19 +1,20 @@
 """
-CASCADEフレームワーク - Ensemble（評価専用）
+CASCADEフレームワーク - Ensemble
 
 複数のLLMを統合し、TRUE Early Exitによるルーティングを管理。
 
-注意: このクラスのevaluate()は評価専用。訓練はensemble_trainer.pyを使用。
+注意: evaluate()は評価専用。訓練はensemble_trainer.pyを使用。
 """
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
-import math
-from typing import Tuple, Dict, List, Any
+import numpy as np
+from typing import Dict, List, Any, Tuple
 
 from .llm import LLM
+from .sequence_data import SequenceData
 
 
 class Ensemble(nn.Module):
@@ -21,55 +22,58 @@ class Ensemble(nn.Module):
     複数のLLMを統合するアンサンブルモデル。
 
     アーキテクチャ:
-    - Embeddingレイヤー（トークン → hidden states）
-    - 複数のLLM（Early Exit機能付き）
-    - 共有output head（hidden states → logits）
+    - 複数のLLM（Hugging Face CausalLM + Early Exit機能）
+    - 各LLMは独自のembeddingとlm_headを保持
 
-    管理項目:
-    - TRUE Early ExitによるLLM間ルーティング
-    - exit統計の計算
+    設計方針:
+        各LLMは独立したモデルとして自己完結する。
+        Ensembleはルーティングのみを担当。
 
     使用例:
-        # LLMをラップして統合
-        llm_0 = LLM(pretrained_transformer)
-        llm_1 = LLM(TransformerBlock(...))
+        from transformers import AutoModelForCausalLM
 
-        ensemble = Ensemble(vocab_size, dim, [llm_0, llm_1])
-
-        # 訓練後、LLMを追加
-        llm_2 = LLM(TransformerBlock(...))
-        ensemble.add_llm(llm_2)
+        gpt2_0 = AutoModelForCausalLM.from_pretrained('gpt2')
+        gpt2_1 = AutoModelForCausalLM.from_pretrained('gpt2')
+        llm_0 = LLM(gpt2_0)
+        llm_1 = LLM(gpt2_1)
+        ensemble = Ensemble([llm_0, llm_1])
 
     Args:
-        vocab_size: 語彙サイズ
-        dim: モデル次元（embedding次元）
         llms: LLMインスタンスのリスト
     """
 
-    def __init__(
-        self,
-        vocab_size: int,
-        dim: int,
-        llms: List[LLM],
-    ):
+    def __init__(self, llms: List[LLM]):
         super().__init__()
 
-        self.vocab_size = vocab_size
-        self.dim = dim
-        self.embedding = nn.Embedding(vocab_size, dim)
+        if len(llms) == 0:
+            raise ValueError("少なくとも1つのLLMが必要です")
+
+        # vocab_sizeとdimの一貫性を検証
+        vocab_size = llms[0].vocab_size
+        dim = llms[0].dim
+        for i, llm in enumerate(llms[1:], 1):
+            if llm.vocab_size != vocab_size:
+                raise ValueError(
+                    f"LLM {i}のvocab_size ({llm.vocab_size}) が"
+                    f"LLM 0のvocab_size ({vocab_size}) と一致しません"
+                )
+            if llm.dim != dim:
+                raise ValueError(
+                    f"LLM {i}のdim ({llm.dim}) が"
+                    f"LLM 0のdim ({dim}) と一致しません"
+                )
+
         self.llms = nn.ModuleList(llms)
-        self.output_head = nn.Linear(dim, vocab_size, bias=False)
 
-        # 全LLMでOutput headを共有
-        for llm in self.llms:
-            llm.set_output_head(self.output_head)
+    @property
+    def vocab_size(self) -> int:
+        """語彙サイズ（最初のLLMから取得）。"""
+        return self.llms[0].vocab_size
 
-        self._init_weights()
-
-    def _init_weights(self) -> None:
-        """EmbeddingとOutput headの重みを初期化。"""
-        nn.init.trunc_normal_(self.embedding.weight, std=0.02)
-        nn.init.trunc_normal_(self.output_head.weight, std=1.0 / math.sqrt(self.dim))
+    @property
+    def dim(self) -> int:
+        """モデル次元（最初のLLMから取得）。"""
+        return self.llms[0].dim
 
     @property
     def num_layers(self) -> int:
@@ -80,139 +84,106 @@ class Ensemble(nn.Module):
         """
         新しいLLMをアンサンブルに追加。
 
-        追加されたLLMには共有output_headが自動的に設定される。
-
         Args:
-            llm: 追加するLLMインスタンス
+            llm: 追加するLLMインスタンス（vocab_sizeとdimが一致している必要あり）
         """
-        llm.set_output_head(self.output_head)
+        if llm.vocab_size != self.vocab_size:
+            raise ValueError(
+                f"LLMのvocab_size ({llm.vocab_size}) が"
+                f"Ensembleのvocab_size ({self.vocab_size}) と一致しません"
+            )
+        if llm.dim != self.dim:
+            raise ValueError(
+                f"LLMのdim ({llm.dim}) が"
+                f"Ensembleのdim ({self.dim}) と一致しません"
+            )
         self.llms.append(llm)
 
     def evaluate(
-        self, x: torch.Tensor
-    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        self,
+        val_batches: List[Tuple[torch.Tensor, torch.Tensor]],
+        batch_size: int,
+    ) -> Dict[str, Any]:
         """
-        【評価用】TRUE Early Exitによる推論。
+        【評価用】TRUE Early Exitで評価。
 
-        各トークンはcos_sim >= thresholdとなった最初のLLMでexitする。
-        exitしたトークンは後続LLMを**実際に通過しない**（TRUE early exit）。
-
-        継続トークンのみを新シーケンスに再構成して次LLMに渡す。
-        これにより計算量が実際に削減される。
-
-        evaluator.pyのevaluate_ensemble()から呼ばれる。
+        各LLMが自身のexit/continueを判定し、統計を計算。
+        継続トークンは次LLMに渡される。
 
         Args:
-            x: 入力トークンID (batch_size, seq_len)
+            val_batches: 検証用の(x, y)バッチのリスト
+            batch_size: 評価時のバッチサイズ
 
         Returns:
-            (logits, stats)のタプル
-            - logits: (batch_size, seq_len, vocab_size)
-            - stats: exit_counts, shallow_ratio, compute_costを含むDict
+            ppl, accuracy, llm_stats, total_tokensなどを含むDict
         """
-        batch_size, seq_len = x.shape
-        device = x.device
-        total_tokens = batch_size * seq_len
+        device = next(self.parameters()).device
+        self.eval()
 
-        # Embedding
-        h = self.embedding(x)  # (batch_size, seq_len, dim)
+        # 最初のLLMでtoken_idsからhidden statesに変換
+        first_llm = self.llms[0]
+        all_hidden: List[torch.Tensor] = []
+        all_targets: List[torch.Tensor] = []
 
-        # 全トークンをフラットに管理
-        h_flat = h.view(total_tokens, self.dim)  # (total_tokens, dim)
+        with torch.no_grad():
+            for x, y in val_batches:
+                x, y = x.to(device), y.to(device)
+                h_out, _ = first_llm.forward(x, input_type="token_ids")
+                all_hidden.append(h_out)
+                all_targets.append(y)
 
-        # 各トークンの元の位置を記録（最終的な並べ替え用）
-        original_indices = torch.arange(total_tokens, device=device)
+        # 最初のLLMの評価
+        data = SequenceData(torch.cat(all_hidden), torch.cat(all_targets))
+        total_tokens = data.num_tokens
 
-        # 結果格納用
-        final_logits_flat = torch.zeros(total_tokens, self.vocab_size, device=device)
-        exit_llm_indices = torch.full((total_tokens,), -1, dtype=torch.long, device=device)
+        from .llm_evaluator import evaluate_llm
 
-        # 現在処理中のトークンのインデックス
-        active_indices = original_indices.clone()
-        active_h = h_flat.clone()
+        llm_stats: List[Dict[str, Any]] = []
+        total_loss = 0.0
+        total_correct = 0
 
-        for llm_idx, llm in enumerate(self.llms):
-            if active_h.shape[0] == 0:
-                break
+        # 最初のLLMの統計を計算（forwardは既に実行済みなので、logitsから計算）
+        is_last = (len(self.llms) == 1)
+        continue_data, stats = evaluate_llm(first_llm, data, batch_size, is_last=is_last)
+        llm_stats.append(stats)
+        total_loss += stats['loss']
+        total_correct += stats['correct']
 
-            is_last_llm = (llm_idx == len(self.llms) - 1)
-            num_active = active_h.shape[0]
+        current_data = continue_data
 
-            # シーケンスに再構成してLLM処理（Attentionのため）
-            # 継続トークンを新しいシーケンスとして詰め直す
-            num_sequences = (num_active + seq_len - 1) // seq_len
-            padded_len = num_sequences * seq_len
+        # 2番目以降のLLMで評価
+        for llm_idx, llm in enumerate(self.llms[1:], 1):
+            if len(current_data) == 0:
+                llm_stats.append({
+                    'loss': 0.0,
+                    'correct': 0,
+                    'input_tokens': 0,
+                    'exit_tokens': 0,
+                    'layers_computed': 0,
+                })
+                continue
 
-            if num_active < padded_len:
-                # パディングが必要
-                padding = torch.zeros(padded_len - num_active, self.dim, device=device)
-                h_padded = torch.cat([active_h, padding], dim=0)
-            else:
-                h_padded = active_h
+            is_last = (llm_idx == len(self.llms) - 1)
+            continue_data, stats = evaluate_llm(llm, current_data, batch_size, is_last=is_last)
 
-            h_seq = h_padded.view(num_sequences, seq_len, self.dim)
+            llm_stats.append(stats)
+            total_loss += stats['loss']
+            total_correct += stats['correct']
 
-            # LLM処理（評価モード）
-            h_out_seq, logits_seq, should_exit_seq = llm.evaluate(h_seq)
+            current_data = continue_data
 
-            # フラットに戻す（パディング部分を除去）
-            h_out_flat = h_out_seq.view(-1, self.dim)[:num_active]
-            logits_flat = logits_seq.view(-1, self.vocab_size)[:num_active]
-            should_exit_flat = should_exit_seq.view(-1)[:num_active]
+        total_layers_computed = sum(s['layers_computed'] for s in llm_stats)
+        max_layers_computed = total_tokens * self.num_layers
 
-            if is_last_llm:
-                # 最終LLM: 全ての残りトークンをここでexit
-                final_logits_flat[active_indices] = logits_flat
-                exit_llm_indices[active_indices] = llm_idx
-            else:
-                # exitするトークンのlogitsを保存
-                exit_mask = should_exit_flat
-                exit_indices = active_indices[exit_mask]
-                final_logits_flat[exit_indices] = logits_flat[exit_mask]
-                exit_llm_indices[exit_indices] = llm_idx
-
-                # 継続トークンのみを次LLMへ
-                continue_mask = ~exit_mask
-                active_indices = active_indices[continue_mask]
-                active_h = h_out_flat[continue_mask]
-
-        # 元の形状に戻す
-        final_logits = final_logits_flat.view(batch_size, seq_len, self.vocab_size)
-
-        exit_counts = [
-            int((exit_llm_indices == i).sum().item()) for i in range(len(self.llms))
-        ]
-        return final_logits, self._compute_exit_stats(exit_counts)
-
-    def _compute_exit_stats(self, exit_counts: List[int]) -> Dict[str, Any]:
-        """exit統計を計算。
-
-        Args:
-            exit_counts: 各LLMでexitしたトークン数
-
-        Returns:
-            exit_counts, shallow_ratio, compute_costを含む辞書
-        """
-        total_tokens = sum(exit_counts)
-
-        # 重み付きレイヤーコストを計算
-        total_layers_computed = 0
-        layers_so_far = 0
-        for llm_idx, count in enumerate(exit_counts):
-            layers_so_far += self.llms[llm_idx].num_layers
-            total_layers_computed += count * layers_so_far
-
-        compute_cost = (
-            total_layers_computed / (total_tokens * self.num_layers)
-            if total_tokens > 0 else 1.0
-        )
-
-        # Shallow ratio: 最終LLM以外でのexit
-        shallow_exits = sum(exit_counts[:-1]) if len(exit_counts) > 1 else 0
-        shallow_ratio = shallow_exits / total_tokens if total_tokens > 0 else 0.0
+        # PPLとAccuracyを計算
+        ppl = float(np.exp(total_loss / total_tokens)) if total_tokens > 0 else float('inf')
+        accuracy = total_correct / total_tokens if total_tokens > 0 else 0.0
 
         return {
-            'exit_counts': exit_counts,
-            'shallow_ratio': shallow_ratio,
-            'compute_cost': compute_cost,
+            'ppl': ppl,
+            'accuracy': accuracy,
+            'llm_stats': llm_stats,
+            'total_tokens': total_tokens,
+            'total_layers_computed': total_layers_computed,
+            'max_layers_computed': max_layers_computed,
         }
