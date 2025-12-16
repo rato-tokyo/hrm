@@ -15,7 +15,8 @@ Hugging Face Transformersとの統合:
 from .ensemble import Ensemble
 from .llm import LLM
 from .exit_fn import ExitFn, default_exit_fn, compute_cos_sim
-from .llm_trainer import train_llm, train_llm_simple
+from .llm_trainer import train_llm
+from .llm_trainer_simple import train_llm_simple
 from .llm_evaluator import compute_ppl, evaluate_llm
 from .ensemble_trainer import train_ensemble, create_sequence_data
 from .config import CascadeConfig, ExperimentConfig
@@ -26,7 +27,7 @@ from .dataloader import (
 )
 from .utils import set_seed, get_device
 
-__version__ = "0.20.0"
+__version__ = "0.21.0"
 
 __all__ = [
     # コア

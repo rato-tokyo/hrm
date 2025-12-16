@@ -56,17 +56,18 @@
 
 ```
 cascade/
-├── __init__.py         # パッケージエクスポート
-├── llm.py              # LLM（Hugging Face CausalLM + Early Exit）
-├── ensemble.py         # Ensemble（統合・ルーティング）
-├── exit_fn.py          # ExitFn, default_exit_fn, compute_cos_sim
-├── llm_trainer.py      # train_llm()（HF Trainer使用）, train_llm_simple()
-├── llm_evaluator.py    # compute_ppl(), evaluate_llm()（単一LLM評価）
-├── ensemble_trainer.py # train_ensemble(), create_sequence_data()
-├── sequence_data.py    # SequenceData（HF Dataset連携）
-├── config.py           # CascadeConfig（CASCADE固有設定）, ExperimentConfig
-├── dataloader.py       # create_wikitext_dataloaders（HF tokenizer使用）
-└── utils.py            # set_seed, get_device
+├── __init__.py           # パッケージエクスポート
+├── llm.py                # LLM（Hugging Face CausalLM + Early Exit）
+├── ensemble.py           # Ensemble（統合・ルーティング）
+├── exit_fn.py            # ExitFn, default_exit_fn, compute_cos_sim
+├── llm_trainer.py        # train_llm()（HF Trainer使用）
+├── llm_trainer_simple.py # train_llm_simple()（シンプル訓練ループ）
+├── llm_evaluator.py      # compute_ppl(), evaluate_llm()（単一LLM評価）
+├── ensemble_trainer.py   # train_ensemble(), create_sequence_data()
+├── sequence_data.py      # SequenceData（HF Dataset連携）
+├── config.py             # CascadeConfig（CASCADE固有設定）, ExperimentConfig
+├── dataloader.py         # create_wikitext_dataloaders（HF tokenizer使用）
+└── utils.py              # set_seed, get_device
 ```
 
 ### Hugging Face統合
