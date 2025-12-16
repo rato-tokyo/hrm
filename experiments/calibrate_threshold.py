@@ -5,11 +5,11 @@ CASCADE閾値キャリブレーション
 指定したhard_ratioになるようにthresholdを決定する。
 
 使用方法:
-    # デフォルト設定（hard_ratio=0.5）
-    python experiments/calibrate_threshold.py
+    # Alpacaデータセットで閾値計算（推奨）
+    python experiments/calibrate_threshold.py --dataset alpaca --hard-ratio 0.5
 
-    # カスタム設定
-    python experiments/calibrate_threshold.py --hard-ratio 0.3 --data-file data.txt
+    # カスタムテキストファイルで計算
+    python experiments/calibrate_threshold.py --data-file data.txt --hard-ratio 0.3
 
     # 出力例:
     # Layer 28 (入力→Layer 29): threshold=0.847, hard_ratio=50.0%
@@ -27,6 +27,7 @@ from cascade import (
     load_pretrained,
     set_seed,
     get_device,
+    create_alpaca_dataloaders,
 )
 from cascade.exit_fn import compute_cos_sim
 
@@ -50,10 +51,23 @@ def parse_args() -> argparse.Namespace:
         help="hard tokenの目標比率 (default: 0.5)",
     )
     parser.add_argument(
+        "--dataset",
+        type=str,
+        default="alpaca",
+        choices=["alpaca", "custom"],
+        help="使用するデータセット (default: alpaca)",
+    )
+    parser.add_argument(
         "--data-file",
         type=str,
         default=None,
-        help="キャリブレーション用テキストファイル（省略時はサンプルテキスト使用）",
+        help="カスタムテキストファイル（--dataset customの場合に使用）",
+    )
+    parser.add_argument(
+        "--num-samples",
+        type=int,
+        default=5000,
+        help="使用するサンプル数 (default: 5000)",
     )
     parser.add_argument(
         "--target-layers",
@@ -257,13 +271,26 @@ def main() -> None:
     print(f"測定対象レイヤー: {target_layers}")
 
     # データロード
-    print("\nキャリブレーションデータをロード中...")
-    batches = load_calibration_data(
-        args.data_file,
-        tokenizer,
-        args.seq_len,
-        args.batch_size,
-    )
+    print(f"\nキャリブレーションデータをロード中... (dataset={args.dataset})")
+    if args.dataset == "alpaca":
+        train_batches, _, _ = create_alpaca_dataloaders(
+            num_samples=args.num_samples,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            seed=args.seed,
+            tokenizer_name=tokenizer.name_or_path,
+            val_ratio=0.0,  # キャリブレーションなので全データ使用
+        )
+        # (input, target)タプルからinputのみ抽出
+        batches = [x for x, _ in train_batches]
+    else:
+        # カスタムファイル
+        batches = load_calibration_data(
+            args.data_file,
+            tokenizer,
+            args.seq_len,
+            args.batch_size,
+        )
     print(f"バッチ数: {len(batches)}")
 
     # cos_sim計算

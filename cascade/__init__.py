@@ -31,6 +31,7 @@ from .cascade_dataset import (
 from .config import CascadeConfig, ExperimentConfig
 from .dataloader import (
     create_wikitext_dataloaders,
+    create_alpaca_dataloaders,
     create_dataset_from_tokenizer,
 )
 from .utils import set_seed, get_device
@@ -75,6 +76,7 @@ __all__ = [
     'ExperimentConfig',
     # データローダー
     'create_wikitext_dataloaders',
+    'create_alpaca_dataloaders',
     'create_dataset_from_tokenizer',
     # ユーティリティ
     'set_seed',

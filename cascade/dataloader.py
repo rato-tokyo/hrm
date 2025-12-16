@@ -146,3 +146,115 @@ def create_dataset_from_tokenizer(
         'input_ids': input_ids,
         'labels': labels,
     })
+
+
+def create_alpaca_dataloaders(
+    num_samples: int,
+    batch_size: int,
+    seq_len: int,
+    seed: int,
+    tokenizer_name: str = "gpt2",
+    val_ratio: float = 0.1,
+) -> Tuple[List[Tuple[torch.Tensor, torch.Tensor]],
+           List[Tuple[torch.Tensor, torch.Tensor]],
+           int]:
+    """
+    Stanford Alpaca (52K) データセットからデータローダーを作成。
+
+    instruction-tuning用のデータセットを言語モデリング形式に変換。
+    形式: "### Instruction:\\n{instruction}\\n\\n### Input:\\n{input}\\n\\n### Response:\\n{output}"
+
+    Args:
+        num_samples: 使用するサンプル数（最大52K）
+        batch_size: バッチサイズ
+        seq_len: シーケンス長
+        seed: ランダムシード
+        tokenizer_name: 使用するトークナイザ名
+        val_ratio: 検証データの割合
+
+    Returns:
+        (train_batches, val_batches, vocab_size)のタプル
+    """
+    torch.manual_seed(seed)
+
+    # Hugging Face tokenizerをロード
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # Alpacaデータセットをロード
+    dataset = load_dataset('tatsu-lab/alpaca')['train']
+
+    # サンプル数を制限
+    if num_samples < len(dataset):
+        dataset = dataset.shuffle(seed=seed).select(range(num_samples))
+
+    # instruction形式のテキストに変換
+    texts = []
+    for item in dataset:
+        text = _format_alpaca_sample(item)
+        texts.append(text)
+
+    # トークナイズして連結
+    all_tokens = _tokenize_texts(texts, tokenizer)
+
+    # train/val分割
+    split_idx = int(len(all_tokens) * (1 - val_ratio))
+    train_tokens = all_tokens[:split_idx]
+    val_tokens = all_tokens[split_idx:]
+
+    # バッチ化
+    train_batches = _batchify(train_tokens, batch_size, seq_len)
+    val_batches = _batchify(val_tokens, batch_size, seq_len)
+
+    return train_batches, val_batches, tokenizer.vocab_size
+
+
+def _format_alpaca_sample(item: dict) -> str:
+    """
+    Alpacaサンプルをテキスト形式に変換。
+
+    Args:
+        item: Alpacaデータセットの1サンプル
+
+    Returns:
+        フォーマットされたテキスト
+    """
+    instruction = item['instruction']
+    input_text = item.get('input', '')
+    output = item['output']
+
+    if input_text:
+        text = (
+            f"### Instruction:\n{instruction}\n\n"
+            f"### Input:\n{input_text}\n\n"
+            f"### Response:\n{output}"
+        )
+    else:
+        text = (
+            f"### Instruction:\n{instruction}\n\n"
+            f"### Response:\n{output}"
+        )
+
+    return text
+
+
+def _tokenize_texts(texts: List[str], tokenizer: PreTrainedTokenizer) -> torch.Tensor:
+    """
+    テキストリストをトークナイズして単一のテンソルに連結。
+
+    Args:
+        texts: テキストのリスト
+        tokenizer: Hugging Face tokenizer
+
+    Returns:
+        全トークンを含むテンソル
+    """
+    all_tokens: List[int] = []
+    for text in texts:
+        tokens = tokenizer.encode(text, add_special_tokens=False)
+        all_tokens.extend(tokens)
+        # サンプル間にEOSを追加
+        if tokenizer.eos_token_id is not None:
+            all_tokens.append(tokenizer.eos_token_id)
+    return torch.tensor(all_tokens, dtype=torch.long)

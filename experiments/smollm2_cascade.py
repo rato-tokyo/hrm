@@ -37,6 +37,7 @@ from cascade import (
     list_available_models,
     create_llm_from_base,
     create_wikitext_dataloaders,
+    create_alpaca_dataloaders,
     train_ensemble,
     create_initial_dataset,
 )
@@ -69,6 +70,13 @@ def parse_args() -> argparse.Namespace:
     )
 
     # データ設定
+    parser.add_argument(
+        "--dataset",
+        type=str,
+        default="alpaca",
+        choices=["alpaca", "wikitext"],
+        help="使用するデータセット (default: alpaca)",
+    )
     parser.add_argument(
         "--seq-len",
         type=int,
@@ -155,6 +163,7 @@ def main() -> None:
     print(f"デバイス: {device}")
     print(f"ベースモデル: {args.base_model}")
     print(f"後付けLLMレイヤー数: {args.additional_layers}")
+    print(f"データセット: {args.dataset}")
     print(f"hard ratio: {args.hard_ratio}")
     if args.threshold is not None:
         print(f"threshold: {args.threshold} (固定値)")
@@ -208,14 +217,23 @@ def main() -> None:
         print(f"  LLM {i}: layers={llm.num_layers}, trainable={trainable:,}/{total:,}")
 
     # データ準備
-    print("\nデータをロード中...")
-    train_batches, val_batches, vocab_size = create_wikitext_dataloaders(
-        num_samples=args.num_samples,
-        batch_size=args.batch_size,
-        seq_len=args.seq_len,
-        seed=args.seed,
-        tokenizer_name=tokenizer.name_or_path,
-    )
+    print(f"\nデータをロード中... (dataset={args.dataset})")
+    if args.dataset == "alpaca":
+        train_batches, val_batches, vocab_size = create_alpaca_dataloaders(
+            num_samples=args.num_samples,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            seed=args.seed,
+            tokenizer_name=tokenizer.name_or_path,
+        )
+    else:
+        train_batches, val_batches, vocab_size = create_wikitext_dataloaders(
+            num_samples=args.num_samples,
+            batch_size=args.batch_size,
+            seq_len=args.seq_len,
+            seed=args.seed,
+            tokenizer_name=tokenizer.name_or_path,
+        )
 
     print(f"訓練バッチ数: {len(train_batches)}")
     print(f"検証バッチ数: {len(val_batches)}")
