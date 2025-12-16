@@ -44,12 +44,15 @@ def compute_ppl(
         パープレキシティ
     """
     device = next(llm.parameters()).device
+    model_dtype = next(llm.parameters()).dtype
     llm.eval()
     total_loss = 0.0
     total_tokens = 0
 
     with torch.no_grad():
         for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=str(device)):
+            # モデルのdtypeに合わせる（float16対応）
+            h = h.to(dtype=model_dtype)
             h_out, _ = llm.forward(h)
             logits = llm.get_logits(h_out)
             batch_sz, seq_len, vocab_size = logits.shape
@@ -84,6 +87,7 @@ def evaluate_llm(
         stats: loss, correct, input_tokens, exit_tokens, layers_computedを含むDict
     """
     device = next(llm.parameters()).device
+    model_dtype = next(llm.parameters()).dtype
     llm.eval()
 
     info = get_dataset_info(dataset)
@@ -99,6 +103,8 @@ def evaluate_llm(
 
     with torch.no_grad():
         for h, y in iterate_batches(dataset, batch_size, shuffle=False, device=str(device)):
+            # モデルのdtypeに合わせる（float16対応）
+            h = h.to(dtype=model_dtype)
             h_out, hidden_history = llm.forward(h)
             logits = llm.get_logits(h_out)
             should_exit = llm.should_exit(hidden_history)

@@ -48,6 +48,9 @@ class LLMWrapper(nn.Module):
         labels: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
         """Forward pass with loss computation."""
+        # モデルのdtypeに合わせる（float16対応）
+        model_dtype = next(self.llm.parameters()).dtype
+        hidden_states = hidden_states.to(dtype=model_dtype)
         h_out, _ = self.llm.forward(hidden_states, input_type="hidden_states")
         logits = self.llm.get_logits(h_out)
 
