@@ -58,8 +58,16 @@ from .hierarchical_exit import (
     HierarchicalExit,
     create_hierarchical_exit,
 )
+# Infini-Span Memory（Local/Global分離）
+from .infini_span_memory import (
+    SpanInfo,
+    MemoryState,
+    BidirectionalSpanEncoder,
+    InfiniSpanMemory,
+    InfiniSpanAttention,
+)
 
-__version__ = "0.27.0"
+__version__ = "0.28.0"
 
 __all__ = [
     # コア
@@ -114,4 +122,10 @@ __all__ = [
     'HierarchicalOutput',
     'HierarchicalExit',
     'create_hierarchical_exit',
+    # Infini-Span Memory
+    'SpanInfo',
+    'MemoryState',
+    'BidirectionalSpanEncoder',
+    'InfiniSpanMemory',
+    'InfiniSpanAttention',
 ]
