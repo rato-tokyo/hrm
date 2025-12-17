@@ -53,7 +53,7 @@ class TrainingConfig:
     # 訓練設定
     batch_size: int = 8        # 長系列なのでバッチサイズ小さめ
     seq_len: int = 1024        # 長系列
-    num_samples: int = 5000
+    num_samples: int = 2500    # 訓練時間短縮のため半減
     num_epochs: int = 15
     learning_rate: float = 2.5e-4
     weight_decay: float = 0.01
