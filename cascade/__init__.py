@@ -38,12 +38,11 @@ from .model_registry import (
     create_llm_from_base,
     PRETRAINED_MODELS,
 )
-# Span検出（LTri-LLM論文ベース + 独自実装）
+# Span検出（LTri-LLM論文ベース）
 from .span_detector import (
     Span,
     SpanDetector,
     TriangleScoreDetector,
-    RowChangeDetector,
     FixedSpanDetector,
     create_span_detector,
     spans_to_boundaries,
@@ -70,7 +69,7 @@ from .infini_span_memory import (
     InfiniSpanAttention,
 )
 
-__version__ = "0.29.0"
+__version__ = "0.30.0"
 
 __all__ = [
     # コア
@@ -109,11 +108,10 @@ __all__ = [
     'create_small_llm',
     'create_llm_from_base',
     'PRETRAINED_MODELS',
-    # Span検出（LTri-LLM論文ベース + 独自実装）
+    # Span検出（LTri-LLM論文ベース）
     'Span',
     'SpanDetector',
     'TriangleScoreDetector',
-    'RowChangeDetector',
     'FixedSpanDetector',
     'create_span_detector',
     'spans_to_boundaries',

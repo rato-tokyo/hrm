@@ -4,9 +4,8 @@ CASCADEフレームワーク - Span検出
 Attention mapから意味的spanを検出するモジュール。
 
 実装:
-1. TriangleScoreDetector: LTri-LLM論文ベース（三角形スコア + NMS）
-2. RowChangeDetector: 行変化検出（独自実装）
-3. FixedSpanDetector: 固定長span（ベースライン）
+- TriangleScoreDetector: LTri-LLM論文ベース（三角形スコア + NMS）
+- FixedSpanDetector: 固定長span（フォールバック用）
 
 Reference:
 - LTri-LLM: Streaming Long Context Inference for LLMs with Training-Free
@@ -16,7 +15,6 @@ Reference:
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
 from torch import Tensor
 from typing import List, Protocol, Tuple, Optional
 from dataclasses import dataclass
@@ -73,16 +71,16 @@ class TriangleScoreDetector:
     def __init__(
         self,
         threshold: float = 0.0,
-        iou_threshold: float = 0.1,
+        iou_threshold: float = 0.3,
         min_span_length: int = 2,
-        max_span_length: Optional[int] = None,
+        max_span_length: Optional[int] = 8,
     ):
         """
         Args:
             threshold: 三角形スコアの閾値（これ以下のスコアを負値に変換）
-            iou_threshold: NMSのIoU閾値（推奨: 0.1）
+            iou_threshold: NMSのIoU閾値（デフォルト: 0.3）
             min_span_length: 最小span長
-            max_span_length: 最大span長（Noneで制限なし）
+            max_span_length: 最大span長（デフォルト: 8）
         """
         self.threshold = threshold
         self.iou_threshold = iou_threshold
@@ -257,169 +255,20 @@ class TriangleScoreDetector:
         return result
 
 
-class RowChangeDetector:
-    """
-    行変化検出によるspan検出（独自実装）。
-
-    隣接する行のattention分布のcos類似度を計算し、
-    類似度が低い位置を境界とする。
-    """
-
-    def __init__(
-        self,
-        threshold: float = 0.3,
-        min_span_length: int = 1,
-    ):
-        """
-        Args:
-            threshold: cos類似度の閾値（これ以下で境界と判定）
-            min_span_length: 最小span長
-        """
-        self.threshold = threshold
-        self.min_span_length = min_span_length
-
-    def detect(
-        self,
-        attention_map: Tensor,
-        **kwargs,
-    ) -> List[Span]:
-        """
-        行変化検出によるspan検出。
-
-        Args:
-            attention_map: (seq_len, seq_len) または (num_heads, seq_len, seq_len)
-
-        Returns:
-            検出されたspanのリスト
-        """
-        # 複数ヘッドの場合は平均
-        if attention_map.dim() == 3:
-            attention_map = attention_map.mean(dim=0)
-
-        seq_len = attention_map.size(0)
-
-        # 境界を検出
-        boundaries = self._detect_boundaries(attention_map)
-
-        # 境界をspanに変換
-        spans = self._boundaries_to_spans(boundaries)
-
-        # 短いspanをマージ
-        spans = self._merge_short_spans(spans)
-
-        # 全カバレッジ確保
-        spans = self._ensure_full_coverage(spans, seq_len)
-
-        return spans
-
-    def _detect_boundaries(self, attention_map: Tensor) -> List[int]:
-        """行変化点を検出。"""
-        seq_len = attention_map.size(0)
-
-        if seq_len <= 2:
-            return [0, seq_len - 1]
-
-        boundaries = [0]
-
-        for i in range(2, seq_len):
-            row_prev = attention_map[i - 1, :i]
-            row_curr = attention_map[i, :i]
-
-            if row_prev.norm() < 1e-8 or row_curr.norm() < 1e-8:
-                continue
-
-            cos_sim = F.cosine_similarity(
-                row_prev.unsqueeze(0),
-                row_curr.unsqueeze(0),
-                dim=1
-            ).item()
-
-            if cos_sim < self.threshold:
-                boundaries.append(i)
-
-        if boundaries[-1] != seq_len - 1:
-            boundaries.append(seq_len - 1)
-
-        return boundaries
-
-    def _boundaries_to_spans(self, boundaries: List[int]) -> List[Span]:
-        """境界リストをspanリストに変換。"""
-        if len(boundaries) < 2:
-            return []
-
-        spans = []
-        for i in range(len(boundaries) - 1):
-            spans.append(Span(
-                start=boundaries[i],
-                end=boundaries[i + 1],
-                score=1.0,
-            ))
-
-        return spans
-
-    def _merge_short_spans(self, spans: List[Span]) -> List[Span]:
-        """短いspanを前のspanにマージ。"""
-        if not spans or self.min_span_length <= 1:
-            return spans
-
-        result: List[Span] = []
-        for span in spans:
-            if span.length < self.min_span_length and result:
-                prev = result[-1]
-                result[-1] = Span(
-                    start=prev.start,
-                    end=span.end,
-                    score=prev.score,
-                )
-            else:
-                result.append(span)
-
-        return result
-
-    def _ensure_full_coverage(self, spans: List[Span], seq_len: int) -> List[Span]:
-        """全シーケンスをカバー。"""
-        if not spans:
-            return [Span(start=0, end=seq_len - 1, score=1.0)]
-
-        spans = sorted(spans, key=lambda x: x.start)
-        result: List[Span] = []
-        covered_until = -1
-
-        for span in spans:
-            if span.start > covered_until + 1:
-                result.append(Span(
-                    start=covered_until + 1,
-                    end=span.start - 1,
-                    score=0.0
-                ))
-            if span.end > covered_until:
-                result.append(span)
-                covered_until = span.end
-
-        if covered_until < seq_len - 1:
-            result.append(Span(
-                start=covered_until + 1,
-                end=seq_len - 1,
-                score=0.0
-            ))
-
-        return result
-
-
 class FixedSpanDetector:
     """
-    固定長span検出（ベースライン）。
+    固定長span検出（フォールバック用）。
 
-    シーケンスを固定長のspanに分割。
+    Attentionが取得できない場合のフォールバックとして使用。
     """
 
     def __init__(
         self,
-        span_size: int = 128,
+        span_size: int = 32,
     ):
         """
         Args:
-            span_size: span長
+            span_size: span長（デフォルト: 32）
         """
         self.span_size = span_size
 
@@ -462,8 +311,7 @@ def create_span_detector(
     Args:
         method: 検出方式
             - "triangle": LTri-LLM論文ベース（三角形スコア + NMS）
-            - "row_change": 行変化検出（独自実装）
-            - "fixed": 固定長span
+            - "fixed": 固定長span（フォールバック用）
         **kwargs: 各検出器のパラメータ
 
     Returns:
@@ -471,12 +319,10 @@ def create_span_detector(
     """
     if method == "triangle":
         return TriangleScoreDetector(**kwargs)
-    elif method == "row_change":
-        return RowChangeDetector(**kwargs)
     elif method == "fixed":
         return FixedSpanDetector(**kwargs)
     else:
-        raise ValueError(f"Unknown method: {method}. Use 'triangle', 'row_change', or 'fixed'.")
+        raise ValueError(f"Unknown method: {method}. Use 'triangle' or 'fixed'.")
 
 
 # ユーティリティ関数
