@@ -58,17 +58,25 @@
 ```
 cascade/
 ├── __init__.py           # パッケージエクスポート
-├── llm.py                # LLM（Hugging Face CausalLM + Early Exit）
-├── ensemble.py           # Ensemble（統合・ルーティング）
-├── exit_fn.py            # ExitFn, default_exit_fn, compute_cos_sim
-├── cascade_trainer.py    # CascadeTrainer（HF Trainerベース訓練）
-├── cascade_dataset.py    # HF Dataset操作関数
-├── ensemble_trainer.py   # train_ensemble()（CascadeTrainerへの薄いラッパー）
-├── llm_evaluator.py      # compute_ppl(), evaluate_llm()（単一LLM評価）
-├── config.py             # CascadeConfig（CASCADE固有設定）, ExperimentConfig
 ├── dataloader.py         # create_wikitext_dataloaders（HF tokenizer使用）
-└── utils.py              # set_seed, get_device
+├── model_registry.py     # ModelRegistry, load_pretrained
+├── utils.py              # set_seed, get_device
+├── dca_output.py         # DCALLMOutput（出力データクラス）
+├── dca_block.py          # IntegratedDCABlock（DCA内蔵Transformerブロック）
+├── dca_model.py          # IntegratedDCALLM, create_integrated_dca_llm
+└── trainer_utils.py      # compute_ppl, train_model, create_baseline_gpt2
+
+experiments/
+├── dca_v2_training.py       # DCA-LLM v2 訓練スクリプト（ローカル用）
+└── dca_v2_training_colab.py # DCA-LLM v2 訓練スクリプト（Colab用）
 ```
+
+### 単一ファイル責任の原則
+
+各ファイルは1つのクラスまたは密接に関連する機能群のみを持つ:
+- `dca_output.py`: `DCALLMOutput` データクラスのみ
+- `dca_block.py`: `IntegratedDCABlock` クラスのみ
+- `dca_model.py`: `IntegratedDCALLM` クラスと `create_integrated_dca_llm` ファクトリ関数
 
 ### Hugging Face完全統合
 
@@ -441,6 +449,7 @@ print(f"PPL: {stats['ppl']:.2f}, Accuracy: {stats['accuracy']:.2%}")
 14. **訓練対象モデルをfloat16で作成** - float32で作成し、AMPに最適化を任せる
 15. **PATIENCE=1以外の設定** - Early stoppingは常にPATIENCE=1を使用（最良に近いモデルを保存するため）
 16. **コマンドライン引数（argparse）の使用** - 設定はdataclassのデフォルト値のみで管理（リファクタリング工数削減）
+17. **1ファイルに複数クラスを定義** - 単一ファイル責任の原則に従う（dataclassは例外）
 
 ---
 
