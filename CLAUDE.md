@@ -439,6 +439,7 @@ print(f"PPL: {stats['ppl']:.2f}, Accuracy: {stats['accuracy']:.2%}")
 12. **独自データ構造の作成** - HF Datasetを直接使用
 13. **Jupyter Notebook（.ipynb）の作成** - Colabを含め、Pythonスクリプト（.py）を使用
 14. **訓練対象モデルをfloat16で作成** - float32で作成し、AMPに最適化を任せる
+15. **PATIENCE=1以外の設定** - Early stoppingは常にPATIENCE=1を使用（最良に近いモデルを保存するため）
 
 ---
 

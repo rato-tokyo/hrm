@@ -32,7 +32,7 @@ EPOCHS = 10               # 最大エポック数
 BATCH_SIZE = 16           # バッチサイズ（360Mは大きいため小さめに）
 LEARNING_RATE = 1e-5      # 学習率（ファインチューニングなので小さめ）
 SEQ_LEN = 128             # シーケンス長
-PATIENCE = 3              # Early stoppingのpatience
+PATIENCE = 1              # Early stoppingのpatience（1=最良に近いモデルを保存）
 
 # データ設定（CASCADE実験と同じにする）
 NUM_TRAIN_SAMPLES = 1000  # 訓練サンプル数
