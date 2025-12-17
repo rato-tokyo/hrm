@@ -2,7 +2,7 @@
 CASCADE: Confidence-Aware Sequential Compute Allocation for Dynamic Exit
 
 複数のLLMを統合するフレームワーク。
-三角形Attention方式への移行準備中。
+三角形Attention方式で意味的spanを検出し、多段階で情報を圧縮。
 
 Hugging Face Transformersとの完全統合:
 - AutoTokenizer, AutoModelForCausalLMを使用
@@ -38,8 +38,29 @@ from .model_registry import (
     create_llm_from_base,
     PRETRAINED_MODELS,
 )
+# 三角形Attention関連
+from .triangle_attention import (
+    Span,
+    compute_triangle_scores,
+    compute_triangle_scores_efficient,
+    detect_spans_nms,
+    detect_span_boundaries,
+    aggregate_attention_maps,
+)
+from .span_compressor import (
+    CompressedOutput,
+    SpanCompressor,
+    extract_span_boundaries,
+    reconstruct_from_boundaries,
+)
+from .hierarchical_exit import (
+    StageOutput,
+    HierarchicalOutput,
+    HierarchicalExit,
+    create_hierarchical_exit,
+)
 
-__version__ = "0.25.0"
+__version__ = "0.26.0"
 
 __all__ = [
     # コア
@@ -78,4 +99,21 @@ __all__ = [
     'create_small_llm',
     'create_llm_from_base',
     'PRETRAINED_MODELS',
+    # 三角形Attention
+    'Span',
+    'compute_triangle_scores',
+    'compute_triangle_scores_efficient',
+    'detect_spans_nms',
+    'detect_span_boundaries',
+    'aggregate_attention_maps',
+    # Span圧縮
+    'CompressedOutput',
+    'SpanCompressor',
+    'extract_span_boundaries',
+    'reconstruct_from_boundaries',
+    # 階層的Early Exit
+    'StageOutput',
+    'HierarchicalOutput',
+    'HierarchicalExit',
+    'create_hierarchical_exit',
 ]

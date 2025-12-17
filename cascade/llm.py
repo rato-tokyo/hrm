@@ -203,3 +203,64 @@ class LLM(nn.Module):
             should_exit: Booleanマスク True=exitすべき (batch_size, seq_len)
         """
         return self.exit_fn(hidden_history, self.threshold)
+
+    def forward_with_attention(
+        self,
+        token_ids: Optional[TokenTensor] = None,
+        hidden_states: Optional[HiddenTensor] = None,
+    ) -> Tuple[HiddenTensor, Optional[Tuple[torch.Tensor, ...]]]:
+        """
+        forward実行し、attention weightsも返す。
+
+        三角形Attention検出用にattention mapを取得する場合に使用。
+
+        Args:
+            token_ids: 入力トークンID (batch_size, seq_len)
+            hidden_states: 入力hidden states (batch_size, seq_len, dim)
+                          token_idsが指定されている場合は無視
+
+        Returns:
+            h_out: 出力hidden states (batch_size, seq_len, dim)
+            attentions: 各レイヤーのattention weights
+                       (num_layers, batch_size, num_heads, seq_len, seq_len)
+                       取得できない場合はNone
+        """
+        if token_ids is None and hidden_states is None:
+            raise ValueError("token_ids または hidden_states のどちらかを指定してください")
+
+        try:
+            if token_ids is not None:
+                outputs = self.base_llm(
+                    input_ids=token_ids,
+                    output_hidden_states=True,
+                    output_attentions=True,
+                    return_dict=True,
+                )
+            else:
+                # hidden_statesは必ず存在する（上のバリデーションで確認済み）
+                assert hidden_states is not None
+                # モデルのdtypeに自動変換
+                model_dtype = next(self.base_llm.parameters()).dtype
+                if hidden_states.dtype != model_dtype:
+                    hidden_states = hidden_states.to(dtype=model_dtype)
+
+                outputs = self.base_llm(
+                    inputs_embeds=hidden_states,
+                    output_hidden_states=True,
+                    output_attentions=True,
+                    return_dict=True,
+                )
+
+            h_out = outputs.hidden_states[-1]
+            attentions = outputs.attentions if hasattr(outputs, 'attentions') else None
+
+            return h_out, attentions
+
+        except Exception:
+            # Attention取得に失敗した場合はhidden_statesのみ返す
+            if token_ids is not None:
+                h_out, _ = self.forward_token_ids(token_ids)
+            else:
+                assert hidden_states is not None
+                h_out, _ = self.forward_hidden_states(hidden_states)
+            return h_out, None
