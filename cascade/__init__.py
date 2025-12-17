@@ -73,8 +73,15 @@ from .dual_context_attention import (
     DualContextAttention,
     DualContextLM,
 )
+# DCA-LLM（推論対応）
+from .dca_llm import (
+    DCALLMOutput,
+    DCALLM,
+    create_dca_llm,
+    create_dca_llm_from_scratch,
+)
 
-__version__ = "0.31.0"
+__version__ = "0.32.0"
 
 __all__ = [
     # コア
@@ -140,4 +147,9 @@ __all__ = [
     'DualContextMemory',
     'DualContextAttention',
     'DualContextLM',
+    # DCA-LLM
+    'DCALLMOutput',
+    'DCALLM',
+    'create_dca_llm',
+    'create_dca_llm_from_scratch',
 ]
