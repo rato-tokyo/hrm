@@ -660,31 +660,6 @@ def run_experiment(config: TrainingConfig) -> Dict:
     return results
 
 
-def main():
-    import argparse
-    parser = argparse.ArgumentParser(description="DCA-LLM Training")
-    parser.add_argument("--dim", type=int, default=256)
-    parser.add_argument("--num_layers", type=int, default=4)
-    parser.add_argument("--num_heads", type=int, default=4)
-    parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--seq_len", type=int, default=128)
-    parser.add_argument("--num_samples", type=int, default=5000)
-    parser.add_argument("--num_epochs", type=int, default=15)
-    parser.add_argument("--lr", type=float, default=2.5e-4)
-    parser.add_argument("--patience", type=int, default=1)
-    parser.add_argument("--window_size", type=int, default=128)
-    parser.add_argument("--seed", type=int, default=42)
-    args = parser.parse_args()
-
-    config = TrainingConfig(
-        dim=args.dim, num_layers=args.num_layers, num_heads=args.num_heads,
-        batch_size=args.batch_size, seq_len=args.seq_len, num_samples=args.num_samples,
-        num_epochs=args.num_epochs, learning_rate=args.lr, patience=args.patience,
-        window_size=args.window_size, seed=args.seed,
-    )
-
-    run_experiment(config)
-
-
 if __name__ == "__main__":
-    main()
+    config = TrainingConfig()
+    run_experiment(config)

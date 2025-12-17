@@ -440,6 +440,7 @@ print(f"PPL: {stats['ppl']:.2f}, Accuracy: {stats['accuracy']:.2%}")
 13. **Jupyter Notebook（.ipynb）の作成** - Colabを含め、Pythonスクリプト（.py）を使用
 14. **訓練対象モデルをfloat16で作成** - float32で作成し、AMPに最適化を任せる
 15. **PATIENCE=1以外の設定** - Early stoppingは常にPATIENCE=1を使用（最良に近いモデルを保存するため）
+16. **コマンドライン引数（argparse）の使用** - 設定はdataclassのデフォルト値のみで管理（リファクタリング工数削減）
 
 ---
 

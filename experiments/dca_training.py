@@ -17,7 +17,6 @@ DCA（Dual-Context Attention）とベースラインの比較実験を行う。
 import sys
 import time
 import math
-import argparse
 from pathlib import Path
 from typing import Dict, List, Tuple
 from dataclasses import dataclass
@@ -363,37 +362,6 @@ def run_experiment(config: TrainingConfig) -> Dict:
     return results
 
 
-def main():
-    parser = argparse.ArgumentParser(description="DCA-LLM Training")
-    parser.add_argument("--dim", type=int, default=256, help="Model dimension")
-    parser.add_argument("--num_layers", type=int, default=4, help="Number of layers")
-    parser.add_argument("--num_heads", type=int, default=4, help="Number of attention heads")
-    parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
-    parser.add_argument("--seq_len", type=int, default=128, help="Sequence length")
-    parser.add_argument("--num_samples", type=int, default=5000, help="Number of training samples")
-    parser.add_argument("--num_epochs", type=int, default=10, help="Number of epochs")
-    parser.add_argument("--lr", type=float, default=2.5e-4, help="Learning rate")
-    parser.add_argument("--patience", type=int, default=1, help="Early stopping patience")
-    parser.add_argument("--window_size", type=int, default=128, help="DCA window size")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    args = parser.parse_args()
-
-    config = TrainingConfig(
-        dim=args.dim,
-        num_layers=args.num_layers,
-        num_heads=args.num_heads,
-        batch_size=args.batch_size,
-        seq_len=args.seq_len,
-        num_samples=args.num_samples,
-        num_epochs=args.num_epochs,
-        learning_rate=args.lr,
-        patience=args.patience,
-        window_size=args.window_size,
-        seed=args.seed,
-    )
-
-    run_experiment(config)
-
-
 if __name__ == "__main__":
-    main()
+    config = TrainingConfig()
+    run_experiment(config)
