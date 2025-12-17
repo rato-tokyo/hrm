@@ -37,14 +37,15 @@ HARD_RATIO = 0.9          # Hard token比率（0.9 = cos_sim下位90%）
 NUM_STAGES = 5            # 段階数（5回繰り返し）
 
 # 訓練設定
-EPOCHS = 10               # 各段階のエポック数
+EPOCHS = 10               # 各段階の最大エポック数
 BATCH_SIZE = 32           # バッチサイズ
 LEARNING_RATE = 1e-4      # 学習率
 SEQ_LEN = 128             # シーケンス長
+PATIENCE = 3              # Early stoppingのpatience
 
 # データ設定
 NUM_TRAIN_SAMPLES = 1000  # 訓練サンプル数
-NUM_VAL_SAMPLES = 200     # 検証サンプル数
+NUM_VAL_SAMPLES = 100     # 検証サンプル数（精度測定の最小限）
 
 # その他
 SEED = 42                 # 乱数シード
@@ -84,6 +85,7 @@ class ExperimentConfig:
     batch_size: int
     learning_rate: float
     seq_len: int
+    patience: int
     num_train_samples: int
     num_val_samples: int
     seed: int
@@ -300,6 +302,7 @@ def train_stage(
     epochs: int,
     batch_size: int,
     learning_rate: float,
+    patience: int,
     device: torch.device,
 ) -> Tuple[float, float, float]:
     """1段階の訓練を実行"""
@@ -317,9 +320,10 @@ def train_stage(
 
     best_val_loss = float("inf")
     patience_counter = 0
-    patience = 3
 
     for epoch in range(epochs):
+        epoch_start = time.time()
+
         model.train()
         train_loss_sum = 0.0
         train_count = 0
@@ -362,9 +366,11 @@ def train_stage(
 
         val_loss = val_loss_sum / val_count
         val_ppl = torch.exp(torch.tensor(val_loss)).item()
+        epoch_time = time.time() - epoch_start
 
         print(f"    Epoch {epoch + 1}/{epochs}: "
-              f"train_loss={train_loss:.4f}, val_loss={val_loss:.4f}, val_ppl={val_ppl:.2f}")
+              f"train_loss={train_loss:.4f}, val_loss={val_loss:.4f}, "
+              f"val_ppl={val_ppl:.2f}, time={epoch_time:.1f}s")
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -372,7 +378,7 @@ def train_stage(
         else:
             patience_counter += 1
             if patience_counter >= patience:
-                print(f"    Early stopping at epoch {epoch + 1}")
+                print(f"    Early stopping at epoch {epoch + 1} (patience={patience})")
                 break
 
     return train_loss, val_loss, val_ppl
@@ -406,6 +412,7 @@ def run_experiment():
         batch_size=BATCH_SIZE,
         learning_rate=LEARNING_RATE,
         seq_len=SEQ_LEN,
+        patience=PATIENCE,
         num_train_samples=NUM_TRAIN_SAMPLES,
         num_val_samples=NUM_VAL_SAMPLES,
         seed=SEED,
@@ -423,6 +430,7 @@ def run_experiment():
     print(f"  エポック数: {config.epochs}")
     print(f"  バッチサイズ: {config.batch_size}")
     print(f"  学習率: {config.learning_rate}")
+    print(f"  Early stopping patience: {config.patience}")
     print()
 
     device = get_device()
@@ -525,6 +533,7 @@ def run_experiment():
             config.epochs,
             config.batch_size,
             config.learning_rate,
+            config.patience,
             device,
         )
 
