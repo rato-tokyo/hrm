@@ -25,27 +25,23 @@ from .model_registry import (
     create_llm_from_base,
     PRETRAINED_MODELS,
 )
-# Dual-Context Attention（L0/L1 2層コンテキスト）
-from .dual_context_attention import (
-    DCAOutput,
-    DualContextState,
-    DualContextMemory,
-    DualContextAttention,
-    DualContextLM,
-)
-# DCA-LLM（推論対応）
+# DCA-LLM v2（L0/L1 2層コンテキスト）
 from .dca_llm import (
     DCALLMOutput,
-    DCALLM,
-    create_dca_llm,
-    create_dca_llm_from_scratch,
-    # Integrated DCA (DCAを内部に統合)
     IntegratedDCABlock,
     IntegratedDCALLM,
     create_integrated_dca_llm,
 )
+# 訓練ユーティリティ
+from .trainer_utils import (
+    compute_ppl,
+    train_epoch,
+    train_model,
+    get_memory_usage,
+    create_baseline_gpt2,
+)
 
-__version__ = "0.33.0"
+__version__ = "0.34.0"
 
 __all__ = [
     # データローダー
@@ -64,19 +60,15 @@ __all__ = [
     'create_small_llm',
     'create_llm_from_base',
     'PRETRAINED_MODELS',
-    # Dual-Context Attention
-    'DCAOutput',
-    'DualContextState',
-    'DualContextMemory',
-    'DualContextAttention',
-    'DualContextLM',
-    # DCA-LLM
+    # DCA-LLM v2
     'DCALLMOutput',
-    'DCALLM',
-    'create_dca_llm',
-    'create_dca_llm_from_scratch',
-    # Integrated DCA
     'IntegratedDCABlock',
     'IntegratedDCALLM',
     'create_integrated_dca_llm',
+    # 訓練ユーティリティ
+    'compute_ppl',
+    'train_epoch',
+    'train_model',
+    'get_memory_usage',
+    'create_baseline_gpt2',
 ]
