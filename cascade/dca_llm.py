@@ -22,7 +22,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from typing import Optional
+from typing import Optional, Tuple
 from dataclasses import dataclass
 
 from transformers import PreTrainedModel, AutoModelForCausalLM
@@ -484,7 +484,6 @@ class IntegratedDCABlock(nn.Module):
             current_context: hidden_states（次のブロック用）
         """
         batch_size, seq_len, _ = hidden_states.shape
-        device = hidden_states.device
 
         # Pre-norm
         normed = self.ln1(hidden_states)
