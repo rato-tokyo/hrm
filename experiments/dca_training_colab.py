@@ -279,12 +279,17 @@ class DualContextAttention(nn.Module):
         q = self.q_proj(query)
         q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        # L0 Attention
+        # L0 Attention (with causal mask)
         if l0_keys is not None and l0_values is not None:
             l0_len = l0_keys.size(1)
             k0 = l0_keys.view(batch_size, l0_len, self.num_heads, self.head_dim).transpose(1, 2)
             v0 = l0_values.view(batch_size, l0_len, self.num_heads, self.head_dim).transpose(1, 2)
             attn_l0 = torch.matmul(q, k0.transpose(-2, -1)) * self.scale
+
+            # Causal mask: 位置iは位置i以前のみ attend 可能
+            causal_mask = torch.triu(torch.ones(seq_len, l0_len, device=query.device), diagonal=1).bool()
+            attn_l0 = attn_l0.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+
             attn_l0_weights = F.softmax(attn_l0, dim=-1)
             attn_l0_weights = self.dropout(attn_l0_weights)
             out_l0 = torch.matmul(attn_l0_weights, v0)

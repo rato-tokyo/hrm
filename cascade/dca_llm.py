@@ -244,6 +244,9 @@ class DCALLM(nn.Module):
         l1_keys = None
         l1_values = None
 
+        # Causal mask: 下三角行列（位置iは位置i以前のみattend可能）
+        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=hidden_states.device))
+
         # DCA Attention
         dca_output = self.dca_attention(
             query=hidden_states,
@@ -251,6 +254,7 @@ class DCALLM(nn.Module):
             l0_values=l0_values,
             l1_keys=l1_keys,
             l1_values=l1_values,
+            l0_mask=causal_mask,
         )
 
         # Residual + FFN
