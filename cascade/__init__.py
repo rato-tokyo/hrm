@@ -41,9 +41,8 @@ from .model_registry import (
 # 三角形Attention関連
 from .triangle_attention import (
     Span,
-    compute_triangle_scores,
-    compute_triangle_scores_efficient,
-    detect_spans_nms,
+    detect_boundaries_by_row_change,
+    boundaries_to_spans,
     detect_span_boundaries,
     aggregate_attention_maps,
 )
@@ -60,7 +59,7 @@ from .hierarchical_exit import (
     create_hierarchical_exit,
 )
 
-__version__ = "0.26.0"
+__version__ = "0.27.0"
 
 __all__ = [
     # コア
@@ -99,11 +98,10 @@ __all__ = [
     'create_small_llm',
     'create_llm_from_base',
     'PRETRAINED_MODELS',
-    # 三角形Attention
+    # 三角形Attention（行変化点検出による簡略化版）
     'Span',
-    'compute_triangle_scores',
-    'compute_triangle_scores_efficient',
-    'detect_spans_nms',
+    'detect_boundaries_by_row_change',
+    'boundaries_to_spans',
     'detect_span_boundaries',
     'aggregate_attention_maps',
     # Span圧縮
