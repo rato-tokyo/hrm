@@ -10,18 +10,18 @@ from __future__ import annotations
 import warnings
 import torch
 import torch.nn as nn
-from typing import Tuple, List, Optional, NewType
+from typing import Tuple, List, Optional
 
 from transformers import PreTrainedModel
 
 from .exit_fn import ExitFn, default_exit_fn
 
 
-# 型エイリアス: 意味的な区別を明確化
+# 型エイリアス: 意味的な区別を明確化（ドキュメント用）
 # TokenTensor: token_ids (整数テンソル、shape: batch_size, seq_len)
 # HiddenTensor: hidden_states (浮動小数点テンソル、shape: batch_size, seq_len, dim)
-TokenTensor = NewType('TokenTensor', torch.Tensor)
-HiddenTensor = NewType('HiddenTensor', torch.Tensor)
+TokenTensor = torch.Tensor
+HiddenTensor = torch.Tensor
 
 
 class LLM(nn.Module):
@@ -118,7 +118,7 @@ class LLM(nn.Module):
         hidden_history = list(outputs.hidden_states)
         h_out = hidden_history[-1]
 
-        return HiddenTensor(h_out), [HiddenTensor(h) for h in hidden_history]
+        return h_out, hidden_history
 
     def forward_hidden_states(
         self, hidden_states: HiddenTensor
@@ -148,7 +148,7 @@ class LLM(nn.Module):
         hidden_history = list(outputs.hidden_states)
         h_out = hidden_history[-1]
 
-        return HiddenTensor(h_out), [HiddenTensor(h) for h in hidden_history]
+        return h_out, hidden_history
 
     def forward(
         self, x: torch.Tensor, input_type: str = "token_ids"
@@ -175,9 +175,9 @@ class LLM(nn.Module):
             stacklevel=2,
         )
         if input_type == "token_ids":
-            return self.forward_token_ids(TokenTensor(x))
+            return self.forward_token_ids(x)
         else:
-            return self.forward_hidden_states(HiddenTensor(x))
+            return self.forward_hidden_states(x)
 
     def get_logits(self, h: HiddenTensor) -> torch.Tensor:
         """
