@@ -12,13 +12,21 @@ import json
 import time
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from pathlib import Path
 from typing import List, Tuple
 
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import sys
+from pathlib import Path
+
+# プロジェクトルートをパスに追加
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+import torch  # noqa: E402
+import torch.nn as nn  # noqa: E402
+from torch.utils.data import DataLoader, TensorDataset  # noqa: E402
+from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: E402
+
+from cascade import set_seed, get_device  # noqa: E402
 
 # ============================================================
 # 実験パラメータ（ここを編集して実験設定を変更）
@@ -76,26 +84,6 @@ class ExperimentConfig:
     num_val_samples: int
     seed: int
     output_dir: str
-
-
-def set_seed(seed: int):
-    """乱数シードを設定"""
-    import random
-    import numpy as np
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-def get_device() -> torch.device:
-    """利用可能なデバイスを取得"""
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
 
 
 def create_dataloaders(

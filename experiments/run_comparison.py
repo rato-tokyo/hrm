@@ -35,6 +35,8 @@ from transformers import PreTrainedModel, PreTrainedTokenizer  # noqa: E402
 from cascade import (  # noqa: E402
     load_pretrained,
     compute_cos_sim_from_history,
+    set_seed,
+    get_device,
 )
 from cascade.model_registry import create_llm_from_base  # noqa: E402
 
@@ -80,25 +82,6 @@ class ExperimentResult:
     final_val_ppl: float
     exit_distribution: Optional[Dict[str, float]] = None
     compute_ratio: Optional[float] = None
-
-
-def set_seed(seed: int):
-    """乱数シードを設定"""
-    import random
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-
-
-def get_device() -> torch.device:
-    """デバイスを取得"""
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
 
 
 def load_alpaca_data(

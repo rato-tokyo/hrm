@@ -17,5 +17,10 @@ def set_seed(seed: int) -> None:
 
 
 def get_device() -> torch.device:
-    """利用可能な計算デバイスを取得（CUDAが利用可能ならCUDA、それ以外はCPU）。"""
-    return torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    """利用可能な計算デバイスを取得（CUDA > MPS > CPUの優先順）。"""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")

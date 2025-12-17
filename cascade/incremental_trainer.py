@@ -50,6 +50,7 @@ from transformers import PreTrainedModel, PreTrainedTokenizer
 
 from .exit_fn import compute_cos_sim_from_history
 from .model_registry import create_llm_from_base
+from .utils import set_seed
 
 
 @dataclass
@@ -134,16 +135,7 @@ class IncrementalTrainer:
         else:
             self.device = torch.device(device) if isinstance(device, str) else device
 
-        self._set_seed(config.seed)
-
-    def _set_seed(self, seed: int):
-        """乱数シードを設定"""
-        import random
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.manual_seed(seed)
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
+        set_seed(config.seed)
 
     def _log(self, message: str):
         """メッセージを出力"""
