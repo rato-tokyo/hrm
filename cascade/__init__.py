@@ -26,12 +26,9 @@ from .model_registry import (
     PRETRAINED_MODELS,
 )
 # DCA-LLM v2（L0/L1 2層コンテキスト）
-from .dca_llm import (
-    DCALLMOutput,
-    IntegratedDCABlock,
-    IntegratedDCALLM,
-    create_integrated_dca_llm,
-)
+from .dca_output import DCALLMOutput
+from .dca_block import IntegratedDCABlock
+from .dca_model import IntegratedDCALLM, create_integrated_dca_llm
 # 訓練ユーティリティ
 from .trainer_utils import (
     compute_ppl,
@@ -41,7 +38,7 @@ from .trainer_utils import (
     create_baseline_gpt2,
 )
 
-__version__ = "0.34.0"
+__version__ = "0.35.0"
 
 __all__ = [
     # データローダー

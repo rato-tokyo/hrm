@@ -25,7 +25,7 @@ import torch
 # パスを追加
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cascade.dca_llm import create_integrated_dca_llm
+from cascade.dca_model import create_integrated_dca_llm
 from cascade.dataloader import create_wikitext_dataloaders
 from cascade.trainer_utils import (
     train_model,
