@@ -13,9 +13,11 @@ from torch import Tensor
 from typing import List, Tuple, Optional, TYPE_CHECKING
 from dataclasses import dataclass, field
 
-from .triangle_attention import (
+from .span_detector import (
     Span,
-    detect_span_boundaries,
+    SpanDetector,
+    TriangleScoreDetector,
+    FixedSpanDetector,
     aggregate_attention_maps,
 )
 from .span_compressor import (
@@ -96,24 +98,19 @@ class HierarchicalExit(nn.Module):
     def __init__(
         self,
         llms: List["LLM"],
-        triangle_threshold: float = 0.0,
-        iou_threshold: float = 0.5,
-        min_span_length: int = 1,
+        span_detector: Optional[SpanDetector] = None,
         min_output_length: int = 2,
     ):
         """
         Args:
             llms: LLMのリスト（段階数 = len(llms)）
-            triangle_threshold: 三角形スコアの閾値
-            iou_threshold: NMSのIoU閾値
-            min_span_length: 最小span長
+            span_detector: Span検出器（Noneの場合はTriangleScoreDetectorを使用）
             min_output_length: 最小出力長（これ以下には圧縮しない）
         """
         super().__init__()
         self.llms = nn.ModuleList(llms)
-        self.triangle_threshold = triangle_threshold
-        self.iou_threshold = iou_threshold
-        self.min_span_length = min_span_length
+        self.span_detector = span_detector or TriangleScoreDetector()
+        self.fallback_detector = FixedSpanDetector(span_size=32)
         self.compressor = SpanCompressor(min_output_length=min_output_length)
 
     @property
@@ -177,16 +174,11 @@ class HierarchicalExit(nn.Module):
 
             # span検出
             if attention_for_detection is not None:
-                spans, boundary_pos = detect_span_boundaries(
-                    attention_for_detection,
-                    threshold=self.triangle_threshold,
-                    iou_threshold=self.iou_threshold,
-                    min_span_length=self.min_span_length,
-                )
+                spans = self.span_detector.detect(attention_for_detection)
             else:
-                # フォールバック: 等間隔分割
-                spans, boundary_pos = self._fallback_span_detection(
-                    h_out.size(1)
+                # フォールバック: 固定長分割
+                spans = self.fallback_detector.detect(
+                    torch.zeros(h_out.size(1), h_out.size(1))
                 )
 
             # span境界のhidden statesを抽出
@@ -278,34 +270,6 @@ class HierarchicalExit(nn.Module):
                 assert hidden_states is not None
                 h_out, _ = llm.forward_hidden_states(hidden_states)
             return h_out, None
-
-    def _fallback_span_detection(
-        self,
-        seq_len: int,
-        num_spans: int = 4,
-    ) -> Tuple[List[Span], Tensor]:
-        """
-        Attention mapが取得できない場合のフォールバック。
-        等間隔でspanを分割。
-        """
-        span_size = max(1, seq_len // num_spans)
-        spans = []
-
-        start = 0
-        while start < seq_len:
-            end = min(start + span_size - 1, seq_len - 1)
-            spans.append(Span(start=start, end=end, score=1.0))
-            start = end + 1
-
-        # 境界位置
-        boundary_positions = []
-        for span in spans:
-            boundary_positions.append(span.start)
-            if span.end != span.start:
-                boundary_positions.append(span.end)
-        boundary_positions = sorted(set(boundary_positions))
-
-        return spans, torch.tensor(boundary_positions, dtype=torch.long)
 
     def get_compression_stats(self, output: HierarchicalOutput) -> dict:
         """圧縮統計を取得。"""

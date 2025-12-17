@@ -12,7 +12,7 @@ from torch import Tensor
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
-from .triangle_attention import Span
+from .span_detector import Span
 
 
 @dataclass

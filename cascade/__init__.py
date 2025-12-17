@@ -38,12 +38,15 @@ from .model_registry import (
     create_llm_from_base,
     PRETRAINED_MODELS,
 )
-# 三角形Attention関連
-from .triangle_attention import (
+# Span検出（LTri-LLM論文ベース + 独自実装）
+from .span_detector import (
     Span,
-    detect_boundaries_by_row_change,
-    boundaries_to_spans,
-    detect_span_boundaries,
+    SpanDetector,
+    TriangleScoreDetector,
+    RowChangeDetector,
+    FixedSpanDetector,
+    create_span_detector,
+    spans_to_boundaries,
     aggregate_attention_maps,
 )
 from .span_compressor import (
@@ -67,7 +70,7 @@ from .infini_span_memory import (
     InfiniSpanAttention,
 )
 
-__version__ = "0.28.0"
+__version__ = "0.29.0"
 
 __all__ = [
     # コア
@@ -106,11 +109,14 @@ __all__ = [
     'create_small_llm',
     'create_llm_from_base',
     'PRETRAINED_MODELS',
-    # 三角形Attention（行変化点検出による簡略化版）
+    # Span検出（LTri-LLM論文ベース + 独自実装）
     'Span',
-    'detect_boundaries_by_row_change',
-    'boundaries_to_spans',
-    'detect_span_boundaries',
+    'SpanDetector',
+    'TriangleScoreDetector',
+    'RowChangeDetector',
+    'FixedSpanDetector',
+    'create_span_detector',
+    'spans_to_boundaries',
     'aggregate_attention_maps',
     # Span圧縮
     'CompressedOutput',
