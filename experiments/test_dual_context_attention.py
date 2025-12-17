@@ -281,7 +281,7 @@ def test_basic_dca():
     l1_keys = torch.randn(batch_size, l1_len, dim)
     l1_values = torch.randn(batch_size, l1_len, dim)
 
-    print(f"\nInput shapes:")
+    print("\nInput shapes:")
     print(f"  Query: {query.shape}")
     print(f"  L0 (Keys/Values): {l0_keys.shape}")
     print(f"  L1 (Keys/Values): {l1_keys.shape}")
@@ -505,7 +505,6 @@ def compare_with_baseline():
     print("=" * 60)
 
     dim = 64
-    num_heads = 4
 
     # テストシーケンス長
     seq_lengths = [64, 128, 256, 512]

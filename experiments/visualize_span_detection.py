@@ -8,11 +8,10 @@ Span検出の可視化実験
 3. FixedSpanDetector (ベースライン)
 """
 
-import sys
 import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
-from typing import List, Tuple, Optional, Union, Protocol
+from typing import List, Tuple, Optional, Protocol
 from dataclasses import dataclass
 
 
@@ -380,7 +379,7 @@ def compare_detectors(
         ("Fixed (Baseline)", FixedSpanDetector(span_size=4)),
     ]
 
-    results = []
+    results: List[dict] = []
 
     for name, detector in detectors:
         spans = detector.detect(attention_map)
@@ -401,9 +400,9 @@ def compare_detectors(
     print(f"{'Method':<25} {'Spans':>8} {'Boundaries':>12} {'Compression':>12}")
     print("-" * 60)
 
-    for r in results:
-        r_stats = r["stats"]
-        print(f"{r['name']:<25} {r_stats['num_spans']:>8} {r_stats['num_boundaries']:>12} {r_stats['compression_ratio']:>11.1%}")
+    for result in results:
+        result_stats = result["stats"]
+        print(f"{result['name']:<25} {result_stats['num_spans']:>8} {result_stats['num_boundaries']:>12} {result_stats['compression_ratio']:>11.1%}")
 
     return results
 

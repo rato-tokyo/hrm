@@ -8,7 +8,6 @@ Note: このスクリプトは直接実行ではなく、
       または Colab で実行することを想定しています。
 """
 
-import sys
 import torch
 import torch.nn as nn
 from typing import List, Optional, Tuple
@@ -524,7 +523,7 @@ def test_attention_module():
     # Causal mask
     local_mask = torch.tril(torch.ones(local_len, local_len))
 
-    print(f"\nInput shapes:")
+    print("\nInput shapes:")
     print(f"  local_hidden: {local_hidden.shape}")
     print(f"  global_hidden: {global_hidden.shape}")
     print(f"  local_mask: {local_mask.shape}")
