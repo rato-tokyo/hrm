@@ -22,10 +22,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Optional
 from dataclasses import dataclass
 
-from transformers import PreTrainedModel, AutoModelForCausalLM, AutoConfig
+from transformers import PreTrainedModel, AutoModelForCausalLM
 
 from .dual_context_attention import (
     DualContextMemory,
@@ -165,7 +165,6 @@ class DCALLM(nn.Module):
         attention_mask: Optional[Tensor] = None,
         labels: Optional[Tensor] = None,
         inputs_embeds: Optional[Tensor] = None,
-        use_cache: bool = False,
         return_hidden_states: bool = False,
     ) -> DCALLMOutput:
         """
@@ -224,6 +223,10 @@ class DCALLM(nn.Module):
         """
         DCAを適用。
 
+        訓練時: 各バッチは独立に処理（メモリはリセット済み）
+        L0 = hidden_states自体をKey/Valueとして使用（self-attention的）
+        L1 = 現在は空（ストリーミング推論時のみ使用）
+
         Args:
             hidden_states: (batch, seq_len, dim)
 
@@ -232,20 +235,14 @@ class DCALLM(nn.Module):
         """
         batch_size, seq_len, _ = hidden_states.shape
 
-        # メモリを更新してL0/L1を取得
-        # Note: バッチ処理では各サンプルは独立（訓練時は毎回リセット）
-        state = self.dca_memory.update(hidden_states[0])  # 簡略化: batch=1を想定
+        # 訓練時はhidden_states自体をL0として使用（メモリのストリーミングは不要）
+        # これにより各バッチが独立に処理される
+        l0_keys = self.dca_memory.l0_key_proj(hidden_states)
+        l0_values = self.dca_memory.l0_value_proj(hidden_states)
 
-        # L0とL1のコンテキストを取得
-        l0_keys = state.l0_keys
-        l0_values = state.l0_values
-        l1_keys = state.l1_keys
-
-        # L1のValueは代表ベクトル自体
+        # L1は訓練時は使用しない（ストリーミング推論時のみ）
+        l1_keys = None
         l1_values = None
-        if state.l1_representatives:
-            l1_reps = torch.stack(state.l1_representatives, dim=0)
-            l1_values = l1_reps.unsqueeze(0).expand(batch_size, -1, -1)
 
         # DCA Attention
         dca_output = self.dca_attention(
@@ -292,7 +289,6 @@ class DCALLM(nn.Module):
         self.reset_memory()
 
         generated = input_ids.clone()
-        batch_size = input_ids.size(0)
 
         for _ in range(max_new_tokens):
             # Forward

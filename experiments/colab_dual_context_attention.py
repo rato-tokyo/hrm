@@ -62,7 +62,6 @@ class BidirectionalSpanEncoder(nn.Module):
                 nn.Linear(dim, dim), nn.GELU(), nn.Linear(dim, dim),
             )
         else:  # pooling
-            self.encoder = None
             self.output_proj = nn.Sequential(
                 nn.Linear(dim, dim), nn.GELU(), nn.Linear(dim, dim),
             )
@@ -288,7 +287,7 @@ def experiment_basic_dca(device):
     l1_keys = torch.randn(batch_size, l1_len, dim, device=device)
     l1_values = torch.randn(batch_size, l1_len, dim, device=device)
 
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  dim={dim}, num_heads={num_heads}")
     print(f"  Query: {query.shape}")
     print(f"  L0 (local): {l0_keys.shape}")
@@ -297,7 +296,7 @@ def experiment_basic_dca(device):
     # Forward
     output = dca(query, l0_keys, l0_values, l1_keys, l1_values)
 
-    print(f"\nResults:")
+    print("\nResults:")
     print(f"  Output shape: {output.output.shape}")
     print(f"  Gate value: {torch.sigmoid(dca.gate).item():.4f}")
     print(f"  L0 attention shape: {output.l0_attention.shape if output.l0_attention is not None else 'None'}")
@@ -375,7 +374,7 @@ def experiment_gpt2_comparison(device):
         if l1_values is not None:
             l1_values = l1_values.to(device)
 
-        output = dca(
+        _ = dca(
             query=query,
             l0_keys=state.l0_keys,
             l0_values=state.l0_values,
@@ -391,7 +390,7 @@ def experiment_gpt2_comparison(device):
     context_size = l0_len + l1_len
     compression = 1.0 - context_size / total if total > 0 else 0
 
-    print(f"\nFinal Statistics:")
+    print("\nFinal Statistics:")
     print(f"  Total tokens: {total}")
     print(f"  Context size: {context_size} (L0={l0_len}, L1={l1_len})")
     print(f"  Compression: {compression:.1%}")
@@ -441,7 +440,6 @@ def experiment_memory_benchmark(device):
     print("Experiment 4: Memory Usage Benchmark")
     print("=" * 70)
 
-    dim = 768
     num_heads = 12
     batch_size = 1
     seq_lengths = [512, 1024, 2048, 4096]

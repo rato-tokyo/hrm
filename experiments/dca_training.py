@@ -14,13 +14,12 @@ DCA（Dual-Context Attention）とベースラインの比較実験を行う。
     python experiments/dca_training.py
 """
 
-import os
 import sys
 import time
 import math
 import argparse
 from pathlib import Path
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Tuple
 from dataclasses import dataclass
 
 import torch
@@ -31,7 +30,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 # パスを追加
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from cascade.dca_llm import DCALLM, create_dca_llm_from_scratch
+from cascade.dca_llm import create_dca_llm_from_scratch
 from cascade.dataloader import create_wikitext_dataloaders
 
 
@@ -150,7 +149,7 @@ def train_model(
     best_val_ppl = float('inf')
     best_epoch = 0
     patience_counter = 0
-    history = {
+    history: dict[str, list[float]] = {
         'train_loss': [],
         'train_ppl': [],
         'val_ppl': [],

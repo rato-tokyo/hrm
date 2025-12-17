@@ -12,7 +12,6 @@ DCA（Dual-Context Attention）とベースラインの比較実験を行う。
     !python experiments/dca_training_colab.py
 """
 
-import os
 import sys
 import time
 import math
@@ -392,17 +391,23 @@ class DCALLM(nn.Module):
         return DCALLMOutput(logits=logits, loss=loss)
 
     def _apply_dca(self, hidden_states: Tensor) -> Tensor:
-        batch_size = hidden_states.size(0)
-        state = self.dca_memory.update(hidden_states[0])
+        """
+        DCAを適用。
 
-        l0_keys = state.l0_keys
-        l0_values = state.l0_values
-        l1_keys = state.l1_keys
+        訓練時: 各バッチは独立に処理（メモリはリセット済み）
+        L0 = hidden_states自体をKey/Valueとして使用（self-attention的）
+        L1 = 現在は空（ストリーミング推論時のみ使用）
+        """
+        batch_size, seq_len, dim = hidden_states.shape
 
+        # 訓練時はhidden_states自体をL0として使用（メモリのストリーミングは不要）
+        # これにより各バッチが独立に処理される
+        l0_keys = self.dca_memory.l0_key_proj(hidden_states)
+        l0_values = self.dca_memory.l0_value_proj(hidden_states)
+
+        # L1は訓練時は使用しない（ストリーミング推論時のみ）
+        l1_keys = None
         l1_values = None
-        if state.l1_representatives:
-            l1_reps = torch.stack(state.l1_representatives, dim=0)
-            l1_values = l1_reps.unsqueeze(0).expand(batch_size, -1, -1)
 
         dca_output = self.dca_attention(
             query=hidden_states, l0_keys=l0_keys, l0_values=l0_values,

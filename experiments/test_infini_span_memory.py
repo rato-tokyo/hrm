@@ -82,12 +82,11 @@ class BidirectionalSpanEncoder(nn.Module):
                 batch_first=True,
                 norm_first=True,
             )
-            self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+            self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
             self.output_proj = nn.Linear(dim, dim)
 
         else:  # pooling
-            self.encoder = None
-            self.output_proj = nn.Sequential(
+            self.pooling_proj = nn.Sequential(
                 nn.Linear(dim, dim),
                 nn.GELU(),
                 nn.Dropout(dropout),
@@ -114,13 +113,13 @@ class BidirectionalSpanEncoder(nn.Module):
         elif self.mode == "transformer":
             cls_tokens = self.cls_token.expand(batch_size, -1, -1)
             x = torch.cat([cls_tokens, hidden_states], dim=1)
-            encoded = self.encoder(x)
+            encoded = self.transformer_encoder(x)
             cls_output = encoded[:, 0, :]
             compressed = self.output_proj(cls_output)
 
         else:  # pooling
             pooled = hidden_states.mean(dim=1)
-            compressed = self.output_proj(pooled)
+            compressed = self.pooling_proj(pooled)
 
         compressed = self.layer_norm(compressed)
 

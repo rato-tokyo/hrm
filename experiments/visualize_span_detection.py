@@ -12,8 +12,16 @@ import sys
 import torch
 import torch.nn.functional as F
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Union, Protocol
 from dataclasses import dataclass
+
+
+# ========== プロトコル ==========
+
+class SpanDetector(Protocol):
+    """Span検出器のプロトコル。"""
+    def detect(self, attention_map: torch.Tensor) -> List["Span"]:
+        ...
 
 
 # ========== データクラス ==========
@@ -364,7 +372,7 @@ def compare_detectors(
     print(f"{'='*70}")
 
     # 3つのDetectorを定義
-    detectors = [
+    detectors: List[Tuple[str, SpanDetector]] = [
         ("TriangleScore (LTri-LLM)", TriangleScoreDetector(
             threshold=0.0, iou_threshold=0.3, min_span_length=2, max_span_length=8
         )),
@@ -417,8 +425,8 @@ def experiment_parameter_sensitivity(
     print("-" * 45)
 
     for threshold in [0.1, 0.3, 0.5, 0.7, 0.9]:
-        detector = RowChangeDetector(threshold=threshold, min_span_length=2)
-        spans = detector.detect(attention_map)
+        row_detector = RowChangeDetector(threshold=threshold, min_span_length=2)
+        spans = row_detector.detect(attention_map)
         stats = compute_compression_stats(spans, seq_len)
         print(f"{threshold:>10.1f} {stats['num_spans']:>8} {stats['num_boundaries']:>12} {stats['compression_ratio']:>11.1%}")
 
@@ -428,10 +436,10 @@ def experiment_parameter_sensitivity(
     print("-" * 45)
 
     for iou in [0.1, 0.3, 0.5, 0.7, 0.9]:
-        detector = TriangleScoreDetector(
+        tri_detector = TriangleScoreDetector(
             threshold=0.0, iou_threshold=iou, min_span_length=2, max_span_length=8
         )
-        spans = detector.detect(attention_map)
+        spans = tri_detector.detect(attention_map)
         stats = compute_compression_stats(spans, seq_len)
         print(f"{iou:>10.1f} {stats['num_spans']:>8} {stats['num_boundaries']:>12} {stats['compression_ratio']:>11.1%}")
 
@@ -441,8 +449,8 @@ def experiment_parameter_sensitivity(
     print("-" * 45)
 
     for size in [2, 4, 8, 16, 32]:
-        detector = FixedSpanDetector(span_size=size)
-        spans = detector.detect(attention_map)
+        fixed_detector = FixedSpanDetector(span_size=size)
+        spans = fixed_detector.detect(attention_map)
         stats = compute_compression_stats(spans, seq_len)
         print(f"{size:>10} {stats['num_spans']:>8} {stats['num_boundaries']:>12} {stats['compression_ratio']:>11.1%}")
 

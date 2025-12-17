@@ -8,7 +8,7 @@ LTri-LLM論文ベースのTriangleScoreDetectorと
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from typing import List, Protocol, Tuple, Optional
+from typing import List, Optional
 from dataclasses import dataclass
 
 
