@@ -55,8 +55,16 @@ class BidirectionalSpanEncoder(nn.Module):
         self.mode = mode
         self.num_layers = num_layers
 
+        # Initialize all possible attributes to None first for mypy
+        self.bilstm_encoder: Optional[nn.LSTM] = None
+        self.transformer_encoder: Optional[nn.TransformerEncoder] = None
+        self.cls_token: Optional[nn.Parameter] = None
+        self.bilstm_proj: Optional[nn.Sequential] = None
+        self.transformer_proj: Optional[nn.Linear] = None
+        self.pooling_proj: Optional[nn.Sequential] = None
+
         if mode == "bilstm":
-            self.encoder = nn.LSTM(
+            self.bilstm_encoder = nn.LSTM(
                 input_size=dim,
                 hidden_size=dim // 2,
                 num_layers=num_layers,
@@ -64,7 +72,7 @@ class BidirectionalSpanEncoder(nn.Module):
                 bidirectional=True,
                 dropout=dropout if num_layers > 1 else 0,
             )
-            self.output_proj = nn.Sequential(
+            self.bilstm_proj = nn.Sequential(
                 nn.Linear(dim, dim),
                 nn.GELU(),
                 nn.Dropout(dropout),
@@ -83,7 +91,7 @@ class BidirectionalSpanEncoder(nn.Module):
                 norm_first=True,
             )
             self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
-            self.output_proj = nn.Linear(dim, dim)
+            self.transformer_proj = nn.Linear(dim, dim)
 
         else:  # pooling
             self.pooling_proj = nn.Sequential(
@@ -104,20 +112,26 @@ class BidirectionalSpanEncoder(nn.Module):
         batch_size, seq_len, _ = hidden_states.shape
 
         if self.mode == "bilstm":
-            output, (h_n, _) = self.encoder(hidden_states)
+            assert self.bilstm_encoder is not None
+            assert self.bilstm_proj is not None
+            _, (h_n, _) = self.bilstm_encoder(hidden_states)
             h_forward = h_n[-2]
             h_backward = h_n[-1]
             pooled = torch.cat([h_forward, h_backward], dim=-1)
-            compressed = self.output_proj(pooled)
+            compressed = self.bilstm_proj(pooled)
 
         elif self.mode == "transformer":
+            assert self.cls_token is not None
+            assert self.transformer_encoder is not None
+            assert self.transformer_proj is not None
             cls_tokens = self.cls_token.expand(batch_size, -1, -1)
             x = torch.cat([cls_tokens, hidden_states], dim=1)
             encoded = self.transformer_encoder(x)
             cls_output = encoded[:, 0, :]
-            compressed = self.output_proj(cls_output)
+            compressed = self.transformer_proj(cls_output)
 
         else:  # pooling
+            assert self.pooling_proj is not None
             pooled = hidden_states.mean(dim=1)
             compressed = self.pooling_proj(pooled)
 
@@ -145,6 +159,9 @@ class BidirectionalSpanEncoder(nn.Module):
         if self.mode == "bilstm":
             from torch.nn.utils.rnn import pack_padded_sequence
 
+            assert self.bilstm_encoder is not None
+            assert self.bilstm_proj is not None
+
             lengths_tensor = torch.tensor(lengths, device=device)
             sorted_lengths, sort_idx = lengths_tensor.sort(descending=True)
             sorted_padded = padded[sort_idx]
@@ -152,7 +169,7 @@ class BidirectionalSpanEncoder(nn.Module):
             packed = pack_padded_sequence(
                 sorted_padded, sorted_lengths.cpu(), batch_first=True, enforce_sorted=True
             )
-            _, (h_n, _) = self.encoder(packed)
+            _, (h_n, _) = self.bilstm_encoder(packed)
 
             h_forward = h_n[-2]
             h_backward = h_n[-1]
@@ -161,7 +178,7 @@ class BidirectionalSpanEncoder(nn.Module):
             _, unsort_idx = sort_idx.sort()
             pooled = pooled[unsort_idx]
 
-            compressed = self.output_proj(pooled)
+            compressed = self.bilstm_proj(pooled)
         else:
             compressed = self.forward(padded)
 

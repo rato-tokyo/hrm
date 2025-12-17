@@ -11,7 +11,6 @@ L0 (Local Context) と L1 (Representative Context) の
 4. Attention分布の可視化
 """
 
-import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F

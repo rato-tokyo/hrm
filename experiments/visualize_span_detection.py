@@ -402,8 +402,8 @@ def compare_detectors(
     print("-" * 60)
 
     for r in results:
-        stats = r["stats"]
-        print(f"{r['name']:<25} {stats['num_spans']:>8} {stats['num_boundaries']:>12} {stats['compression_ratio']:>11.1%}")
+        r_stats = r["stats"]
+        print(f"{r['name']:<25} {r_stats['num_spans']:>8} {r_stats['num_boundaries']:>12} {r_stats['compression_ratio']:>11.1%}")
 
     return results
 

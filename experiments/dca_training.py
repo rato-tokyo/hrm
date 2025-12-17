@@ -353,7 +353,7 @@ def run_experiment(config: TrainingConfig) -> Dict:
     diff = dca_val - baseline_val
     diff_pct = (diff / baseline_val) * 100
 
-    print(f"\nDCA vs Baseline:")
+    print("\nDCA vs Baseline:")
     print(f"  Val PPL difference: {diff:+.2f} ({diff_pct:+.1f}%)")
     if diff < 0:
         print(f"  DCA improves perplexity by {abs(diff):.2f} ({abs(diff_pct):.1f}%)")
