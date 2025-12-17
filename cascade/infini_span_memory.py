@@ -13,7 +13,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 from torch import Tensor
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Any
 from dataclasses import dataclass, field
 
 
@@ -80,6 +80,10 @@ class BidirectionalSpanEncoder(nn.Module):
         self.mode = mode
         self.num_layers = num_layers
 
+        # エンコーダとoutput_projの型を統一（Any型で宣言）
+        self.encoder: Any = None
+        self.output_proj: nn.Module
+
         if mode == "bilstm":
             # Bi-LSTM: 双方向LSTMで文脈を捉える
             self.encoder = nn.LSTM(
@@ -120,7 +124,6 @@ class BidirectionalSpanEncoder(nn.Module):
 
         else:  # pooling
             # シンプルな平均プーリング + MLP
-            self.encoder = None
             self.output_proj = nn.Sequential(
                 nn.Linear(dim, dim),
                 nn.GELU(),
@@ -217,7 +220,7 @@ class BidirectionalSpanEncoder(nn.Module):
 
         if self.mode == "bilstm":
             # pack_padded_sequenceで効率的に処理
-            from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+            from torch.nn.utils.rnn import pack_padded_sequence
 
             # 長さでソート（pack_padded_sequenceの要件）
             lengths_tensor = torch.tensor(lengths, device=device)

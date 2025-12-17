@@ -144,7 +144,6 @@ class DualContextMemory(nn.Module):
             hidden_states = hidden_states.unsqueeze(0)
 
         batch_size, seq_len, _ = hidden_states.shape
-        device = hidden_states.device
 
         # バッファに追加
         for t in range(seq_len):
