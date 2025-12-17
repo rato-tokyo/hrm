@@ -33,7 +33,7 @@ BASE_MODEL = "HuggingFaceTB/SmolLM2-135M-Instruct"
 
 # 段階的追加の設定
 LAYERS_PER_STAGE = 8      # 各段階で追加するレイヤー数
-HARD_RATIO = 0.9          # Hard token比率（0.9 = cos_sim下位90%）
+HARD_RATIO = 0.6          # Hard token比率（0.6 = cos_sim下位60%）
 NUM_STAGES = 5            # 段階数（5回繰り返し）
 
 # 訓練設定
