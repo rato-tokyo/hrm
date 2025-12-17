@@ -15,9 +15,7 @@ from dataclasses import dataclass, field
 
 from .span_detector import (
     Span,
-    SpanDetector,
     TriangleScoreDetector,
-    FixedSpanDetector,
     aggregate_attention_maps,
 )
 from .span_compressor import (
@@ -98,7 +96,7 @@ class HierarchicalExit(nn.Module):
     def __init__(
         self,
         llms: List["LLM"],
-        span_detector: Optional[SpanDetector] = None,
+        span_detector: Optional[TriangleScoreDetector] = None,
         min_output_length: int = 2,
     ):
         """
@@ -110,7 +108,6 @@ class HierarchicalExit(nn.Module):
         super().__init__()
         self.llms = nn.ModuleList(llms)
         self.span_detector = span_detector or TriangleScoreDetector()
-        self.fallback_detector = FixedSpanDetector(span_size=32)
         self.compressor = SpanCompressor(min_output_length=min_output_length)
 
     @property
@@ -163,23 +160,15 @@ class HierarchicalExit(nn.Module):
                 )
                 original_seq_len = current_hidden.size(1)
 
-            # Attention mapを集約
+            # Attention mapを集約してspan検出
             if attentions is not None:
                 agg_attention = aggregate_attention_maps(attentions)
-                # バッチの最初のサンプルを使用（簡略化）
-                attention_for_detection = agg_attention[0]
-            else:
-                # Attentionが取得できない場合は等間隔でspan分割
-                attention_for_detection = None
-
-            # span検出
-            if attention_for_detection is not None:
+                attention_for_detection = agg_attention[0]  # バッチの最初
                 spans = self.span_detector.detect(attention_for_detection)
             else:
-                # フォールバック: 固定長分割
-                spans = self.fallback_detector.detect(
-                    torch.zeros(h_out.size(1), h_out.size(1))
-                )
+                # Attentionが取得できない場合はダミーのattention mapで検出
+                dummy_attention = torch.zeros(h_out.size(1), h_out.size(1), device=h_out.device)
+                spans = self.span_detector.detect(dummy_attention)
 
             # span境界のhidden statesを抽出
             boundary_hidden, local_positions = extract_span_boundaries(h_out, spans)

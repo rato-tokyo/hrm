@@ -41,10 +41,7 @@ from .model_registry import (
 # Span検出（LTri-LLM論文ベース）
 from .span_detector import (
     Span,
-    SpanDetector,
     TriangleScoreDetector,
-    FixedSpanDetector,
-    create_span_detector,
     spans_to_boundaries,
     aggregate_attention_maps,
 )
@@ -110,10 +107,7 @@ __all__ = [
     'PRETRAINED_MODELS',
     # Span検出（LTri-LLM論文ベース）
     'Span',
-    'SpanDetector',
     'TriangleScoreDetector',
-    'FixedSpanDetector',
-    'create_span_detector',
     'spans_to_boundaries',
     'aggregate_attention_maps',
     # Span圧縮
