@@ -1,30 +1,11 @@
 """
 CASCADEフレームワーク - 設定クラス
 
-CascadeConfig: CASCADE固有の設定（patience, hard_ratio）
 ExperimentConfig: モデルアーキテクチャと実験設定
 """
 
 from dataclasses import dataclass
 from typing import Tuple
-
-
-@dataclass
-class CascadeConfig:
-    """
-    CASCADE固有の設定。
-
-    Hugging Face TrainingArgumentsに含まれない、
-    CASCADEフレームワーク固有のパラメータを保持。
-
-    Attributes:
-        patience: Early stoppingの待機エポック数
-        hard_ratio: hard tokenとして収集するトークンの割合 (0.0-1.0)
-        lr_decay: 後続LLMごとの学習率減衰係数
-    """
-    patience: int
-    hard_ratio: float
-    lr_decay: float = 0.5
 
 
 @dataclass

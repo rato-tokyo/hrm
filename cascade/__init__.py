@@ -1,10 +1,8 @@
 """
 CASCADE: Confidence-Aware Sequential Compute Allocation for Dynamic Exit
 
-複数のLLMを統合し、Early Exitで効率的にルーティングするフレームワーク。
-- 任意のHugging Face LLMをLLMクラスでラップ
-- Early Exit機能により、簡単なトークンは前段LLMで処理完了
-- Hard tokens（難しいトークン）だけを後段に渡す
+複数のLLMを統合するフレームワーク。
+三角形Attention方式への移行準備中。
 
 Hugging Face Transformersとの完全統合:
 - AutoTokenizer, AutoModelForCausalLMを使用
@@ -16,21 +14,14 @@ Hugging Face Transformersとの完全統合:
 from .ensemble import Ensemble
 from .llm import LLM, TokenTensor, HiddenTensor
 from .exit_fn import ExitFn, default_exit_fn, compute_cos_sim, compute_cos_sim_from_history
-from .cascade_trainer import CascadeTrainer, create_initial_dataset
-from .ensemble_trainer import train_ensemble
-from .llm_evaluator import compute_ppl, evaluate_llm
+from .llm_evaluator import compute_ppl
 from .cascade_dataset import (
     create_cascade_dataset,
     get_dataset_info,
     iterate_batches,
-    collect_hard_tokens_from_dataset,
-    transform_dataset,
-    reconstruct_sequences,
     create_empty_dataset,
 )
-from .config import CascadeConfig, ExperimentConfig
-from .incremental_trainer import IncrementalTrainer, IncrementalConfig, StageResult
-from .incremental_evaluator import IncrementalEvaluator, EvaluationResult
+from .config import ExperimentConfig
 from .dataloader import (
     create_wikitext_dataloaders,
     create_alpaca_dataloaders,
@@ -48,7 +39,7 @@ from .model_registry import (
     PRETRAINED_MODELS,
 )
 
-__version__ = "0.24.0"
+__version__ = "0.25.0"
 
 __all__ = [
     # コア
@@ -62,30 +53,15 @@ __all__ = [
     'default_exit_fn',
     'compute_cos_sim',
     'compute_cos_sim_from_history',
-    # 訓練（HF Trainerベース）
-    'CascadeTrainer',
-    'train_ensemble',
-    'create_initial_dataset',
     # Dataset操作（HF Dataset直接使用）
     'create_cascade_dataset',
     'get_dataset_info',
     'iterate_batches',
-    'collect_hard_tokens_from_dataset',
-    'transform_dataset',
-    'reconstruct_sequences',
     'create_empty_dataset',
     # 評価
     'compute_ppl',
-    'evaluate_llm',
     # 設定
-    'CascadeConfig',
     'ExperimentConfig',
-    # 段階的訓練・評価
-    'IncrementalTrainer',
-    'IncrementalConfig',
-    'StageResult',
-    'IncrementalEvaluator',
-    'EvaluationResult',
     # データローダー
     'create_wikitext_dataloaders',
     'create_alpaca_dataloaders',
