@@ -49,6 +49,10 @@ class TrainingConfig:
     baseline_layers: int = 5   # Baseline: 5層
     dca_layers: int = 4        # DCA: 4層（パラメータ数を揃える）
 
+    # DCA固有の設定
+    window_size: int = 256         # L0ウィンドウサイズ
+    compression_ratio: int = 4     # L1圧縮率
+
     # 訓練設定
     batch_size: int = 8        # 長系列なのでバッチサイズ小さめ
     seq_len: int = 1024        # 長系列
@@ -310,6 +314,8 @@ def run_experiment(config: TrainingConfig) -> Dict:
         num_layers=config.dca_layers,  # 4層
         num_heads=config.num_heads,
         max_seq_len=config.max_seq_len,
+        window_size=config.window_size,
+        compression_ratio=config.compression_ratio,
         device=config.device,
     )
 
