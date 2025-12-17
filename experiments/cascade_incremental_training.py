@@ -17,7 +17,7 @@ import time
 from dataclasses import dataclass, asdict
 from datetime import datetime
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 
 import torch
 import torch.nn as nn
@@ -145,8 +145,8 @@ def create_dataloaders(
 
     dataset = load_dataset("tatsu-lab/alpaca", split="train")
 
-    def tokenize_and_chunk(max_samples: int):
-        all_input_ids = []
+    def tokenize_and_chunk(max_samples: int) -> List[List[int]]:
+        all_input_ids: List[List[int]] = []
 
         for i in range(len(dataset)):
             if len(all_input_ids) >= max_samples:
@@ -164,7 +164,7 @@ def create_dataloaders(
 
         return all_input_ids
 
-    print(f"  Alpacaデータセットをトークナイズ中...")
+    print("  Alpacaデータセットをトークナイズ中...")
     all_data = tokenize_and_chunk(num_train + num_val)
     print(f"  取得サンプル数: {len(all_data)}")
 
@@ -415,7 +415,7 @@ def run_experiment():
     print("=" * 80)
     print("CASCADE段階的訓練実験")
     print("=" * 80)
-    print(f"\n設定:")
+    print("\n設定:")
     print(f"  ベースモデル: {config.base_model}")
     print(f"  段階あたりのレイヤー数: {config.layers_per_stage}")
     print(f"  Hard token比率: {config.hard_ratio * 100:.1f}%")
@@ -446,7 +446,7 @@ def run_experiment():
     print(f"  パラメータ数: {base_params:,} ({base_params/1e6:.1f}M)")
     print(f"  レイヤー数: {base_layers}")
 
-    print(f"\nデータをロード中...")
+    print("\nデータをロード中...")
     train_loader, val_loader = create_dataloaders(
         tokenizer,
         config.num_train_samples,
@@ -457,7 +457,7 @@ def run_experiment():
     print(f"  訓練サンプル数: {len(train_loader.dataset)}")
     print(f"  検証サンプル数: {len(val_loader.dataset)}")
 
-    print(f"\nベースモデルからhidden statesを抽出中...")
+    print("\nベースモデルからhidden statesを抽出中...")
     train_hidden, train_labels, train_cos_sim = extract_hidden_states(
         base_model, train_loader, device
     )
@@ -486,7 +486,7 @@ def run_experiment():
         print(f"段階 {stage}/{config.num_stages}")
         print(f"{'=' * 80}")
 
-        print(f"\nHard tokensをフィルタリング中...")
+        print("\nHard tokensをフィルタリング中...")
         hard_train_hidden, hard_train_labels, threshold = filter_hard_tokens(
             current_train_hidden,
             current_train_labels,
@@ -513,7 +513,7 @@ def run_experiment():
         stage_params = sum(p.numel() for p in stage_model.parameters())
         print(f"  パラメータ数: {stage_params:,} ({stage_params/1e6:.1f}M)")
 
-        print(f"\n訓練開始...")
+        print("\n訓練開始...")
         start_time = time.time()
 
         train_loss, val_loss, val_ppl = train_stage(
@@ -555,7 +555,7 @@ def run_experiment():
         )
         results.append(result)
 
-        print(f"\n次の段階用にhidden statesを更新中...")
+        print("\n次の段階用にhidden statesを更新中...")
         stage_model.eval()
 
         new_train_hidden, new_train_labels, new_train_cos_sim = extract_hidden_from_hidden(
@@ -592,7 +592,7 @@ def run_experiment():
     with open(output_dir / "results.json", "w") as f:
         json.dump(results_dict, f, indent=2, ensure_ascii=False)
 
-    print(f"\n【結果サマリー】")
+    print("\n【結果サマリー】")
     print(f"{'段階':<6} {'追加層':<8} {'合計層':<8} {'訓練tokens':<12} {'Val PPL':<12} {'合計パラメータ':<16}")
     print("-" * 70)
     for r in results:
