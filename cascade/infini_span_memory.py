@@ -47,35 +47,88 @@ class BidirectionalSpanEncoder(nn.Module):
     """
     双方向エンコーダでspanを圧縮。
 
-    Spanの隠れ状態を受け取り、平均プーリングで1ベクトルに圧縮。
-    オプションで学習可能な変換を適用。
+    Spanの隠れ状態を受け取り、双方向処理で1ベクトルに圧縮。
+
+    3つのモード:
+    - "bilstm": Bi-LSTM + 最終隠れ状態
+    - "transformer": Bidirectional Transformer + [CLS]トークン
+    - "pooling": 平均プーリング + 線形投影（軽量）
+
+    Reference:
+    - BERT: Pre-training of Deep Bidirectional Transformers
+    - Infini-attention: Efficient Infinite Context Transformers
     """
 
     def __init__(
         self,
         dim: int,
-        use_projection: bool = True,
+        mode: str = "bilstm",
+        num_layers: int = 1,
+        num_heads: int = 4,
         dropout: float = 0.1,
     ):
         """
         Args:
             dim: 隠れ状態の次元
-            use_projection: 圧縮後に線形変換を適用するか
+            mode: エンコーダモード ("bilstm", "transformer", "pooling")
+            num_layers: エンコーダのレイヤー数
+            num_heads: Transformerのヘッド数（mode="transformer"時のみ）
             dropout: ドロップアウト率
         """
         super().__init__()
         self.dim = dim
-        self.use_projection = use_projection
+        self.mode = mode
+        self.num_layers = num_layers
 
-        if use_projection:
-            self.projection: nn.Module = nn.Sequential(
+        if mode == "bilstm":
+            # Bi-LSTM: 双方向LSTMで文脈を捉える
+            self.encoder = nn.LSTM(
+                input_size=dim,
+                hidden_size=dim // 2,  # 双方向で結合するため半分
+                num_layers=num_layers,
+                batch_first=True,
+                bidirectional=True,
+                dropout=dropout if num_layers > 1 else 0,
+            )
+            # 最終隠れ状態（forward + backward）を射影
+            self.output_proj = nn.Sequential(
                 nn.Linear(dim, dim),
                 nn.GELU(),
                 nn.Dropout(dropout),
                 nn.Linear(dim, dim),
             )
-        else:
-            self.projection = nn.Identity()
+
+        elif mode == "transformer":
+            # Bidirectional Transformer
+            # [CLS]トークン（学習可能）
+            self.cls_token = nn.Parameter(torch.randn(1, 1, dim) * 0.02)
+
+            encoder_layer = nn.TransformerEncoderLayer(
+                d_model=dim,
+                nhead=num_heads,
+                dim_feedforward=dim * 4,
+                dropout=dropout,
+                activation="gelu",
+                batch_first=True,
+                norm_first=True,  # Pre-LN for stability
+            )
+            self.encoder = nn.TransformerEncoder(
+                encoder_layer,
+                num_layers=num_layers,
+            )
+            self.output_proj = nn.Linear(dim, dim)
+
+        else:  # pooling
+            # シンプルな平均プーリング + MLP
+            self.encoder = None
+            self.output_proj = nn.Sequential(
+                nn.Linear(dim, dim),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(dim, dim),
+            )
+
+        self.layer_norm = nn.LayerNorm(dim)
 
     def forward(self, hidden_states: Tensor) -> Tensor:
         """
@@ -87,18 +140,115 @@ class BidirectionalSpanEncoder(nn.Module):
         Returns:
             compressed: (dim,) or (batch, dim)
         """
-        # 平均プーリング
+        # 入力形状を正規化
+        squeeze_batch = False
         if hidden_states.dim() == 2:
-            # (seq_len, dim) -> (dim,)
-            pooled = hidden_states.mean(dim=0)
-        else:
-            # (batch, seq_len, dim) -> (batch, dim)
-            pooled = hidden_states.mean(dim=1)
+            # (seq_len, dim) -> (1, seq_len, dim)
+            hidden_states = hidden_states.unsqueeze(0)
+            squeeze_batch = True
 
-        # 射影（オプション）
-        compressed = self.projection(pooled)
+        batch_size, seq_len, _ = hidden_states.shape
+
+        if self.mode == "bilstm":
+            # Bi-LSTM処理
+            # output: (batch, seq_len, dim)
+            # h_n: (num_layers * 2, batch, dim // 2) - 最終隠れ状態
+            output, (h_n, _) = self.encoder(hidden_states)
+
+            # Forward/Backward の最終隠れ状態を結合
+            # h_n[-2]: 最終層のforward, h_n[-1]: 最終層のbackward
+            h_forward = h_n[-2]  # (batch, dim // 2)
+            h_backward = h_n[-1]  # (batch, dim // 2)
+            pooled = torch.cat([h_forward, h_backward], dim=-1)  # (batch, dim)
+
+            # 射影
+            compressed = self.output_proj(pooled)
+
+        elif self.mode == "transformer":
+            # [CLS]トークンを先頭に追加
+            cls_tokens = self.cls_token.expand(batch_size, -1, -1)
+            x = torch.cat([cls_tokens, hidden_states], dim=1)  # (batch, 1 + seq_len, dim)
+
+            # Bidirectional Transformer (no mask = full attention)
+            encoded = self.encoder(x)
+
+            # [CLS]トークンの出力を使用
+            cls_output = encoded[:, 0, :]  # (batch, dim)
+            compressed = self.output_proj(cls_output)
+
+        else:  # pooling
+            # 平均プーリング
+            pooled = hidden_states.mean(dim=1)  # (batch, dim)
+            compressed = self.output_proj(pooled)
+
+        # Layer normalization
+        compressed = self.layer_norm(compressed)
+
+        # バッチ次元を元に戻す
+        if squeeze_batch:
+            compressed = compressed.squeeze(0)
 
         return compressed
+
+    def encode_spans(self, spans: list) -> Tensor:
+        """
+        複数のspanを一括でエンコード。
+
+        Args:
+            spans: List of (seq_len_i, dim) tensors
+
+        Returns:
+            compressed: (num_spans, dim)
+        """
+        if not spans:
+            return torch.zeros(0, self.dim)
+
+        # パディングして一括処理（効率化）
+        max_len = max(s.size(0) for s in spans)
+        device = spans[0].device
+
+        # パディング
+        padded = torch.zeros(len(spans), max_len, self.dim, device=device)
+        lengths = []
+        for i, span in enumerate(spans):
+            seq_len = span.size(0)
+            padded[i, :seq_len] = span
+            lengths.append(seq_len)
+
+        if self.mode == "bilstm":
+            # pack_padded_sequenceで効率的に処理
+            from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+
+            # 長さでソート（pack_padded_sequenceの要件）
+            lengths_tensor = torch.tensor(lengths, device=device)
+            sorted_lengths, sort_idx = lengths_tensor.sort(descending=True)
+            sorted_padded = padded[sort_idx]
+
+            # Pack and encode
+            packed = pack_padded_sequence(
+                sorted_padded,
+                sorted_lengths.cpu(),
+                batch_first=True,
+                enforce_sorted=True,
+            )
+            _, (h_n, _) = self.encoder(packed)
+
+            # Forward/Backward結合
+            h_forward = h_n[-2]
+            h_backward = h_n[-1]
+            pooled = torch.cat([h_forward, h_backward], dim=-1)
+
+            # 元の順序に戻す
+            _, unsort_idx = sort_idx.sort()
+            pooled = pooled[unsort_idx]
+
+            compressed = self.output_proj(pooled)
+
+        else:
+            # Transformer/Poolingは通常処理
+            compressed = self.forward(padded)
+
+        return self.layer_norm(compressed)
 
 
 class InfiniSpanMemory(nn.Module):
@@ -125,7 +275,9 @@ class InfiniSpanMemory(nn.Module):
         span_size: int = 128,
         num_local_spans: int = 2,
         max_global_spans: int = 256,
-        use_projection: bool = True,
+        encoder_mode: str = "bilstm",
+        encoder_layers: int = 1,
+        encoder_heads: int = 4,
         dropout: float = 0.1,
     ):
         """
@@ -134,7 +286,9 @@ class InfiniSpanMemory(nn.Module):
             span_size: 固定span長
             num_local_spans: ローカルに保持するspan数（デフォルト: 2）
             max_global_spans: グローバルに保持する最大span数
-            use_projection: 圧縮時に射影を使用するか
+            encoder_mode: エンコーダモード ("bilstm", "transformer", "pooling")
+            encoder_layers: エンコーダのレイヤー数
+            encoder_heads: Transformerのヘッド数（mode="transformer"時のみ）
             dropout: ドロップアウト率
         """
         super().__init__()
@@ -146,7 +300,9 @@ class InfiniSpanMemory(nn.Module):
         # 双方向エンコーダ（span圧縮用）
         self.span_encoder = BidirectionalSpanEncoder(
             dim=dim,
-            use_projection=use_projection,
+            mode=encoder_mode,
+            num_layers=encoder_layers,
+            num_heads=encoder_heads,
             dropout=dropout,
         )
 
