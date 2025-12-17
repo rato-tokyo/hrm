@@ -500,6 +500,7 @@ def create_baseline_gpt2(vocab_size: int, config: TrainingConfig) -> nn.Module:
         n_head=config.num_heads,
         n_layer=config.baseline_layers,
         n_positions=config.max_seq_len,
+        loss_type="ForCausalLMLoss",  # 明示的に設定して警告を抑制
     )
     return GPT2LMHeadModel(gpt2_config)
 
