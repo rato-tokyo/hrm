@@ -1,0 +1,13 @@
+{
+  "model_name": "HuggingFaceTB/SmolLM2-360M-Instruct",
+  "total_params": 361821120,
+  "train_tokens": 128000,
+  "val_tokens": 12800,
+  "final_train_loss": 1.29840260887146,
+  "final_val_loss": 1.7162467670440673,
+  "val_ppl": 5.563607692718506,
+  "best_val_ppl": 5.404699325561523,
+  "total_epochs": 6,
+  "training_time": 311.6904966831207,
+  "model_path": "outputs/baseline_360m_20251217_100240/model"
+}

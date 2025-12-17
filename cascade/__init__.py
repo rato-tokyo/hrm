@@ -15,7 +15,7 @@ Hugging Face Transformersとの完全統合:
 
 from .ensemble import Ensemble
 from .llm import LLM, TokenTensor, HiddenTensor
-from .exit_fn import ExitFn, default_exit_fn, compute_cos_sim
+from .exit_fn import ExitFn, default_exit_fn, compute_cos_sim, compute_cos_sim_from_history
 from .cascade_trainer import CascadeTrainer, create_initial_dataset
 from .ensemble_trainer import train_ensemble
 from .llm_evaluator import compute_ppl, evaluate_llm
@@ -29,6 +29,8 @@ from .cascade_dataset import (
     create_empty_dataset,
 )
 from .config import CascadeConfig, ExperimentConfig
+from .incremental_trainer import IncrementalTrainer, IncrementalConfig, StageResult
+from .incremental_evaluator import IncrementalEvaluator, EvaluationResult
 from .dataloader import (
     create_wikitext_dataloaders,
     create_alpaca_dataloaders,
@@ -46,7 +48,7 @@ from .model_registry import (
     PRETRAINED_MODELS,
 )
 
-__version__ = "0.23.0"
+__version__ = "0.24.0"
 
 __all__ = [
     # コア
@@ -59,6 +61,7 @@ __all__ = [
     'ExitFn',
     'default_exit_fn',
     'compute_cos_sim',
+    'compute_cos_sim_from_history',
     # 訓練（HF Trainerベース）
     'CascadeTrainer',
     'train_ensemble',
@@ -77,6 +80,12 @@ __all__ = [
     # 設定
     'CascadeConfig',
     'ExperimentConfig',
+    # 段階的訓練・評価
+    'IncrementalTrainer',
+    'IncrementalConfig',
+    'StageResult',
+    'IncrementalEvaluator',
+    'EvaluationResult',
     # データローダー
     'create_wikitext_dataloaders',
     'create_alpaca_dataloaders',
