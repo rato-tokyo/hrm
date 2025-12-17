@@ -53,7 +53,7 @@ class TrainingConfig:
     seq_len: int = 128
     num_samples: int = 5000
     num_epochs: int = 15
-    learning_rate: float = 1e-3
+    learning_rate: float = 2.5e-4  # 1e-3 / 4 = 2.5e-4
     weight_decay: float = 0.01
     max_grad_norm: float = 1.0
 
@@ -670,7 +670,7 @@ def main():
     parser.add_argument("--seq_len", type=int, default=128)
     parser.add_argument("--num_samples", type=int, default=5000)
     parser.add_argument("--num_epochs", type=int, default=15)
-    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--lr", type=float, default=2.5e-4)
     parser.add_argument("--patience", type=int, default=1)
     parser.add_argument("--window_size", type=int, default=128)
     parser.add_argument("--seed", type=int, default=42)
