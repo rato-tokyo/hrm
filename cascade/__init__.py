@@ -65,8 +65,16 @@ from .infini_span_memory import (
     InfiniSpanMemory,
     InfiniSpanAttention,
 )
+# Dual-Context Attention（L0/L1 2層コンテキスト）
+from .dual_context_attention import (
+    DCAOutput,
+    DualContextState,
+    DualContextMemory,
+    DualContextAttention,
+    DualContextLM,
+)
 
-__version__ = "0.30.0"
+__version__ = "0.31.0"
 
 __all__ = [
     # コア
@@ -126,4 +134,10 @@ __all__ = [
     'BidirectionalSpanEncoder',
     'InfiniSpanMemory',
     'InfiniSpanAttention',
+    # Dual-Context Attention
+    'DCAOutput',
+    'DualContextState',
+    'DualContextMemory',
+    'DualContextAttention',
+    'DualContextLM',
 ]
