@@ -41,7 +41,7 @@ EPOCHS = 10               # 各段階の最大エポック数
 BATCH_SIZE = 32           # バッチサイズ
 LEARNING_RATE = 1e-4      # 学習率
 SEQ_LEN = 128             # シーケンス長
-PATIENCE = 3              # Early stoppingのpatience
+PATIENCE = 1              # Early stoppingのpatience（1=最良に近いモデルを保存）
 
 # データ設定
 NUM_TRAIN_SAMPLES = 1000  # 訓練サンプル数
