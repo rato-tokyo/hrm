@@ -36,20 +36,25 @@ class ModelSpec:
 # 事前定義されたモデル仕様
 PRETRAINED_MODELS: Dict[str, ModelSpec] = {
     # SmolLM2シリーズ（推奨）
+    # 両モデルとも同じSmolLM-Corpusで事前学習済み
     "smollm2-135m": ModelSpec(
         name="smollm2-135m",
         hf_name="HuggingFaceTB/SmolLM2-135M-Instruct",
-        dim=576,
-        num_layers=30,
-        description="最小の対話可能モデル、高速実験向け",
+        dim=576,  # hidden_size
+        num_layers=30,  # num_hidden_layers
+        # num_attention_heads=9, num_key_value_heads=3 (GQA)
+        # intermediate_size=1536, vocab_size=49152, max_position_embeddings=8192
+        description="最小の対話可能モデル、高速実験向け（2Tトークン訓練）",
         recommended_for="quick_experiment",
     ),
     "smollm2-360m": ModelSpec(
         name="smollm2-360m",
         hf_name="HuggingFaceTB/SmolLM2-360M-Instruct",
-        dim=960,
-        num_layers=32,
-        description="バランスの良い小型モデル",
+        dim=960,  # hidden_size
+        num_layers=32,  # num_hidden_layers
+        # num_attention_heads=15, num_key_value_heads=5 (GQA)
+        # intermediate_size=2560, vocab_size=49152, max_position_embeddings=8192
+        description="バランスの良い小型モデル（4Tトークン訓練）",
         recommended_for="balanced",
     ),
     "smollm2-1.7b": ModelSpec(
