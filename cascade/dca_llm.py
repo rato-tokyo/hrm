@@ -377,6 +377,243 @@ def create_dca_llm(
     return dca_llm
 
 
+class IntegratedDCABlock(nn.Module):
+    """
+    DCAを内蔵したTransformerブロック。
+
+    GPT-2のAttentionを置換し、DCAを統合。
+    後付けではなく、Transformer内部にDCAを埋め込む。
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        num_heads: int,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.dim = dim
+        self.num_heads = num_heads
+        self.head_dim = dim // num_heads
+
+        # DCA Attention (L0のみ使用、訓練時)
+        self.q_proj = nn.Linear(dim, dim)
+        self.k_proj = nn.Linear(dim, dim)
+        self.v_proj = nn.Linear(dim, dim)
+        self.out_proj = nn.Linear(dim, dim)
+
+        self.scale = self.head_dim ** -0.5
+        self.dropout = nn.Dropout(dropout)
+
+        # FFN
+        self.ln1 = nn.LayerNorm(dim)
+        self.ln2 = nn.LayerNorm(dim)
+        self.ffn = nn.Sequential(
+            nn.Linear(dim, dim * 4),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(dim * 4, dim),
+            nn.Dropout(dropout),
+        )
+
+    def forward(self, hidden_states: Tensor, causal_mask: Tensor) -> Tensor:
+        """
+        Forward pass with causal self-attention.
+
+        Args:
+            hidden_states: (batch, seq_len, dim)
+            causal_mask: (seq_len, seq_len) - 下三角行列
+
+        Returns:
+            output: (batch, seq_len, dim)
+        """
+        batch_size, seq_len, _ = hidden_states.shape
+
+        # Pre-norm
+        normed = self.ln1(hidden_states)
+
+        # Q, K, V projections
+        q = self.q_proj(normed)
+        k = self.k_proj(normed)
+        v = self.v_proj(normed)
+
+        # Reshape for multi-head attention
+        q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        k = k.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        v = v.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+
+        # Attention scores with causal mask
+        attn = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+        attn = attn.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0) == 0, float('-inf'))
+        attn = F.softmax(attn, dim=-1)
+        attn = self.dropout(attn)
+
+        # Apply attention to values
+        out = torch.matmul(attn, v)
+        out = out.transpose(1, 2).contiguous().view(batch_size, seq_len, self.dim)
+        out = self.out_proj(out)
+
+        # Residual connection
+        hidden_states = hidden_states + out
+
+        # FFN with pre-norm and residual
+        hidden_states = hidden_states + self.ffn(self.ln2(hidden_states))
+
+        return hidden_states
+
+
+class IntegratedDCALLM(nn.Module):
+    """
+    DCAを内部に統合した言語モデル。
+
+    GPT-2の後付けではなく、DCAブロックで構成されたTransformer。
+    公平なパラメータ比較のための実装。
+
+    使用例:
+        model = IntegratedDCALLM(vocab_size=50257, dim=256, num_layers=4)
+        outputs = model(input_ids, labels=labels)
+    """
+
+    def __init__(
+        self,
+        vocab_size: int,
+        dim: int = 256,
+        num_layers: int = 4,
+        num_heads: int = 4,
+        max_seq_len: int = 1024,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.dim = dim
+        self.num_layers = num_layers
+        self.max_seq_len = max_seq_len
+
+        # Embeddings
+        self.token_embedding = nn.Embedding(vocab_size, dim)
+        self.position_embedding = nn.Embedding(max_seq_len, dim)
+        self.embed_dropout = nn.Dropout(dropout)
+
+        # DCA Blocks
+        self.blocks = nn.ModuleList([
+            IntegratedDCABlock(dim=dim, num_heads=num_heads, dropout=dropout)
+            for _ in range(num_layers)
+        ])
+
+        # Output
+        self.ln_f = nn.LayerNorm(dim)
+        self.lm_head = nn.Linear(dim, vocab_size, bias=False)
+
+        # Weight tying
+        self.lm_head.weight = self.token_embedding.weight
+
+        # Initialize weights
+        self._init_weights()
+
+    def _init_weights(self):
+        """Initialize weights similar to GPT-2."""
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+                if module.bias is not None:
+                    torch.nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.Embedding):
+                torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            elif isinstance(module, nn.LayerNorm):
+                torch.nn.init.ones_(module.weight)
+                torch.nn.init.zeros_(module.bias)
+
+    def reset_memory(self):
+        """Compatibility method (no-op for training)."""
+        pass
+
+    def forward(
+        self,
+        input_ids: Tensor,
+        labels: Optional[Tensor] = None,
+    ) -> DCALLMOutput:
+        """
+        Forward pass.
+
+        Args:
+            input_ids: (batch, seq_len)
+            labels: (batch, seq_len) for loss calculation
+
+        Returns:
+            DCALLMOutput
+        """
+        batch_size, seq_len = input_ids.shape
+        device = input_ids.device
+
+        # Embeddings
+        positions = torch.arange(seq_len, device=device).unsqueeze(0)
+        hidden_states = self.token_embedding(input_ids) + self.position_embedding(positions)
+        hidden_states = self.embed_dropout(hidden_states)
+
+        # Causal mask
+        causal_mask = torch.tril(torch.ones(seq_len, seq_len, device=device))
+
+        # Forward through DCA blocks
+        for block in self.blocks:
+            hidden_states = block(hidden_states, causal_mask)
+
+        # Output
+        hidden_states = self.ln_f(hidden_states)
+        logits = self.lm_head(hidden_states)
+
+        # Loss
+        loss = None
+        if labels is not None:
+            shift_logits = logits[:, :-1, :].contiguous()
+            shift_labels = labels[:, 1:].contiguous()
+            loss = F.cross_entropy(
+                shift_logits.view(-1, self.vocab_size),
+                shift_labels.view(-1),
+                ignore_index=-100,
+            )
+
+        return DCALLMOutput(logits=logits, loss=loss)
+
+
+def create_integrated_dca_llm(
+    vocab_size: int,
+    dim: int = 256,
+    num_layers: int = 4,
+    num_heads: int = 4,
+    max_seq_len: int = 1024,
+    dropout: float = 0.1,
+    device: Optional[str] = None,
+) -> IntegratedDCALLM:
+    """
+    DCA統合言語モデルを作成するファクトリ関数。
+
+    Args:
+        vocab_size: 語彙サイズ
+        dim: モデル次元
+        num_layers: レイヤー数
+        num_heads: ヘッド数
+        max_seq_len: 最大シーケンス長
+        dropout: ドロップアウト率
+        device: デバイス
+
+    Returns:
+        IntegratedDCALLM インスタンス
+    """
+    model = IntegratedDCALLM(
+        vocab_size=vocab_size,
+        dim=dim,
+        num_layers=num_layers,
+        num_heads=num_heads,
+        max_seq_len=max_seq_len,
+        dropout=dropout,
+    )
+
+    if device:
+        model = model.to(device)
+
+    return model
+
+
 def create_dca_llm_from_scratch(
     vocab_size: int,
     dim: int = 768,

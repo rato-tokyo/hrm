@@ -79,6 +79,10 @@ from .dca_llm import (
     DCALLM,
     create_dca_llm,
     create_dca_llm_from_scratch,
+    # Integrated DCA (DCAを内部に統合)
+    IntegratedDCABlock,
+    IntegratedDCALLM,
+    create_integrated_dca_llm,
 )
 
 __version__ = "0.32.0"
@@ -152,4 +156,8 @@ __all__ = [
     'DCALLM',
     'create_dca_llm',
     'create_dca_llm_from_scratch',
+    # Integrated DCA
+    'IntegratedDCABlock',
+    'IntegratedDCALLM',
+    'create_integrated_dca_llm',
 ]
